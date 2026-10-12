@@ -1,0 +1,23 @@
+.idea/*
+!.idea/runConfigurations/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+
+### SBT ###
+target/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+project/project/
+.bsp/
+.bloop/
+.metals/
+
+### Scala / JVM ###
+*.class
+*.log
+hs_err_pid*
