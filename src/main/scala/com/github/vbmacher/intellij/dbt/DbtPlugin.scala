@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt
 
-/** Entry point of the dbt plugin. Holds plugin-wide constants; functionality will be added later. */
+/** Shared dbt plugin constants. */
 object DbtPlugin {
 
   /** Plugin ID, must match the `id` in `META-INF/plugin.xml`. */

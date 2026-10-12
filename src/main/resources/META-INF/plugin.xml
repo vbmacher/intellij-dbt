@@ -16,10 +16,17 @@
 
     <change-notes><![CDATA[
       <ul>
-      <li>2026.2: Initial project structure for IntelliJ 2026.2 (build 262.9437.185)</li>
+      <li>2026.2: Navigate between dbt variable declarations and SQL usages in a single root project.</li>
       </ul>
     ]]>
     </change-notes>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.DbtReferenceContributor"/>
+        <gotoDeclarationHandler implementation="com.github.vbmacher.intellij.dbt.DbtGotoDeclarationHandler"/>
+        <referencesSearch implementation="com.github.vbmacher.intellij.dbt.DbtReferencesSearch"/>
+    </extensions>
 </idea-plugin>
