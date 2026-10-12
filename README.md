@@ -36,10 +36,141 @@ In `models/events.sql`, navigate from `start_date` to its declaration:
 select * from events where event_date >= '{{ var("start_date") }}'
 ```
 
-The first version supports definitions in `dbt_project.yml` and usages in `.sql` files.
-Dynamic names, Jinja local variables, runtime `--vars`, `vars.yml`, and multi-project repositories
-are outside this scope. Missing declarations remain unresolved, including variables supplied at
-runtime or handled by a default argument.
+Ctrl+Click the variable name inside `var(...)`, or use **Go to Declaration**, to open its YAML key.
+On the YAML key, use **Find Usages** to list matching SQL calls and navigate to them. The search
+respects the scope selected in the IDE and follows the declaration each call actually resolves to.
+
+### Supported call forms
+
+The first argument must be a literal string. Both quote styles, defaults, nested calls, and
+multiple calls in one file are supported:
+
+```jinja
+{{ var('start_date') }}
+{{ var("start_date", '2026-01-01') }}
+{{ var('start_date', var('fallback_date', '2026-01-01')) }}
+```
+
+Each literal name is looked up independently. A default argument does not create a declaration:
+if `fallback_date` is absent from `dbt_project.yml`, it has no navigation target. Missing variables
+do not produce an unresolved-variable error from this plugin.
+
+Calls are also recognized inside Jinja statement blocks, including assignments and conditions:
+
+```jinja
+{% set date = var('start_date') %}
+{% if var('include_archived', false) %}
+  select * from archived_events
+{% endif %}
+```
+
+Multiline calls and whitespace control retain navigation to the variable name:
+
+```jinja
+{{-
+  var(
+    'start_date',
+    '2026-01-01'
+  )
+-}}
+```
+
+Navigation updates as files are edited. A complete call inside an unfinished Jinja block, such
+as `{{ var('start_date')` while typing, can still resolve.
+
+### Global and project-scoped variables
+
+Given this `dbt_project.yml`:
+
+```yaml
+name: analytics
+config-version: 2
+vars:
+  start_date: '2026-01-01'
+  region: us
+  analytics:
+    start_date: '2026-02-01'
+```
+
+`var('start_date')` navigates to `vars.analytics.start_date`, because the scope matches the
+project's `name`. `var('region')` navigates to the global `vars.region` declaration. Find Usages
+on the overridden global `start_date` does not list calls resolving to the scoped declaration.
+Variables defined only under another package name do not become available to the root project.
+
+### Dictionary variables and quoted names
+
+Dictionary-valued variables and literal names containing punctuation or quotes are supported:
+
+```yaml
+vars:
+  options:
+    region: us
+  'date.start': '2026-01-01'
+  "it's_ready": true
+```
+
+```jinja
+{{ var('options')['region'] }}
+{{ var('date.start') }}
+{{ var("it's_ready") }}
+{{ var('it\'s_ready') }}
+```
+
+`options` navigates to the dictionary declaration. Its `region` member is not an independent
+dbt variable or a navigation target; `var('region')` needs its own variable declaration.
+`date.start` is a literal key name, rather than a path through nested YAML keys.
+
+### Supported files and paths
+
+Open the directory containing `dbt_project.yml` as the project root. Calls are recognized in
+`.sql` files under these resource paths, including subdirectories:
+
+| Resources | Configuration key | Default directory |
+| --- | --- | --- |
+| Models | `model-paths` | `models/` |
+| SQL tests | `test-paths` | `tests/` |
+| Macros | `macro-paths` | `macros/` |
+| Snapshots | `snapshot-paths` | `snapshots/` |
+| Analyses | `analysis-paths` | `analyses/` |
+
+For example, these settings in `dbt_project.yml` enable navigation in `transformations/` and
+`checks/` instead of the default model and test directories:
+
+```yaml
+model-paths: [transformations]
+test-paths: [checks]
+```
+
+An empty list, such as `model-paths: []`, disables that resource category. Generated SQL under
+`target-path` (default `target/`), installed packages under `packages-install-path` (default
+`dbt_packages/`), `.git/`, `.idea/`, and `logs/` are excluded. Files inside a nested directory
+with its own `dbt_project.yml` are also excluded.
+
+### Ignored text and current limits
+
+Jinja comments and raw blocks do not produce variable references:
+
+```jinja
+{# {{ var('start_date') }} #}
+{% raw %}{{ var('start_date') }}{% endraw %}
+```
+
+Active Jinja inside an SQL comment is recognized, so `-- {{ var('start_date') }}` remains a usage.
+Ordinary SQL text such as `select var('start_date')` is ignored. A string containing call-like
+text, a method named `var`, or a Jinja filter/test named `var` is not treated as a dbt variable call.
+
+The current feature does not support:
+
+- Dynamic names: `var(variable_name)` or `var('prefix_' ~ suffix)`
+- Qualified calls such as `builtins.var('start_date')`
+- Navigation for Jinja local variables declared with `{% set %}`
+- Variable usages in YAML files, including schema tests or project configuration
+- Definitions in `vars.yml`, runtime `--vars`, environment variables, or installed packages
+- Multiple dbt projects in one IDE project
+- `ref()`, `source()`, or macro-definition navigation
+- dbt-aware Rename refactoring, completion, SQL syntax highlighting, compilation, or execution
+
+The plugin links source declarations and usages; it does not evaluate variable values or run dbt.
 
 ## Development
 
