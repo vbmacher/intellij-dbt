@@ -397,6 +397,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("default", target(file, "audit").asInstanceOf[DbtSymbolElement].symbol.attributes("adapter"))
   }
 
+  def testMetricAliasesAndSavedQueryExports(): Unit = {
+    root()
+    val file = add("models/metrics.yml", "metrics:\n- name: revenue\n  type: simple\n- name: growth\n  type: derived\n  type_params:\n    expr: current / previous\n    metrics:\n    - name: revenue\n      alias: current\n    - name: revenue\n      alias: previous\nsaved_queries:\n- name: revenue_report\n  query_params:\n    metrics: [revenue]\n  exports:\n  - name: daily_export\n")
+    assertEquals("metric_alias", target(file, "current").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals(1, uses(target(file, "current")))
+    assertEquals("revenue_report", target(file, "daily_export").asInstanceOf[DbtSymbolElement].getName)
+    assertEquals(3, uses(target(file, "revenue", 1)))
+  }
+
   def testUnitThisAndVariableOverrideIdentity(): Unit = {
     root("vars:\n  color: default\n")
     val model = add("models/orders.sql", "select 1")
