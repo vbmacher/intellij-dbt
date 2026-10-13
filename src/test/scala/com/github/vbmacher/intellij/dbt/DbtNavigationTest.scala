@@ -151,6 +151,14 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(file, "orders", 4)).endsWith("orders.csv"))
   }
 
+  def testSemanticMetricsGroupsAndExposures(): Unit = {
+    root()
+    val schema = add("models/semantic.yml", "groups:\n- name: finance\nsemantic_models:\n- name: sales\n  model: ref('orders')\n  entities:\n  - name: customer\n  dimensions:\n  - name: ordered_at\n  measures:\n  - name: revenue\nmetrics:\n- name: total_revenue\n  type: simple\n  type_params:\n    measure: revenue\n- name: ratio\n  type: ratio\n  type_params:\n    numerator: total_revenue\nexposures:\n- name: dashboard\n  depends_on:\n  - ref('orders')\nsaved_queries:\n- name: revenue_report\n  query_params:\n    metrics: [total_revenue]\n")
+    add("models/orders.sql", "{{ config(group='finance') }}select 1")
+    assertEquals("measure", target(schema, "revenue", 2).asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("metric", target(schema, "total_revenue", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
