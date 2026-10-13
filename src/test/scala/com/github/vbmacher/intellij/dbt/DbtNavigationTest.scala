@@ -262,6 +262,27 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(props, "hash_numeric")).endsWith("hash_numeric.sql"))
   }
 
+  def testOptionalManifestMetadataAndLocalSourceAuthority(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    val manifest = add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql"}}}""")
+    val file = add("models/use.sql", "{{ ref('remote') }}")
+    val metadata = target(file, "remote").asInstanceOf[DbtSymbolElement]
+    assertTrue(metadata.symbol.metadata)
+    assertEquals(path(manifest), path(metadata))
+    val local = add("models/remote.sql", "select 1")
+    assertEquals(path(local), path(target(file, "remote")))
+    assertFalse(target(file, "remote").asInstanceOf[DbtSymbolElement].symbol.metadata)
+  }
+
+  def testUnsupportedManifestSchemaDoesNotCreateDeclarations(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v999.json"},"nodes":{"model.analytics.remote":{"resource_type":"model","name":"remote"}}}""")
+    val file = add("models/use.sql", "{{ ref('remote') }}")
+    assertTrue(refs(file, "remote").forall(_.candidates.isEmpty))
+  }
+
   def testSelectorsWildcardsAndLineageCycles(): Unit = {
     root()
     val orders = add("models/orders.sql", "select * from {{ ref('customers') }}")
@@ -508,6 +529,30 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(oldTarget.isValid)
     assertEquals(oldOffset + 17, oldTarget.getTextOffset)
     assertEquals(1, uses(oldTarget))
+  }
+
+  def testCatalogUsesLogicalResourceIdsAndKeepsSourceColumnsAuthoritative(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "catalog: target/catalog.json\n")
+    add("models/orders.sql", "select * from physical_table")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n")
+    add("target/catalog.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/catalog/v1.json","generated_at":"2099-01-01T00:00:00Z"},"nodes":{"model.analytics.orders":{"unique_id":"model.analytics.orders","metadata":{"name":"warehouse_alias"},"columns":{"id":{"name":"id"},"total":{"name":"total"}}}}}""")
+    val file = add("models/use.sql", "select o.id, o.total from {{ ref('orders') }} o")
+    assertFalse(target(file, "id").asInstanceOf[DbtSymbolElement].symbol.metadata)
+    assertTrue(target(file, "total").asInstanceOf[DbtSymbolElement].symbol.metadata)
+    assertTrue(path(target(file, "total")).endsWith("catalog.json"))
+  }
+
+  def testMetadataDependenciesMapToLocalSource(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "state-manifest: state/manifest.json\n")
+    add("models/orders.sql", "select 1")
+    add("state/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql","depends_on":{"nodes":["model.analytics.orders"]}}}}""")
+    val w = DbtWorkspace.get(getProject)
+    val edge = DbtLineage.edges(w).find(_.from.name == "remote").get
+    assertEquals("orders", edge.to.name)
+    assertFalse(edge.to.metadata)
+    assertTrue(edge.from.element.toString.contains("stale metadata"))
   }
 
   def testFiniteCollectionAndUnknownConditionalNames(): Unit = {
