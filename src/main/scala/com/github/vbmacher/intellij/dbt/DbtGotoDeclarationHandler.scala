@@ -8,6 +8,9 @@ import com.intellij.psi.PsiElement
 final class DbtGotoDeclarationHandler extends GotoDeclarationHandler {
   override def getGotoDeclarationTargets(sourceElement: PsiElement, offset: Int, editor: Editor): Array[PsiElement] =
     Option(sourceElement).flatMap(element => Option(element.getContainingFile))
-      .flatMap(file => DbtVariableReference.at(file, offset))
-      .flatMap(reference => Option(reference.resolve())).map(element => Array(element)).orNull
+      .map { file =>
+        val variables = DbtVariableReference.at(file, offset).flatMap(r => Option(r.resolve())).toVector
+        val targets = if (variables.nonEmpty) variables else DbtNavigation.at(file, offset).flatMap(_.candidates).distinct
+        if (targets.nonEmpty) targets.toArray else null
+      }.orNull
 }

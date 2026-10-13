@@ -1,35 +1,41 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.openapi.application.QueryExecutorBase
-import com.intellij.psi.{PsiElement, PsiReference}
-import com.intellij.psi.search.{RequestResultProcessor, UsageSearchContext}
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.psi.{PsiReference, PsiElement}
+import com.intellij.psi.search.PsiSearchScopeUtil
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.util.Processor
+import com.intellij.openapi.application.QueryExecutorBase
 import org.jetbrains.yaml.psi.YAMLKeyValue
 
-/** Use the IDE word index to discover files; verify every result with the same resolver as navigation. */
+/** Query the cached workspace and resolve identities, including names that the IDE word index splits. */
 final class DbtReferencesSearch extends QueryExecutorBase[PsiReference, ReferencesSearch.SearchParameters](true) {
   override def processQuery(parameters: ReferencesSearch.SearchParameters, consumer: Processor[_ >: PsiReference]): Unit = {
-    parameters.getElementToSearch match {
-      case declaration: YAMLKeyValue if DbtProject.forProject(declaration.getProject).exists(_.isDeclaration(declaration)) =>
-        // Searching for the callee also finds names containing punctuation or escaped characters.
-        parameters.getOptimizer.searchWord("var", parameters.getEffectiveSearchScope, UsageSearchContext.ANY,
-          true, declaration, new RequestResultProcessor(declaration) {
-            override def processTextOccurrence(element: PsiElement, offsetInElement: Int,
-              result: Processor[_ >: PsiReference]): Boolean = {
-              if (element.getFirstChild != null) return true
-              val file = element.getContainingFile
-              if (file == null) return true
-              val references = DbtVariableReference.inFile(file)
-              if (references.isEmpty) return true
-              val calls = DbtVariableReference.calls(file)
-              val offset = element.getTextRange.getStartOffset + offsetInElement
-              calls.zip(references).filter(_._1.callOffset == offset).forall { case (_, reference) =>
-                !reference.isReferenceTo(declaration) || result.process(reference)
-              }
-            }
-          })
-      case _ =>
+    val declaration = parameters.getElementToSearch
+    val supported = declaration.isInstanceOf[DbtSymbolElement] || declaration.isInstanceOf[YAMLKeyValue] ||
+      DbtWorkspace.get(declaration.getProject).symbols.exists(s => s.file == declaration.getContainingFile && s.range.intersects(declaration.getTextRange))
+    if (!supported) return
+    val workspace = DbtWorkspace.get(declaration.getProject)
+    val files = workspace.files ++ workspace.roots.flatMap(r => DbtNavigation.environment(workspace, r, declaration.getText).map(_.file))
+    val iterator = files.distinct.iterator
+    var proceed = true
+    while (proceed && iterator.hasNext) {
+      ProgressManager.checkCanceled()
+      val file = iterator.next()
+      if (PsiSearchScopeUtil.isInScope(parameters.getEffectiveSearchScope, file)) {
+        val references = DbtReferences.inFile(file)
+        proceed = references.iterator.filter(ref => ref.isReferenceTo(declaration) &&
+          Option(file.findElementAt(ref.getRangeInElement.getStartOffset)).exists(e =>
+            PsiSearchScopeUtil.isInScope(parameters.getEffectiveSearchScope, e))).forall(consumer.process)
+      }
     }
+  }
+}
+
+private[dbt] object DbtReferences {
+  def inFile(file: com.intellij.psi.PsiFile): Vector[PsiReference] = {
+    val variables = DbtVariableReference.inFile(file).toVector
+    val general = DbtNavigation.inFile(file)
+    variables.filter(v => v.resolve() != null || !general.exists(_.getRangeInElement == v.getRangeInElement)) ++ general.filterNot(ref => variables.exists(v => v.getRangeInElement == ref.getRangeInElement && v.resolve() != null))
   }
 }

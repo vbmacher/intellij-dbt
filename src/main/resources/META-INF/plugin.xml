@@ -16,17 +16,30 @@
 
     <change-notes><![CDATA[
       <ul>
-      <li>2026.2: Navigate between dbt variable declarations and SQL usages in a single root project.</li>
+      <li>2026.2: Community navigation for dbt resources, macros, variables, YAML properties, SQL symbols, selectors and optional local metadata.</li>
       </ul>
     ]]>
     </change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.yaml</depends>
+    <depends>com.intellij.modules.json</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.DbtReferenceContributor"/>
         <gotoDeclarationHandler implementation="com.github.vbmacher.intellij.dbt.DbtGotoDeclarationHandler"/>
+        <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.DbtFindUsagesProvider"/>
+        <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.DbtTargetElementEvaluator"/>
+        <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.DbtTargetElementEvaluator"/>
+        <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.DbtFindUsagesHandlerFactory" order="first"/>
         <referencesSearch implementation="com.github.vbmacher.intellij.dbt.DbtReferencesSearch"/>
     </extensions>
+    <actions>
+        <action id="Dbt.Properties" class="com.github.vbmacher.intellij.dbt.DbtPropertiesAction" text="dbt Properties" description="Navigate to properties of the current resource">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.Dependencies" class="com.github.vbmacher.intellij.dbt.DbtDependenciesAction" text="dbt Dependencies" description="Navigate resolved parents, children, and their call sites">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

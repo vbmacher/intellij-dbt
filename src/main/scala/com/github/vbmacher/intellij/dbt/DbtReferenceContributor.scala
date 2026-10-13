@@ -10,9 +10,7 @@ final class DbtReferenceContributor extends PsiReferenceContributor {
     registrar.registerReferenceProvider(PlatformPatterns.psiElement(classOf[PsiPlainTextFile]), new PsiReferenceProvider {
       override def getReferencesByElement(element: PsiElement, context: ProcessingContext): Array[PsiReference] = {
         val file = element.asInstanceOf[PsiPlainTextFile]
-        if (!DbtProject.forProject(file.getProject).exists(_.accepts(file))) return PsiReference.EMPTY_ARRAY
-        DbtVariableReference.calls(file).map(call =>
-          new DbtVariableReference(file, call.range, call.name): PsiReference).toArray
+        DbtReferences.inFile(file).toArray
       }
     })
   }
