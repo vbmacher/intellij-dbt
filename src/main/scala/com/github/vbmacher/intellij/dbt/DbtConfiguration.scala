@@ -16,9 +16,11 @@ private[dbt] object DbtConfiguration {
     path.toVector.flatten.foreach { part => current = current.flatMap(DbtYaml.map(_, part)); result ++= current }
     result
   }
+
   def inherited(w: DbtWorkspace, file: PsiFile, name: String): Map[String, String] = w.root(file).toVector.flatMap { resource =>
     (Vector(resource) ++ w.packageOwner(resource)).flatMap(config => levels(config, resource, file, name))
   }.foldLeft(Map.empty[String, String]) { (attrs, mapping) => attrs ++ DbtYaml.attributes(mapping).map { case (key, value) => key.stripPrefix("+") -> value } }
+
   def locations(w: DbtWorkspace, file: PsiFile, key: String): Vector[PsiElement] = {
     val root = w.root(file).toVector
     val symbols = w.symbols.filter(s => s.file == file && s.attributes.contains("code"))
