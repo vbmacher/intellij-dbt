@@ -62,6 +62,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(1, uses(second))
   }
 
+  def testYamlDecodedQuotedAndBlockOffsets(): Unit = {
+    root("vars:\n  start_date: today\n")
+    add("models/orders.sql", "select 1")
+    val yaml = add("models/schema.yml", "models:\n- name: orders\n  description: \"Example \\" + "\"" + " {{ var('start_date') }}\"\n  config:\n    pre_hook: |\n      select * from {{ ref('orders') }}\n")
+    assertNotNull(target(yaml, "start_date"))
+    assertTrue(path(target(yaml, "orders", 1)).endsWith("orders.sql"))
+    refs(yaml, "start_date").foreach(ref => assertEquals("start_date", ref.getRangeInElement.substring(yaml.getText)))
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -102,6 +111,16 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "orders").forall(_.candidates.isEmpty))
     assertTrue(refs(file, "hash").forall(_.candidates.isEmpty))
     assertFalse(DbtWorkspace.get(getProject).symbols.exists(_.kind == "check"))
+  }
+
+  def testRestrictedYamlContextsAndLiteralVarValues(): Unit = {
+    root("vars:\n  color: \"{{ ref('orders') }}\"\n")
+    add("models/orders.sql", "select 1")
+    val profiles = add("profiles.yml", "analytics:\n  target: \"{{ ref('orders') }}\"\n")
+    assertTrue(DbtNavigation.inFile(profiles).isEmpty)
+    assertTrue(refs(getProjectFile("dbt_project.yml"), "orders").isEmpty)
+    val schema = add("models/schema.yml", "models:\n- name: orders\n  config:\n    meta:\n      text: \"{{ doc('unknown') }}\"\n")
+    assertTrue(refs(schema, "unknown").isEmpty)
   }
 
   def testResourceMovesInvalidateIndex(): Unit = {
