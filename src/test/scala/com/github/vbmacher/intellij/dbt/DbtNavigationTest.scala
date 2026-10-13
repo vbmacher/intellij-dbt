@@ -262,6 +262,20 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(props, "hash_numeric")).endsWith("hash_numeric.sql"))
   }
 
+  def testSelectorsWildcardsAndLineageCycles(): Unit = {
+    root()
+    val orders = add("models/orders.sql", "select * from {{ ref('customers') }}")
+    add("models/customers.sql", "select * from {{ ref('orders') }}")
+    val selector = add("selectors.yml", "selectors:\n- name: nightly\n  definition: '+orders+'\n- name: selected\n  definition:\n    union:\n    - selector: nightly\n    - 'fqn:*ers'\n")
+    val results = refs(selector, "+orders+").flatMap(_.candidates)
+    assertEquals(Set("orders", "customers"), results.collect { case e: DbtSymbolElement => e.getName }.toSet)
+    assertNotNull(target(selector, "nightly", 1))
+    val w = DbtWorkspace.get(getProject)
+    val edges = DbtLineage.edges(w)
+    assertEquals(2, edges.size)
+    assertEquals(1, DbtLineage.traverse(edges, w.symbols.find(s => s.file == orders).get, downstream = true, 100).size)
+  }
+
   def testIgnorePathsAndOlderVersionGates(): Unit = {
     root()
     add(".dbtignore", "models/ignored/**\n")
@@ -462,6 +476,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(1, uses(target(test, "color")))
   }
 
+  def testSelectorsRespectResourceIdentityAndExplicitRunSelection(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "run-config: run.yml\n")
+    add("models/orders.sql", "select 1 as id")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n")
+    val run = add("run.yml", "select: orders\n")
+    assertEquals("model", target(run, "orders").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertTrue(path(target(run, "orders")).endsWith("orders.sql"))
+    assertEquals(2, uses(target(run, "orders")))
+  }
+
   def testUnsupportedTemplateLoaderDoesNotInventImports(): Unit = {
     root()
     add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
@@ -594,6 +619,18 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(1, uses(parameter))
   }
 
+  def testRunSelectionTermsKeepExactRangesAndIgnoreVariableValues(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "run-config: run.yml\n")
+    add("models/orders.sql", "select 1")
+    add("models/customers.sql", "select 1")
+    val file = add("run.yml", "select: 'orders customers,orders'\nvars:\n  names: [orders]\n")
+    assertTrue(path(target(file, "orders")).endsWith("orders.sql"))
+    assertTrue(path(target(file, "customers")).endsWith("customers.sql"))
+    assertEquals(2, uses(target(file, "orders")))
+    assertTrue(refs(file, "orders", 2).forall(_.candidates.isEmpty))
+    assertEquals("customers", refs(file, "customers").head.getRangeInElement.substring(file.getText))
+  }
   def testFixtureFormatsAndResourceExtensionsKeepSeparateIdentities(): Unit = {
     root()
     add("models/orders.sql", "select 1")
