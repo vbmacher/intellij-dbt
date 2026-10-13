@@ -13,17 +13,23 @@ import scala.collection.mutable.ArrayBuffer
 /** Library tokens and decoded host offsets; never evaluates a template. */
 private[dbt] object DbtSyntax {
   final case class Token(image: String, range: TextRange, string: Boolean = false)
+
   final case class Block(tokens: Vector[Token], range: TextRange, tag: Boolean)
+
   final case class Argument(tokens: Vector[Token], keyword: Option[String], keywordRange: Option[TextRange] = None) {
     def literal: Option[String] = tokens match {
       case Vector(t) if t.string || t.image.matches("[0-9]+|true|false|True|False") => Some(t.image)
       case _ => None
     }
+
     def range: Option[TextRange] = tokens.headOption.map(t => new TextRange(t.range.getStartOffset,
       tokens.last.range.getEndOffset))
   }
+
   final case class Call(name: String, range: TextRange, arguments: Vector[Argument], block: Block)
+
   private class Scanner(content: String) extends ExtendedScanner("${" + content + "}")
+
   private val config = JinjavaConfig.newBuilder().withTrimBlocks(false).build()
 
   def tokens(text: String, map: Int => Int): Vector[Token] = {
@@ -41,7 +47,9 @@ private[dbt] object DbtSyntax {
         }
         t = scanner.next()
       }
-    } catch { case _: ScanException => () } // Preserve tokens preceding an unfinished expression.
+    } catch {
+      case _: ScanException => ()
+    } // Preserve tokens preceding an unfinished expression.
     result.toVector
   }
 
@@ -87,6 +95,7 @@ private[dbt] object DbtSyntax {
               val text = new java.lang.StringBuilder
               if (escaper.decode(host, text)) {
                 def map(i: Int): Int = scalar.getTextOffset + escaper.getOffsetInHost(i, host)
+
                 val decoded = text.toString
                 result ++= blocks(decoded, map)
                 val keys = yamlAncestors(scalar)
@@ -130,7 +139,10 @@ private[dbt] object DbtSyntax {
       if (!token.string && Set("(", "[", "{").contains(token.image)) {
         depth += 1
         if (depth == 1) expectingName = true
-      } else if (!token.string && Set(")", "]", "}").contains(token.image)) { depth -= 1; if (depth == 0) finished = true }
+      } else if (!token.string && Set(")", "]", "}").contains(token.image)) {
+        depth -= 1
+        if (depth == 0) finished = true
+      }
       else if (depth == 1 && !token.string && token.image == ",") expectingName = true
       else if (depth == 1 && expectingName) {
         if (!token.string && token.image.matches("[A-Za-z_][A-Za-z_0-9]*")) result += token
@@ -146,15 +158,20 @@ private[dbt] object DbtSyntax {
     var depth = 0
     var i = callee + 2
     var finished = false
+
     def flush(): Unit = if (current.nonEmpty) {
       val xs = current.toVector
       val named = xs.size >= 3 && xs(1).image == "="
       args += Argument(if (named) xs.drop(2) else xs, if (named) Some(xs.head.image) else None, if (named) Some(xs.head.range) else None)
       current.clear()
     }
+
     while (i < ts.size && !finished) {
       val t = ts(i)
-      if (!t.string && t.image == ")" && depth == 0) { flush(); finished = true }
+      if (!t.string && t.image == ")" && depth == 0) {
+        flush()
+        finished = true
+      }
       else if (!t.string && t.image == "," && depth == 0) flush()
       else {
         current += t
