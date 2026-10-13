@@ -221,6 +221,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("materialization", target(file, "incremental_custom").asInstanceOf[DbtSymbolElement].symbol.kind)
   }
 
+  def testEmbeddedSemanticsAndTypedExpressions(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    add("models/orders.sql", "select 1")
+    val file = add("models/schema.yml", "models:\n- name: orders\n  semantic_model:\n    name: sales\n    enabled: true\n  agg_time_dimension: ordered_at\n  columns:\n  - name: customer_id\n    entity:\n      name: customer\n      type: primary\n  - name: ordered_at\n    dimension:\n      type: time\n  - name: country\n    dimension:\n      type: categorical\n  metrics:\n  - name: revenue\n    type: simple\nmetrics:\n- name: ratio\n  type: derived\n  filter: \"{{ Dimension('customer__country') }} = 'US'\"\n")
+    assertEquals("dimension", target(file, "ordered_at").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("customer", target(file, "customer__country").asInstanceOf[DbtSymbolElement].getName)
+    assertEquals("country", target(file, "country", 1).asInstanceOf[DbtSymbolElement].getName)
+    assertTrue(DbtWorkspace.get(getProject).symbols.exists(s => s.kind == "metric" && s.name == "revenue" && s.owner == "orders"))
+  }
+
   def testIgnorePathsAndOlderVersionGates(): Unit = {
     root()
     add(".dbtignore", "models/ignored/**\n")
