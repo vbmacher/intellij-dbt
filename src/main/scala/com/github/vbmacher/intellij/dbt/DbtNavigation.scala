@@ -141,7 +141,7 @@ private[dbt] object DbtNavigation {
         }))
         case "info_schema" if DbtInfoSchema.enabled(r, file) => literal(call, 0).foreach(n => arg(call, 0).foreach(x =>
           if (DbtInfoSchema.views.contains(n))
-            add(x, Vector(documentation(file, n, "info-schema", r)), n)))
+            add(x, DbtInfoSchema.view(file, r, n), n)))
         case _ => ()
       }
       if (macros.isEmpty && !localAt(call.range)) {
