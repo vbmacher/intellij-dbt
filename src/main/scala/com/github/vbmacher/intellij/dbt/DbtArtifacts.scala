@@ -2,24 +2,28 @@ package com.github.vbmacher.intellij.dbt
 
 import com.intellij.json.psi._
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.{PsiFile, PsiManager}
+import com.intellij.psi.PsiManager
+
 import scala.jdk.CollectionConverters._
 
 /** Only user-selected local artifacts are read; editor source remains authoritative. */
 private[dbt] object DbtArtifacts {
   private def property(obj: JsonObject, name: String): Option[JsonValue] = Option(obj.findProperty(name)).flatMap(p => Option(p.getValue))
+
   private def text(obj: JsonObject, name: String): Option[String] = property(obj, name).collect {
     case s: JsonStringLiteral => s.getValue
     case n: JsonNumberLiteral => n.getText
   }
+
   private def objects(obj: JsonObject, name: String): Vector[JsonObject] = property(obj, name).collect {
     case xs: JsonObject => xs.getPropertyList.asScala.toVector.flatMap(p => Option(p.getValue).collect { case x: JsonObject => x })
     case xs: JsonArray => xs.getValueList.asScala.toVector.collect { case x: JsonObject => x }
   }.getOrElse(Vector.empty)
+
   private def strings(obj: JsonObject, name: String): Vector[String] = property(obj, name).collect {
     case xs: JsonArray => xs.getValueList.asScala.toVector.collect { case s: JsonStringLiteral => s.getValue }
   }.getOrElse(Vector.empty)
+
   def uniqueId(symbol: DbtSymbol): String = symbol.attributes.getOrElse("unique_id", {
     val resource = if (symbol.kind == "source_table") "source" else symbol.kind
     val name = if (symbol.kind == "source_table") symbol.owner + "." + symbol.name else symbol.name
@@ -27,14 +31,14 @@ private[dbt] object DbtArtifacts {
   })
 
   def symbols(workspace: DbtWorkspace): Vector[DbtSymbol] = workspace.roots.flatMap { root =>
-    Vector("manifest", "state-manifest", "catalog").flatMap { setting => root.setting(setting).toVector.flatMap { path =>
-      Option(root.directory.findFileByRelativePath(path)).flatMap(f => Option(PsiManager.getInstance(workspace.project).findFile(f))).toVector.flatMap { file =>
-        file match {
-          case json: JsonFile => Option(json.getTopLevelValue).collect { case top: JsonObject => top }.toVector.flatMap { top =>
+    Vector("manifest", "state-manifest", "catalog").flatMap { setting =>
+      root.setting(setting).toVector.flatMap { path =>
+        Option(root.directory.findFileByRelativePath(path)).flatMap(f => Option(PsiManager.getInstance(workspace.project).findFile(f))).toVector.flatMap {
+          case file@(json: JsonFile) => Option(json.getTopLevelValue).collect { case top: JsonObject => top }.toVector.flatMap { top =>
             val metadata = property(top, "metadata").collect { case m: JsonObject => m }
             val schema = metadata.flatMap(text(_, "dbt_schema_version"))
             val valid = schema.exists(s => if (setting == "catalog") s == "https://schemas.getdbt.com/dbt/catalog/v1.json"
-              else s.matches("https://schemas\\.getdbt\\.com/dbt/manifest/v(9|10|11|12)\\.json"))
+            else s.matches("https://schemas\\.getdbt\\.com/dbt/manifest/v(9|10|11|12)\\.json"))
             if (!valid) Vector.empty else {
               val entries = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks")
                 .flatMap(objects(top, _))
@@ -71,6 +75,6 @@ private[dbt] object DbtArtifacts {
           case _ => Vector.empty
         }
       }
-    }}
+    }
   }
 }

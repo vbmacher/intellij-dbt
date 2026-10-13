@@ -157,9 +157,12 @@ private[dbt] object DbtWorkspace {
   private val resourceKeys = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "analyses" -> "analysis",
     "macros" -> "macro", "sources" -> "source", "exposures" -> "exposure", "groups" -> "group", "metrics" -> "metric",
     "semantic_models" -> "semantic_model", "saved_queries" -> "saved_query", "functions" -> "function", "unit_tests" -> "unit_test", "checks" -> "check")
-  def get(project: Project): DbtWorkspace = CachedValuesManager.getManager(project).getCachedValue(project, () =>
-    CachedValueProvider.Result.create(build(project), PsiModificationTracker.MODIFICATION_COUNT,
-      VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS))
+  def get(project: Project): DbtWorkspace = CachedValuesManager.getManager(project).getCachedValue(project, () => {
+    val workspace = build(project)
+    val artifacts = DbtParquetArtifacts.files(workspace).flatMap(f => Option(PsiManager.getInstance(project).findFile(f)))
+    CachedValueProvider.Result.create(workspace, (Vector[AnyRef](PsiModificationTracker.MODIFICATION_COUNT,
+      VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++ artifacts): _*)
+  })
 
   private def build(project: Project): DbtWorkspace = {
     val manager = PsiManager.getInstance(project)
@@ -214,7 +217,8 @@ private[dbt] object DbtWorkspace {
     val projections = remapped.filter(s => s.kind == "model" && s.attributes.contains("code")).flatMap(DbtSqlNavigation.projections)
       .filterNot(c => remapped.exists(s => s.kind == "column" && s.namespace == c.namespace && s.owner == c.owner && s.name == c.name && s.version == c.version))
     val local = new DbtWorkspace(project, roots, files, remapped ++ projections)
-    new DbtWorkspace(project, roots, files, remapped ++ projections ++ DbtArtifacts.symbols(local))
+    val json = new DbtWorkspace(project, roots, files, local.symbols ++ DbtArtifacts.symbols(local))
+    new DbtWorkspace(project, roots, files, json.symbols ++ DbtParquetArtifacts.symbols(json))
   }
 
   private def indexFile(file: PsiFile, root: DbtRoot): Vector[DbtSymbol] = {

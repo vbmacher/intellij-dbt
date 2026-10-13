@@ -8,7 +8,7 @@ JDK 25, and plugin build `2026.2`. The examples and capability matrix are in the
 
 | Command | Result |
 | --- | --- |
-| `sbt --batch test` | 81 passed: 18 variable tests and 63 broader navigation tests |
+| `sbt --batch test` | 88 passed: 18 variable, 63 broader navigation, and 7 Parquet tests |
 | `python3 scripts/test-python.py` | 3 passed with the free Python Community plugin |
 | `sbt --batch packageArtifactZip` | Distribution ZIP built successfully |
 | `git diff --check` | Passed |
@@ -17,11 +17,12 @@ The default suite runs without Python, Ultimate, or Database Tools plugins. Fixt
 exercise source identities, reverse reference searches, lexical and project scope,
 packages, versions, YAML offsets, ignored/disabled resources, incomplete templates,
 unsaved edits, file moves, SQL symbols, semantics, tests, selectors, lineage, and
-explicit JSON artifacts. They also check native Go to Declaration and Find Usages
+explicit JSON and Parquet artifacts. They also check native Go to Declaration and Find Usages
 target selection. The Python suite uses native PSI without executing model code.
 
-The ZIP contains JSqlParser 5.4, its Apache license/notice, and the plugin's navigation
-classes. Test libraries, the IntelliJ SDK, and optional language plugins are not bundled.
+The ZIP contains JSqlParser 5.4, Apache Parquet 1.18.1, their Apache licenses/notices,
+the required Hadoop client runtime, and the plugin's navigation classes. Test libraries,
+the IntelliJ SDK, and optional language plugins are not bundled.
 The artifact is `target/intellij-dbt-2026.2.zip`.
 
 ## Manual Community IDE checks
@@ -59,6 +60,10 @@ not run dbt, templates, models, or warehouse queries.
 | Find Usages from `orders.sql` | Found ten references across SQL, Python, YAML, checks, and selectors |
 | dbt Properties | Offered both properties files with correct line numbers |
 | dbt Dependencies | Listed children and original call sites with correct line numbers |
+| Parquet-only `ref('parquet_orders')` | Reached the model name in a read-only metadata JSON document |
+| SQL column `p.customer_id` on that resource | Reached its `dbt.node_columns.parquet` metadata row |
+| `info_schema('models')` with selected Parquet | Reached the table's metadata view definition |
+| dbt Dependencies with selected `dbt.edges.parquet` | Included the model's parent and the original metadata edge row |
 
 The bundled JCEF browser reported a Markdown-preview startup error in this isolated
 environment. The IDE attributed it to Web Browser (JCEF); no error was attributed to
@@ -68,7 +73,9 @@ Local screenshots and IDE logs for this run are retained in
 `/tmp/intellij-dbt-manual/`. Representative evidence files are `final-package.png`,
 `final-version.png`, `final-python.png`, `final-semantic.png`, `final-doc-find.png`,
 `verified-model-usages.png`, `verified-fixture-usages.png`, `verified-properties.png`,
-and `verified-dependencies.png`.
+and `verified-dependencies.png`. Parquet evidence is in `parquet-model-confirmed.png`,
+`parquet-column-confirmed.png`, `parquet-view-confirmed.png`, and `parquet-dependencies.png`.
+The Parquet manual session reported no IDE or plugin errors.
 
 ## Limits and remaining work
 
@@ -76,8 +83,12 @@ This is representative manual coverage, not a complete manual audit of every acc
 criterion in issues #4–31. Engine/version and malformed/ambiguous input cases primarily
 have fixture coverage.
 
-Issue #30 remains partial: explicit manifest, catalog, and state JSON navigation is
-implemented; Parquet Information Schema artifact reading is deferred. Runtime deferral
-and warehouse existence are not inferred. SQL navigation remains bounded by JSqlParser
+Issue #30 now includes explicitly selected manifest/catalog/state JSON and v2 Information
+Schema v1 Parquet resource, column, and edge metadata. Parquet tests cover Snappy, Gzip,
+Zstandard, uncompressed data, timestamp logical types, version/source identities, source
+precedence, reverse reference search, file replacement, stale/unsaved source, engine gates,
+malformed/incompatible input, and the row limit. Runtime deferral and warehouse existence
+are not inferred. Runtime tables and column-level lineage tables are not indexed.
+SQL navigation remains bounded by JSqlParser
 and available static schema evidence. Ignore negation patterns and selector YAML alias
 expansion are unsupported. See the README for the full supported scope.

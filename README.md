@@ -270,6 +270,7 @@ the dbt project root. This is plugin configuration, not a dbt project file.
 | Explicit `engine: v2` | Enables checks and Information Schema v1 documentation |
 | Manifest JSON | Explicit local schema versions 9–12 |
 | Catalog JSON | Explicit local schema version 1; fresh column metadata |
+| Information Schema Parquet | Explicit local v2 `v1/` directory; resource metadata, fresh columns and DAG edges |
 | Python models | Native PSI from optional free Python Community Edition plugin |
 
 Example settings (omit anything you do not use):
@@ -309,8 +310,29 @@ Explicit JSON artifacts supply metadata targets when local source is absent. Tar
 labeled as metadata, including stale metadata; current source always takes precedence.
 Incompatible schemas are ignored. A state manifest provides evidence about available
 metadata, not proof of runtime warehouse existence or dbt deferral selection.
-**Parquet Information Schema artifact reading is deferred**; ordinary source navigation and
-v2 schema documentation do not need Parquet.
+For existing dbt v2 Information Schema files, select their versioned directory:
+
+```yaml
+# .dbt-navigation.yml
+engine: v2
+info-schema-dir: target/info_schema/v1
+```
+
+The plugin uses [Apache Parquet](https://github.com/apache/parquet-java) to read `dbt.models.parquet`, the other supported resource
+tables, `dbt.node_columns.parquet`, and `dbt.edges.parquet`. It never generates these files.
+For example, `ref('remote_orders')` can navigate to a model's metadata row when its source
+is unavailable. Local source and declared columns take precedence. Metadata-only targets
+open a read-only JSON representation of the selected Parquet data; they are not code files.
+`info_schema('models')` and known view columns can also navigate to that representation.
+
+Resource metadata with a missing/old `ingested_at` is marked stale. Stale columns and edges
+are ignored, including when a resource has unsaved edits. Unknown schemas, unsupported
+directory versions and unreadable files are ignored. Reads are cancellable and capped at
+100,000 rows, 64 MiB on disk and 128 MiB of row-group data per file. Runtime tables,
+variable values and arbitrary Parquet datasets are not indexed. Without explicit selection,
+Information Schema navigation continues to use the built-in schema documentation.
+See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
+and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
 
 For v2 checks, select `engine: v2` and configure dbt's `info_schema.version: 1`:
 
@@ -356,7 +378,8 @@ The plugin is built with [sbt](https://www.scala-sbt.org/) and
 
 The plugin uses IntelliJ YAML and JSON PSI, [HubSpot Jinjava](https://github.com/HubSpot/jinjava)
 for Jinja tokens, and [JSqlParser](https://github.com/JSQLParser/JSqlParser) for SQL syntax and
-source ranges. It does not implement a SQL grammar. Tests run against the Community SDK.
+source ranges, plus [Apache Parquet](https://github.com/apache/parquet-java) for selected
+Information Schema artifacts. It does not implement a SQL grammar. Tests run against the Community SDK.
 
 ```bash
 sbt compile        # downloads IntelliJ SDK (first run) and compiles the plugin

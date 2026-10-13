@@ -24,6 +24,10 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "com.hubspot.jinjava" % "jinjava" % "2.8.4",
       "com.github.jsqlparser" % "jsqlparser" % "5.4",
+      "org.apache.parquet" % "parquet-hadoop" % "1.18.1",
+      // Parquet's codecs use Hadoop APIs; shaded client dependencies avoid IDE library conflicts.
+      "org.apache.hadoop" % "hadoop-client-api" % "3.5.0",
+      "org.apache.hadoop" % "hadoop-client-runtime" % "3.5.0",
       "junit" % "junit" % "4.13.2" % Test,
       "com.github.sbt" % "junit-interface" % "0.13.3" % Test,
       "org.opentest4j" % "opentest4j" % "1.3.0" % Test,
