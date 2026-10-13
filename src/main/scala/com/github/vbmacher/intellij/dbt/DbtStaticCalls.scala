@@ -16,13 +16,14 @@ private[dbt] object DbtStaticCalls {
       case xs if xs.headOption.exists(_.image == "(") && xs.lastOption.exists(_.image == ")") => value(xs.drop(1).dropRight(1), constants)
       case _ => Vector.empty
     }
+
     val operators = tokens.zipWithIndex.collect { case (t, i) if !t.string && Set("~", "+").contains(t.image) => i }
     if (operators.isEmpty) atom(tokens)
     else {
       val boundaries = Vector(-1) ++ operators ++ Vector(tokens.size)
       boundaries.sliding(2).collect { case Vector(a, b) => atom(tokens.slice(a + 1, b)) }.foldLeft(Vector("")) { (left, right) =>
         if (left.size * right.size > 16) Vector.empty else for (a <- left; b <- right) yield a + b
-      }.toVector
+      }
     }
   }
 
@@ -46,7 +47,7 @@ private[dbt] object DbtStaticCalls {
         val conditional = blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset).count(x => x.tag && x.tokens.headOption.exists(_.image == "if")) >
           blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset).count(x => x.tag && x.tokens.headOption.exists(_.image == "endif"))
         val values = if (conditional && (next.isEmpty || env.get(name).exists(_.isEmpty))) Vector.empty
-          else if (conditional) (env.getOrElse(name, Vector.empty) ++ next).distinct else next
+        else if (conditional) (env.getOrElse(name, Vector.empty) ++ next).distinct else next
         scopes = (scopes.head + (name -> values)) :: scopes.tail
       }
     }
@@ -64,7 +65,7 @@ private[dbt] object DbtStaticCalls {
         val namespaces = if (qualified) args.head.map(Some(_)) else Vector(None)
         val version = call.arguments.find(a => a.keyword.exists(Set("v", "version"))).flatMap(_.literal)
         (for (name <- names; ns <- namespaces; s <- w.declarations(kinds, name, root, ns)
-          if version.fold(s.version.isEmpty)(v => s.version.contains(v))) yield s.element).distinct
+              if version.fold(s.version.isEmpty)(v => s.version.contains(v))) yield s.element).distinct
       case "source" if args.size == 2 => w.symbols.filter(s => s.kind == "source_table" && args.head.contains(s.owner) && args(1).contains(s.name) &&
         w.root(s.file).exists(r => w.namespaceVisible(root, r, qualified = false))).map(_.element)
       case "var" => args.headOption.toVector.flatten.flatMap(DbtNavigation.variable(w, root, _))
@@ -88,9 +89,11 @@ private[dbt] object DbtStaticCalls {
     val result = ArrayBuffer.empty[(DbtSyntax.Argument, Vector[PsiElement])]
     body.flatMap(DbtSyntax.calls).foreach { delegated =>
       val targets = this.targets(w, root, delegated, env)
-      delegated.arguments.foreach { a => a.tokens.filter(t => !t.string).flatMap(t => bindings.get(t.image)).foreach { case (argument, _) =>
-        if (targets.nonEmpty) result += argument -> targets
-      }}
+      delegated.arguments.foreach { a =>
+        a.tokens.filter(t => !t.string).flatMap(t => bindings.get(t.image)).foreach { case (argument, _) =>
+          if (targets.nonEmpty) result += argument -> targets
+        }
+      }
       if (targets.isEmpty) w.declarations(Set("macro"), delegated.name, root).foreach { next =>
         wrapperTargets(w, root, next, delegated, env, visited + macroSymbol.id).foreach { case (arg, candidates) =>
           arg.tokens.flatMap(t => bindings.get(t.image)).foreach { case (original, _) => result += original -> candidates }
