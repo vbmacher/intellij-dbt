@@ -10,7 +10,7 @@ SQL, DuckDB or warehouse queries, and does not download packages or metadata.
 
 Validated with JDK 25 and IntelliJ IDEA Community `IC-262.9437.185`:
 
-- `sbt --batch test`: 121 fixture tests without Python, Ultimate or Database Tools.
+- `sbt --batch test`: 122 fixture tests without Python, Ultimate or Database Tools.
 - `python3 scripts/test-python.py`: five fixtures with the free Python Community plugin.
 - `sbt --batch packageArtifactZip`: distribution ZIP, `target/intellij-dbt-2026.2.zip`.
 - `git diff --check`: no whitespace errors.

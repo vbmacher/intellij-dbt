@@ -87,7 +87,9 @@ private[dbt] object DbtStaticCalls {
         val qualified = args.size >= 2
         val names = args.lift(if (qualified) 1 else 0).getOrElse(Vector.empty)
         val namespaces = if (qualified) args.head.map(Some(_)) else Vector(None)
-        val version = call.arguments.find(a => a.keyword.exists(Set("v", "version"))).flatMap(_.literal)
+        val versionArgument = call.arguments.find(a => a.keyword.exists(Set("v", "version")))
+        val version = versionArgument.flatMap(_.literal)
+        if (versionArgument.nonEmpty && version.isEmpty) return Vector.empty
         (for (name <- names; ns <- namespaces; defs = w.declarations(kinds, name, root, ns);
               latest = defs.flatMap(_.attributes.get("latest_version")).distinct;
               selected = version.orElse(if (latest.size == 1) latest.headOption else None);

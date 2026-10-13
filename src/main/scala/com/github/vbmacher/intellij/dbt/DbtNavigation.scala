@@ -95,10 +95,12 @@ private[dbt] object DbtNavigation {
           call.arguments.filter(a => a.keyword.isEmpty && a.literal.isEmpty).foreach(a => a.range.foreach(x =>
             add(x, DbtStaticCalls.targets(workspace, r, call, constants), "static reference")))
           val defs = definitions(call, if (base == "ref") resources else Set("function"))
-          val requested = call.arguments.find(a => a.keyword.exists(Set("v", "version"))).flatMap(_.literal)
+          val versionArgument = call.arguments.find(a => a.keyword.exists(Set("v", "version")))
+          val requested = versionArgument.flatMap(_.literal)
           val latest = defs.flatMap(_.attributes.get("latest_version")).distinct
           val selected = requested.orElse(if (latest.size == 1) latest.headOption else None)
-          val targets = defs.filter(s => selected.fold(s.version.isEmpty)(v => s.version.contains(v)))
+          val targets = if (versionArgument.nonEmpty && requested.isEmpty) Vector.empty else
+            defs.filter(s => selected.fold(s.version.isEmpty)(v => s.version.contains(v)))
           arg(call, if (literal(call, 1).nonEmpty) 1 else 0).foreach(x => add(x, targets.map(_.element), base))
           if (literal(call, 1).nonEmpty) arg(call, 0).foreach(x => add(x, workspace.roots.filter(rr => literal(call, 0).contains(rr.name))
             .map(rr => rr.config.getContainingFile), "package"))

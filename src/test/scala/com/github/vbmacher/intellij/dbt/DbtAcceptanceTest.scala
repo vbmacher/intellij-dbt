@@ -465,4 +465,15 @@ final class DbtAcceptanceTest extends BasePlatformTestCase {
     assertEquals(1, myFixture.findUsages(declaration).size())
     assertEquals(Vector(declaration), targets(use, "DBT_ENV_SECRET_TOKEN"))
   }
+
+  def testRuntimeVersionArgumentsDoNotChooseLatest(): Unit = {
+    root()
+    add("models/orders_v1.sql", "select 1")
+    add("models/orders_v2.sql", "select 2")
+    add("models/orders.yml", "models:\n- name: orders\n  latest_version: 2\n  versions: [{v: 1}, {v: 2}]\n")
+    val use = add("models/use.sql", "{{ ref('orders', v=runtime_version) }}{{ ref('orders', version=env_var('VERSION')) }}{% set name = 'orders' %}{{ ref(name, v=runtime_version) }}")
+    assertTrue(targets(use, "orders").isEmpty)
+    assertTrue(targets(use, "orders", 1).isEmpty)
+    assertTrue(DbtNavigation.inFile(use).filter(_.label == "static reference").forall(_.candidates.isEmpty))
+  }
 }

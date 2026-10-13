@@ -8,7 +8,7 @@ JDK 25, and plugin build `2026.2`. The examples and capability matrix are in the
 
 | Command | Result |
 | --- | --- |
-| `sbt --batch test` | 121 passed: 18 variable, 63 navigation, 32 acceptance, and 8 Parquet tests |
+| `sbt --batch test` | 122 passed: 18 variable, 63 navigation, 33 acceptance, and 8 Parquet tests |
 | `python3 scripts/test-python.py` | 5 passed with the free Python Community plugin |
 | `sbt --batch packageArtifactZip` | Distribution ZIP built successfully |
 | `git diff --check` | Passed |
