@@ -7,8 +7,19 @@ import com.intellij.psi.util.{CachedValueProvider, CachedValuesManager}
 final class DbtVariableReference(element: PsiElement, range: TextRange, val name: String)
   extends PsiReferenceBase[PsiElement](element, range, true) {
 
-  override def resolve(): PsiElement = DbtProject.forProject(element.getProject)
-    .filter(_.accepts(element.getContainingFile)).flatMap(_.resolve(name)).orNull
+  override def resolve(): PsiElement = {
+    val workspace = DbtWorkspace.get(element.getProject)
+    val file = element.getContainingFile
+    workspace.root(file).filter(_.resource(file)).flatMap { root =>
+      val call = DbtVariableReference.calls(file).find(_.range == range)
+      val shadowed = workspace.declarations(Set("macro"), "var", root).nonEmpty || call.exists(c =>
+        DbtLocals.references(file, DbtSyntax.inFile(file), workspace).exists(_.getRangeInElement.containsOffset(c.callOffset)))
+      if (shadowed) None else {
+        val targets = DbtVariableContexts.roots(workspace, file, root).flatMap(r => DbtNavigation.variable(workspace, r, name)).distinct
+        if (targets.size == 1) targets.headOption else None
+      }
+    }.orNull
+  }
 
   override def getCanonicalText: String = name
 

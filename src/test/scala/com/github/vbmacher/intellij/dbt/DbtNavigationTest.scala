@@ -181,6 +181,26 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
   }
 
+  def testVarsFileConflictAndPackageDefaults(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    add("vars.yml", "vars:\n  color: root\n  util:\n    scoped: override\n")
+    add("dbt_packages/util/dbt_project.yml", "name: util\nvars:\n  fallback: package\n  scoped: package\n")
+    val file = add("dbt_packages/util/models/use.sql", "{{ builtins.var('color') }} {{ var('scoped') }} {{ var('fallback') }}")
+    assertTrue(path(target(file, "color")).endsWith("vars.yml"))
+    assertEquals("override", target(file, "scoped").asInstanceOf[org.jetbrains.yaml.psi.YAMLKeyValue].getValueText)
+    assertTrue(path(target(file, "fallback")).endsWith("dbt_packages/util/dbt_project.yml"))
+    val dm = PsiDocumentManager.getInstance(getProject)
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
+      val config = getProjectFile("dbt_project.yml")
+      dm.getDocument(config).setText("name: analytics\nvars:\n  color: conflict\n"); dm.commitAllDocuments()
+    }})
+    assertTrue(refs(file, "color").forall(_.candidates.isEmpty))
+  }
+
+  private def getProjectFile(name: String): PsiFile = com.intellij.psi.PsiManager.getInstance(getProject).findFile(
+    DbtWorkspace.get(getProject).roots.find(_.name == "analytics").get.directory.findFileByRelativePath(name))
+
   def testConfigurationHierarchyAndCustomMaterialization(): Unit = {
     root("models:\n  analytics:\n    +materialized: view\n    marts:\n      +materialized: table\n")
     add("macros/custom.sql", "{% materialization incremental_custom, adapter='default' %}select 1{% endmaterialization %}")
@@ -247,6 +267,23 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("model", com.intellij.lang.findUsages.LanguageFindUsages.INSTANCE.forLanguage(selected.getLanguage).getType(selected))
   }
 
+  def testBuiltinVarOverridesAndExplicitBuiltinEscape(): Unit = {
+    root("vars:\n  color: red\n")
+    add("macros/var.sql", "{% macro var(name) %}{{ builtins.var(name) }}{% endmacro %}")
+    val file = add("models/use.sql", "{{ var('color') }} {{ builtins.var('color') }}")
+    assertNull(DbtVariableReference.inFile(file).head.resolve())
+    assertEquals("macro", target(file, "var").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertNotNull(target(file, "color", 1))
+  }
+
+  def testPackageMacroVariableScopeComesFromCallingNode(): Unit = {
+    root("vars:\n  color: global\n  analytics:\n    color: root_node\n  util:\n    color: package_node\n")
+    add("dbt_packages/util/dbt_project.yml", "name: util\n")
+    val macroFile = add("dbt_packages/util/macros/color.sql", "{% macro color() %}{{ var('color') }}{% endmacro %}")
+    add("models/use.sql", "{{ util.color() }}")
+    assertEquals("root_node", target(macroFile, "color", 1).asInstanceOf[org.jetbrains.yaml.psi.YAMLKeyValue].getValueText)
+  }
+
   def testSourceNamespaceDoesNotLeakFromInstalledPackage(): Unit = {
     root()
     add("models/sources.yml", "sources:\n- name: raw\n  tables:\n  - name: events\n")
@@ -255,6 +292,12 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     val file = add("models/use.sql", "{{ source('raw', 'events') }}")
     assertEquals(1, refs(file, "events").flatMap(_.candidates).distinct.size)
     assertFalse(path(target(file, "events")).contains("dbt_packages"))
+  }
+
+  def testProjectConfigVarsRequireVarsFile(): Unit = {
+    root("vars:\n  color: red\nmodels:\n  analytics:\n    +schema: \"{{ var('color') }}\"\n")
+    val file = getProjectFile("dbt_project.yml")
+    assertTrue(refs(file, "color", 1).forall(_.candidates.isEmpty))
   }
 
   def testSqlConfigEnabledOverridesPropertyDefaults(): Unit = {
