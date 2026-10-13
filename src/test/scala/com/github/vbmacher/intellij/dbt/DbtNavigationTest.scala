@@ -338,6 +338,19 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("triple", target(file, "value", 1).asInstanceOf[DbtSymbolElement].symbol.owner)
   }
 
+  def testDocumentationTargetsUseCanonicalUrlsAndContexts(): Unit = {
+    root()
+    val file = add("models/use.sql", "{{ env_var('MISSING') }} {{ run_query('select 1') }}")
+    assertEquals("https://docs.getdbt.com/reference/dbt-jinja-functions/env_var?version=1.10", target(file, "env_var").asInstanceOf[DbtSymbolElement].symbol.attributes("url"))
+    assertEquals("https://docs.getdbt.com/reference/dbt-jinja-functions/run_query?version=1.10", target(file, "run_query").asInstanceOf[DbtSymbolElement].symbol.attributes("url"))
+    add(".env", "NAME=local\n")
+    val deps = add("dependencies.yml", "packages:\n- package: \"{{ env_var('NAME') }}\"\n")
+    assertTrue(DbtNavigation.inFile(deps).forall(_.candidates.isEmpty))
+    add("models/orders.sql", "select 1")
+    val python = add("models/use.py", "def model(dbt, session):\n    text = \"{{ ref('orders') }}\"\n    return text\n")
+    assertTrue(refs(python, "orders").forall(_.candidates.isEmpty))
+  }
+
   def testCallBlockParametersDoNotShadowTheInvocationArguments(): Unit = {
     root()
     val file = add("models/use.sql", "{% set user = 'outer' %}{% call(user) consume(user) %}{{ user }}{% endcall %}{{ user }}")
