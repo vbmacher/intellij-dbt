@@ -95,6 +95,21 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "start_date").isEmpty)
   }
 
+  def testPackagesAndNestedProjectsKeepNamespaces(): Unit = {
+    root("vars:\n  color: red\n")
+    add("models/orders.sql", "select 1")
+    add("dbt_packages/util/dbt_project.yml", "name: util\n")
+    val packaged = add("dbt_packages/util/models/orders.sql", "select 2")
+    add("dbt_packages/util/macros/double.sql", "{% macro double(x) %}{{ x * 2 }}{% endmacro %}")
+    add("nested/dbt_project.yml", "name: nested\nvars:\n  color: blue\n")
+    val nested = add("nested/models/use.sql", "{{ var('color') }} {{ ref('orders') }}")
+    val file = add("models/use.sql", "{{ ref('util', 'orders') }} {{ util.double(2) }}")
+    assertEquals(path(packaged), path(target(file, "orders")))
+    assertEquals("blue", target(nested, "color").asInstanceOf[org.jetbrains.yaml.psi.YAMLKeyValue].getValueText)
+    assertTrue(refs(nested, "orders").forall(_.candidates.isEmpty))
+    assertTrue(path(target(file, "util.double")).contains("dbt_packages/util"))
+  }
+
   def testProfileTargetAndEnvironmentNames(): Unit = {
     root("profile: analytics\n")
     add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev:\n      type: postgres\n      schema: public\n")
@@ -263,6 +278,16 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertFalse(env.toString.contains("secret-value"))
     assertEquals("DBT_ENV_SECRET_TOKEN", env.getText)
     assertEquals(1, uses(target(file, "color")))
+  }
+
+  def testInstalledDependencyDeclarationsAndLockNavigation(): Unit = {
+    root("packages-install-path: vendor\n")
+    add("vendor/dbt_utils/dbt_project.yml", "name: dbt_utils\nversion: 1.2.0\n")
+    val lock = add("package-lock.yml", "packages:\n- package: dbt-labs/dbt_utils\n  version: 1.2.0\n")
+    val dependencies = add("packages.yml", "packages:\n- package: dbt-labs/dbt_utils\n  version: 1.2.0\n- package: missing/unknown\n")
+    assertTrue(path(target(dependencies, "dbt-labs/dbt_utils")).endsWith("vendor/dbt_utils/dbt_project.yml"))
+    assertEquals(path(lock), path(target(dependencies, "1.2.0")))
+    assertTrue(refs(dependencies, "missing/unknown").forall(_.candidates.isEmpty))
   }
 
   def testUnitThisAndVariableOverrideIdentity(): Unit = {
