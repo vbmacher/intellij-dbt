@@ -56,6 +56,7 @@
         <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesProvider"/>
         <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
         <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
+        <targetElementEvaluator language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
         <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesHandlerFactory" order="first"/>
         <referencesSearch implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferencesSearch"/>
     </extensions>

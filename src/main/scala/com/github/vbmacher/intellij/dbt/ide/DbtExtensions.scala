@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.{DbtEnvironment, DbtSymbolElement, DbtWorkspace}
-import com.intellij.codeInsight.TargetElementEvaluatorEx2
+import com.intellij.codeInsight.{TargetElementEvaluatorEx2, TargetElementUtil}
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.find.findUsages.{FindUsagesHandler, FindUsagesHandlerFactory}
 import com.intellij.lang.findUsages.FindUsagesProvider
@@ -76,11 +76,11 @@ final class DbtFindUsagesProvider extends FindUsagesProvider {
   override def getNodeText(element: PsiElement, useFullName: Boolean): String = getDescriptiveName(element)
 }
 
-/** Make declarations in plain-text Community resources available to native Find Usages actions. */
+/** Make dbt declarations available to native Find Usages actions. */
 final class DbtTargetElementEvaluator extends TargetElementEvaluatorEx2 {
   override def adjustReferenceOrReferencedElement(file: PsiFile, editor: Editor, offset: Int,
     flags: Int, refElement: PsiElement): PsiElement = {
-    if (refElement != null || file == null) return refElement
+    if (refElement != null || file == null || (flags & TargetElementUtil.ELEMENT_NAME_ACCEPTED) == 0) return refElement
     val workspace = DbtWorkspace.get(file.getProject)
     val lexical = DbtNavigation.inFile(file).flatMap(_.candidates).collect {
       case e: DbtSymbolElement if e.symbol.file == file && !e.symbol.metadata && e.symbol.range.containsOffset(offset) => e.symbol
