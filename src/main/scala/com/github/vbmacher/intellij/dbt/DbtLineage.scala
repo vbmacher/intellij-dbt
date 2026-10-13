@@ -40,7 +40,7 @@ private[dbt] object DbtLineage {
       val reference = new DbtNavigationReference(from.file, from.range, selected.map(_.element), "artifact dependency")
       selected.map(to => DbtDependency(from, to, reference))
     }
-  }
+  } ++ DbtParquetArtifacts.edges(w)
   def traverse(edges: Vector[DbtDependency], start: DbtSymbol, downstream: Boolean, depth: Int): Vector[DbtSymbol] = {
     val seen = mutable.Set(start.id)
     var frontier = Vector(start)
