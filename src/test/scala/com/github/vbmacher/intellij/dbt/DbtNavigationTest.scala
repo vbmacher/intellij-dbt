@@ -159,6 +159,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("metric", target(schema, "total_revenue", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
   }
 
+  def testFunctionAndChecksVersionGates(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "engine: v2\ndbt-version: '2.0'\n")
+    add("functions/hash.sql", "select 1")
+    val check = add("checks/missing.sql", "select name from {{ info_schema('models') }} where name = {{ function('hash') }}")
+    assertTrue(path(target(check, "hash")).endsWith("hash.sql"))
+    assertEquals("documentation", target(check, "models").asInstanceOf[DbtSymbolElement].symbol.kind)
+  }
+
   def testSqlCteAliasesAndDeclaredColumns(): Unit = {
     root()
     add("models/orders.sql", "select 1 as order_id")
@@ -421,6 +430,16 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
   }
 
+
+  def testInfoSchemaColumnsAndProvedResourceNamePredicates(): Unit = {
+    root("info_schema:\n  version: 1\n")
+    add(".dbt-navigation.yml", "engine: v2\ndbt-version: '2.0'\n")
+    val model = add("models/orders.sql", "select 1")
+    val check = add("checks/descriptions.sql", "select name from {{ info_schema('models') }} where name = 'orders' and description <> 'orders'")
+    assertEquals("documentation", target(check, "name").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals(path(model), path(target(check, "orders")))
+    assertTrue(refs(check, "orders", 1).isEmpty)
+  }
 
   def testIndexLargeProjectAndPartialTemplates(): Unit = {
     root()
