@@ -9,13 +9,15 @@ private[dbt] object DbtVariableContexts {
     val macros = w.symbols.filter(s => s.kind == "macro" && s.file == file)
     if (macros.isEmpty) return Vector(fallback)
     val callers = w.files.filter(f => w.symbols.exists(s => s.file == f && s.attributes.contains("code") && s.kind != "macro"))
-      .flatMap { caller => w.root(caller).toVector.filter { root =>
-        DbtSyntax.inFile(caller).flatMap(DbtSyntax.calls).exists { call =>
-          val parts = call.name.split("\\.")
-          w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None)
-            .exists(m => macros.exists(_.id == m.id))
+      .flatMap { caller =>
+        w.root(caller).toVector.filter { root =>
+          DbtSyntax.inFile(caller).flatMap(DbtSyntax.calls).exists { call =>
+            val parts = call.name.split("\\.")
+            w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None)
+              .exists(m => macros.exists(_.id == m.id))
+          }
         }
-      }}.distinct
+      }.distinct
     if (callers.nonEmpty) callers else Vector(fallback)
   }
 }
