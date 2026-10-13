@@ -168,4 +168,22 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(DbtWorkspace.get(getProject).root(temporary).isEmpty)
   }
 
+  def testNestedDefaultsDoNotCreateFakeMacroParameters(): Unit = {
+    root()
+    val macroFile = add("macros/format.sql", "{% macro format(a=['one', 'two'], b=namespace(flag=true)) %}{{ a }} {{ b }}{% endmacro %}")
+    val file = add("models/use.sql", "{{ format(b=1) }}")
+    val parameter = target(file, "b").asInstanceOf[DbtSymbolElement]
+    assertEquals("parameter", parameter.symbol.kind)
+    assertEquals(2, DbtWorkspace.get(getProject).symbols.count(s => s.file == macroFile && s.kind == "parameter"))
+    assertEquals(2, uses(parameter))
+  }
+
+  def testRepeatedNamedArgumentsNavigateToTheirOwnMacro(): Unit = {
+    root()
+    add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}{% macro triple(value) %}{{ value * 3 }}{% endmacro %}")
+    val file = add("models/use.sql", "{{ double(value=1) + triple(value=2) }}")
+    assertEquals("double", target(file, "value").asInstanceOf[DbtSymbolElement].symbol.owner)
+    assertEquals("triple", target(file, "value", 1).asInstanceOf[DbtSymbolElement].symbol.owner)
+  }
+
 }
