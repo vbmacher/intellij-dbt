@@ -139,6 +139,13 @@ private[dbt] object DbtWorkspace {
     configFile(project, directory).flatMap(DbtYaml.mapping)
       .map(DbtRoot(directory, _, settingsFile(project, directory).flatMap(DbtYaml.mapping)))
 
+  /** Local declarations for file presentation, without building the entire workspace. */
+  def declarationsInFile(file: PsiFile): Vector[DbtSymbol] = Option(file.getVirtualFile).toVector.flatMap { virtualFile =>
+    val root = Iterator.iterate(virtualFile.getParent)(_.getParent).takeWhile(_ != null)
+      .flatMap(directory => loadRoot(file.getProject, directory)).nextOption()
+    root.filterNot(_.excluded(virtualFile)).toVector.flatMap(r => fileSymbols(file.getProject, file, r.directory))
+  }
+
   private def discoverRoots(project: Project): Vector[DbtRoot] = {
     val bases = (Option(project.getBasePath).flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).toVector ++
       ProjectRootManager.getInstance(project).getContentRoots.toVector).distinct

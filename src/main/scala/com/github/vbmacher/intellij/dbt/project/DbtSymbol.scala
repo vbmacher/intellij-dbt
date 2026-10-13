@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt.project
 
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.lang.Language
@@ -8,9 +9,10 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.impl.light.LightElement
 import com.intellij.psi.{PsiElement, PsiFile, PsiNamedElement, SmartPointerManager}
-import org.jetbrains.yaml.psi.YAMLMapping
+import org.jetbrains.yaml.psi.{YAMLMapping, YAMLSequence}
 
 import javax.swing.Icon
+import scala.jdk.CollectionConverters._
 
 /**
  * A dbt declaration. Kinds and attributes follow dbt names; notable attributes are `code` (the resource file itself),
@@ -26,6 +28,20 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def isCode: Boolean = attributes.contains("code")
 
   def isProperty: Boolean = attributes.contains("property")
+
+  /** A properties entry dedicated to attached data tests, without other resource or column metadata. */
+  def isTestOnlyProperty: Boolean = isProperty && Set("model", "seed", "snapshot")(kind) && mapping.exists { m =>
+    val testKeys = Set("data_tests", "tests")
+    def onlyKeys(mapping: YAMLMapping, keys: Set[String]): Boolean =
+      mapping.getKeyValues.asScala.forall(k => keys(k.getKeyText))
+    def hasTests(mapping: YAMLMapping): Boolean = testKeys.exists(key => DbtYaml.value(mapping, key).exists {
+      case sequence: YAMLSequence => !sequence.getItems.isEmpty
+      case _ => false
+    })
+    val columns = DbtYaml.items(m, "columns")
+    onlyKeys(m, testKeys ++ Set("name", "columns")) &&
+      columns.forall(c => onlyKeys(c, testKeys + "name") && hasTests(c)) && (hasTests(m) || columns.nonEmpty)
+  }
 
   def isStale: Boolean = attributes.get("stale").contains("true")
 
@@ -104,20 +120,16 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
   override def hashCode(): Int = symbol.id.hashCode
 }
 
-private[project] object DbtSymbolElement {
+private[dbt] object DbtSymbolElement {
   /** Shared by every presentation of a dbt declaration. */
   def icon(kind: String): Icon = kind match {
-    case "model" => AllIcons.Nodes.ModelClass
-    case "source" => AllIcons.Nodes.DataSchema
-    case "source_table" | "information_schema_view" | "cte" => AllIcons.Nodes.DataTables
+    case "model" | "source" | "source_table" | "information_schema_view" | "cte" => AllIcons.Nodes.DataSchema
     case "seed" => AllIcons.FileTypes.Csv
-    case "fixture" => AllIcons.FileTypes.Text
     case "snapshot" => AllIcons.General.History
     case "analysis" | "saved_query" => AllIcons.FileTypes.Sql
     case "macro" | "builtin" => AllIcons.Nodes.Method
     case "function" => AllIcons.Nodes.Function
-    case "test" | "generic_test" => AllIcons.Nodes.Test
-    case "unit_test" => AllIcons.Nodes.TestGroup
+    case "test" | "generic_test" | "unit_test" | "fixture" => AllIcons.Nodes.Test
     case "check" => AllIcons.General.InspectionsOK
     case "doc" | "documentation" => AllIcons.FileTypes.Markdown
     case "semantic_model" => AllIcons.Nodes.Models

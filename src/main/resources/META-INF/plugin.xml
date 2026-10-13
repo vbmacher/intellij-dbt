@@ -51,6 +51,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
         <psi.implicitReferenceProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtImplicitReferenceProvider"/>
         <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesProvider"/>

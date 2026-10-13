@@ -13,7 +13,7 @@ Check that:
 - Any referenced package is installed locally. A cross-project dependency is declared
   and its target is public.
 - The [selected engine and version](configuration.md#engine-and-version) support the feature.
-- The call is in a [supported location](navigation.md#documentation-and-yaml-fields).
+- The call is in a [supported location](navigation.md#where-references-work).
 
 Simple literal values, constant assignments and some wrapper calls can navigate.
 Names that depend on query results, environment values, recursion or arbitrary macro

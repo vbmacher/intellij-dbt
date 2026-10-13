@@ -29,8 +29,8 @@ final class DbtNavigationPresentationTest extends BasePlatformTestCase {
     assertEquals("analytics.orders", declaration.getPresentation.getPresentableText)
     val source = workspace.symbols.find(s => s.file == yaml && s.kind == "source").get
     val table = workspace.symbols.find(s => s.file == yaml && s.kind == "source_table").get
-    assertNotSame(declaration.getIcon(0), source.element.getIcon(0))
-    assertNotSame(source.element.getIcon(0), table.element.getIcon(0))
+    assertSame(declaration.getIcon(0), source.element.getIcon(0))
+    assertSame(source.element.getIcon(0), table.element.getIcon(0))
   }
 
   def testDependenciesGroupReferencesAndKeepDirectionAndExactTargets(): Unit = {
