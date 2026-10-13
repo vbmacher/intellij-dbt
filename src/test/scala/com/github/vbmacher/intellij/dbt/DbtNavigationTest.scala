@@ -240,6 +240,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(DbtWorkspace.get(getProject).symbols.exists(s => s.kind == "metric" && s.name == "revenue" && s.owner == "orders"))
   }
 
+  def testFunctionOverloadsAndProperties(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    add("functions/hash.sql", "select 1")
+    add("functions/hash_numeric.sql", "select 2")
+    val props = add("functions/hash.yml", "functions:\n- name: hash\n  arguments:\n  - name: input\n  returns:\n    data_type: string\n  overloads:\n  - defined_in: hash_numeric\n    arguments:\n    - name: numeric_input\n")
+    val file = add("models/use.sql", "select {{ function('hash') }}(1)")
+    assertEquals(2, refs(file, "hash").flatMap(_.candidates).distinct.size)
+    assertTrue(path(target(props, "hash_numeric")).endsWith("hash_numeric.sql"))
+  }
+
   def testIgnorePathsAndOlderVersionGates(): Unit = {
     root()
     add(".dbtignore", "models/ignored/**\n")
@@ -295,6 +306,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(s"Native Find Usages target: $selected", selected.isInstanceOf[DbtSymbolElement])
     assertEquals(1, myFixture.findUsages(selected).size())
     assertEquals("model", com.intellij.lang.findUsages.LanguageFindUsages.INSTANCE.forLanguage(selected.getLanguage).getType(selected))
+  }
+
+  def testFunctionBodyArgumentsUseLibraryExpressionParser(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    val props = add("functions/is_positive.yml", "functions:\n- name: is_positive\n  arguments:\n  - name: input_value\n  returns:\n    data_type: boolean\n")
+    val body = add("functions/is_positive.sql", "input_value > 0")
+    assertEquals(path(props), path(target(body, "input_value")))
+    assertEquals("parameter", target(body, "input_value").asInstanceOf[DbtSymbolElement].symbol.kind)
   }
 
   def testNoPythonPluginIsRequiredForSqlNavigation(): Unit = {
