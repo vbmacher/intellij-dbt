@@ -62,6 +62,19 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(1, uses(second))
   }
 
+  def testMacroCallsArgumentsAndDocs(): Unit = {
+    root()
+    val macroFile = add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}\n{% macro triple(value) %}{{ value * 3 }}{% endmacro %}")
+    val docs = add("docs/catalog.md", "{% docs orders_description %}Orders{% enddocs %}")
+    val file = add("models/use.sql", "select {{ double(value=1) }}, {{ triple(1) }}")
+    val schema = add("models/schema.yml", "models:\n- name: use\n  description: \"{{ doc('orders_description') }}\"\n")
+    assertEquals(path(macroFile), path(target(file, "double")))
+    assertEquals("parameter", target(file, "value").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertTrue(target(file, "double").getTextOffset < target(file, "triple").getTextOffset)
+    assertEquals(path(docs), path(target(schema, "orders_description")))
+    assertEquals(1, uses(target(file, "double")))
+  }
+
   def testYamlDecodedQuotedAndBlockOffsets(): Unit = {
     root("vars:\n  start_date: today\n")
     add("models/orders.sql", "select 1")
