@@ -189,6 +189,23 @@ python3 scripts/test-python.py
 
 The script accepts `--sdk /path/to/sdk`.
 
+### Architecture
+
+Sources are organized by feature under `com.github.vbmacher.intellij.dbt`:
+
+| Package | Responsibility |
+|---|---|
+| `syntax` | YAML, Jinja and Python source access shared by every feature |
+| `project` | dbt projects, declarations and configuration (the domain), and the declaration source port |
+| `navigation` | reference resolution and the reference provider port |
+| `navigation.jinja`, `.yaml`, `.sql`, `.python` | language adapters providing references |
+| `lineage` | dependencies, node selection and the dependency source port |
+| `metadata` | artifact adapters providing declarations and dependencies |
+| `ide` | IntelliJ extensions and actions |
+
+Adapters are registered for the ports in `plugin.xml`, in priority order. `DbtArchitectureTest` enforces the
+allowed dependencies between packages and the confinement of third-party parsers.
+
 ## Contributing
 
 Contributions are welcome. Pick an existing [issue](https://github.com/vbmacher/intellij-dbt/issues)

@@ -25,20 +25,45 @@
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.intellij.modules.json</depends>
 
+    <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
+    <extensionPoints>
+        <extensionPoint name="declarationSource" interface="com.github.vbmacher.intellij.dbt.project.DbtDeclarationSource" dynamic="true"/>
+        <extensionPoint name="referenceProvider" interface="com.github.vbmacher.intellij.dbt.navigation.DbtReferenceProvider" dynamic="true"/>
+        <extensionPoint name="dependencySource" interface="com.github.vbmacher.intellij.dbt.lineage.DbtDependencySource" dynamic="true"/>
+    </extensionPoints>
+
+    <extensions defaultExtensionNs="com.github.vbmacher.intellij-dbt">
+        <declarationSource implementation="com.github.vbmacher.intellij.dbt.navigation.sql.DbtSqlProjections"/>
+        <declarationSource implementation="com.github.vbmacher.intellij.dbt.navigation.DbtBuiltinSources"/>
+        <declarationSource implementation="com.github.vbmacher.intellij.dbt.project.DbtEnvironmentSource"/>
+        <declarationSource implementation="com.github.vbmacher.intellij.dbt.metadata.DbtArtifactSource"/>
+        <declarationSource implementation="com.github.vbmacher.intellij.dbt.metadata.DbtParquetArtifactSource"/>
+
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.navigation.jinja.DbtJinjaNavigation"/>
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.navigation.yaml.DbtYamlNavigation"/>
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.lineage.DbtSelectorNavigation"/>
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigation"/>
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.navigation.sql.DbtSqlNavigation"/>
+        <referenceProvider implementation="com.github.vbmacher.intellij.dbt.navigation.sql.DbtFunctionParameters"/>
+
+        <dependencySource implementation="com.github.vbmacher.intellij.dbt.metadata.DbtArtifactSource"/>
+        <dependencySource implementation="com.github.vbmacher.intellij.dbt.metadata.DbtParquetArtifactSource"/>
+    </extensions>
+
     <extensions defaultExtensionNs="com.intellij">
-        <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.DbtReferenceContributor"/>
-        <gotoDeclarationHandler implementation="com.github.vbmacher.intellij.dbt.DbtGotoDeclarationHandler"/>
-        <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.DbtFindUsagesProvider"/>
-        <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.DbtTargetElementEvaluator"/>
-        <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.DbtTargetElementEvaluator"/>
-        <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.DbtFindUsagesHandlerFactory" order="first"/>
-        <referencesSearch implementation="com.github.vbmacher.intellij.dbt.DbtReferencesSearch"/>
+        <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
+        <gotoDeclarationHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtGotoDeclarationHandler"/>
+        <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesProvider"/>
+        <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
+        <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
+        <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesHandlerFactory" order="first"/>
+        <referencesSearch implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferencesSearch"/>
     </extensions>
     <actions>
-        <action id="Dbt.Properties" class="com.github.vbmacher.intellij.dbt.DbtPropertiesAction" text="dbt Properties" description="Navigate to properties of the current resource">
+        <action id="Dbt.Properties" class="com.github.vbmacher.intellij.dbt.ide.DbtPropertiesAction" text="dbt Properties" description="Navigate to properties of the current resource">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
-        <action id="Dbt.Dependencies" class="com.github.vbmacher.intellij.dbt.DbtDependenciesAction" text="dbt Dependencies" description="Navigate resolved parents, children, and their call sites">
+        <action id="Dbt.Dependencies" class="com.github.vbmacher.intellij.dbt.ide.DbtDependenciesAction" text="dbt Dependencies" description="Navigate resolved parents, children, and their call sites">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
     </actions>

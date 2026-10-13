@@ -1,5 +1,8 @@
 package com.github.vbmacher.intellij.dbt
 
+import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelectors}
+import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
+import com.github.vbmacher.intellij.dbt.project.{DbtSymbolElement, DbtWorkspace}
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile}
 import com.intellij.psi.search.GlobalSearchScope

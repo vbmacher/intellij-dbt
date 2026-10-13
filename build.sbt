@@ -29,6 +29,7 @@ lazy val root = (project in file("."))
       "org.apache.hadoop" % "hadoop-client-api" % "3.5.0",
       "org.apache.hadoop" % "hadoop-client-runtime" % "3.5.0",
       "junit" % "junit" % "4.13.2" % Test,
+      "com.tngtech.archunit" % "archunit" % "1.5.1" % Test,
       "com.github.sbt" % "junit-interface" % "0.13.3" % Test,
       "org.opentest4j" % "opentest4j" % "1.3.0" % Test,
       ("com.jetbrains.intellij.platform" % "test-framework" % intellijVersion % Test).notTransitive(),
@@ -40,7 +41,7 @@ lazy val root = (project in file("."))
     ),
     Test / parallelExecution := false,
     // Optional Python integration has a separate suite; the default suite proves it is not required.
-    Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.DbtPythonNavigationTest"),
+    Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"),
     Test / javaOptions += "-Didea.load.plugins.id=com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin",
     Compile / javacOptions ++= "--release" :: "21" :: Nil,
     fork := true,
