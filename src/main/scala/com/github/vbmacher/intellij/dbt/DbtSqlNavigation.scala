@@ -16,15 +16,21 @@ private[dbt] object DbtSqlNavigation {
   private def offset(text: String, t: Token, end: Boolean = false): Int = {
     val line = if (end) t.endLine else t.beginLine
     val column = if (end) t.endColumn else t.beginColumn
-    var p = 0; var l = 1; var c = 1
+    var p = 0
+    var l = 1
+    var c = 1
     while (p < text.length && (l < line || c < column)) {
-      if (text(p) == '\n') { l += 1; c = 1 }
+      if (text(p) == '\n') {
+        l += 1
+        c = 1
+      }
       else if (text(p) == '\t') c += 8 - ((c - 1) % 8)
       else c += 1
       p += 1
     }
     if (end) math.min(text.length, p + 1) else p
   }
+
   def projections(resource: DbtSymbol): Vector[DbtSymbol] = {
     val file = resource.file
     if (file.getVirtualFile.getExtension != "sql" || file.getTextLength > 1000000) return Vector.empty
@@ -36,7 +42,9 @@ private[dbt] object DbtSqlNavigation {
       b.range.getStartOffset.until(b.range.getEndOffset).foreach(i => if (masked(i) != '\n' && masked(i) != '\r') masked(i) = ' ')
       if (!b.tag) "_dbt".zipWithIndex.foreach { case (c, n) => if (b.range.getStartOffset + n < b.range.getEndOffset) masked(b.range.getStartOffset + n) = c }
     }
-    val parsed = try CCJSqlParserUtil.parse(new String(masked), p => p.withTimeOut(1000)) catch { case _: JSQLParserException => return Vector.empty }
+    val parsed = try CCJSqlParserUtil.parse(new String(masked), p => p.withTimeOut(1000)) catch {
+      case _: JSQLParserException => return Vector.empty
+    }
     parsed match {
       case select: PlainSelect => Option(select.getSelectItems).toVector.flatMap(_.asScala).flatMap { item =>
         val name = Option(item.getAlias).map(_.getUnquotedName).orElse(item.getExpression match {
@@ -54,7 +62,9 @@ private[dbt] object DbtSqlNavigation {
       case _ => Vector.empty
     }
   }
+
   private final case class Relation(target: Vector[PsiElement], columns: Map[String, Vector[PsiElement]], infoView: Option[String] = None)
+
   def references(file: PsiFile, w: DbtWorkspace, root: DbtRoot, jinja: Vector[DbtNavigationReference]): Vector[DbtNavigationReference] = {
     if (file.getVirtualFile.getExtension != "sql" || file.getTextLength > 1000000) return Vector.empty
     val text = file.getText
@@ -71,7 +81,7 @@ private[dbt] object DbtSqlNavigation {
         val marker = s"_dbt$i"
         marker.zipWithIndex.foreach { case (c, n) => if (b.range.getStartOffset + n < b.range.getEndOffset) masked(b.range.getStartOffset + n) = c }
         val columns = candidates.flatMap(s => w.symbols.filter(c => c.kind == "column" && c.namespace == s.namespace &&
-          c.owner == (if (s.kind == "source_table") s.owner + "." + s.name else s.name) && c.version == s.version))
+            c.owner == (if (s.kind == "source_table") s.owner + "." + s.name else s.name) && c.version == s.version))
           .groupBy(_.name.toLowerCase).view.mapValues(_.map(_.element: PsiElement)).toMap
         val info = if (DbtInfoSchema.enabled(root, file)) DbtSyntax.calls(b).find(_.name == "info_schema")
           .flatMap(_.arguments.headOption.flatMap(_.literal)).filter(DbtInfoSchema.views.contains) else None
@@ -80,29 +90,47 @@ private[dbt] object DbtSqlNavigation {
       }
     }
     val sql = new String(masked)
-    val parsed = try CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000)) catch { case _: JSQLParserException => return Vector.empty }
+    val parsed = try CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000)) catch {
+      case _: JSQLParserException => return Vector.empty
+    }
     val refs = ArrayBuffer.empty[DbtNavigationReference]
+
     def offset(t: Token, end: Boolean = false): Int = DbtSqlNavigation.offset(text, t, end)
+
     def range(t: Token): TextRange = new TextRange(offset(t), offset(t, end = true))
+
     def nodeTokens(node: ASTNodeAccess): Vector[Token] = Option(node.getASTNode).map { n =>
-      val result = ArrayBuffer.empty[Token]; var t = n.jjtGetFirstToken(); val last = n.jjtGetLastToken()
-      while (t != null && (result.isEmpty || result.last != last)) { result += t; t = t.next }
+      val result = ArrayBuffer.empty[Token];
+      var t = n.jjtGetFirstToken();
+      val last = n.jjtGetLastToken()
+      while (t != null && (result.isEmpty || result.last != last)) {
+        result += t;
+        t = t.next
+      }
       result.toVector
     }.getOrElse(Vector.empty)
+
     val tokenManager = new CCJSqlParserTokenManager(new SimpleCharStream(new StringProvider(sql)))
     val tokenBuffer = ArrayBuffer.empty[Token]
     var nextToken = tokenManager.getNextToken()
-    while (nextToken.kind != 0) { tokenBuffer += nextToken; nextToken = tokenManager.getNextToken() }
+    while (nextToken.kind != 0) {
+      tokenBuffer += nextToken;
+      nextToken = tokenManager.getNextToken()
+    }
     val allTokens = tokenBuffer.toVector
+
     def declaration(name: String, near: Int, before: Boolean): Option[Token] = {
       val matches = allTokens.filter(t => t.image.replace("\"", "").replace("`", "").equalsIgnoreCase(name))
       if (before) matches.filter(t => offset(t) < near).lastOption else matches.find(t => offset(t) >= near)
     }
+
     def symbol(kind: String, name: String, t: Token): PsiElement = DbtSymbol(kind, name, root.name, file, range(t)).element
+
     def add(t: Token, targets: Vector[PsiElement]): Unit = {
       val rr = range(t)
       if (!blocks.exists(_.range.intersects(rr)) && targets.nonEmpty) refs += new DbtNavigationReference(file, rr, targets.distinct, t.image)
     }
+
     def select(s: Select, inherited: Map[String, Relation]): Map[String, Vector[PsiElement]] = {
       ProgressManager.checkCanceled()
       var ctes = inherited
@@ -118,6 +146,7 @@ private[dbt] object DbtSqlNavigation {
         case sets: SetOperationList => Option(sets.getSelects).toVector.flatMap(_.asScala).headOption.map(select(_, ctes)).getOrElse(Map.empty)
         case p: PlainSelect =>
           var relations = Map.empty[String, Relation]
+
           def from(f: FromItem): Unit = if (f != null) {
             val relation = f match {
               case t: Table =>
@@ -137,9 +166,11 @@ private[dbt] object DbtSqlNavigation {
             }.map(t => symbol("sql_alias", alias.get.getUnquotedName, t))
             key.foreach(k => relations += k.toLowerCase -> relation.copy(target = if (aliasTarget.nonEmpty) aliasTarget else relation.target))
           }
+
           from(p.getFromItem)
           Option(p.getJoins).toVector.flatMap(_.asScala).foreach(j => from(j.getRightItem))
           val projections = scala.collection.mutable.Map.empty[String, Vector[PsiElement]]
+
           def columnTargets(c: Column): Vector[PsiElement] = {
             val name = c.getUnquotedColumnName.toLowerCase
             Option(c.getTable).filter(_.getName != null).map(t => relations.get(t.getUnquotedName.toLowerCase).toVector.flatMap(_.columns.getOrElse(name, Vector.empty)))
@@ -148,6 +179,7 @@ private[dbt] object DbtSqlNavigation {
                 if (candidates.size == 1) candidates.head else Vector.empty
               }
           }
+
           def expression(e: Expression, aliases: Boolean = false): Unit = if (e != null) e.accept(new ExpressionVisitorAdapter[Void] {
             override def visit[S](equals: net.sf.jsqlparser.expression.operators.relational.EqualsTo, context: S): Void = {
               (equals.getLeftExpression, equals.getRightExpression) match {
@@ -157,14 +189,17 @@ private[dbt] object DbtSqlNavigation {
                   val kinds = relation.flatMap(_.infoView).flatMap(v => Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "functions" -> "function", "analyses" -> "analysis", "checks" -> "check").get(v))
                   val targets = kinds.toVector.flatMap(k => w.symbols.filter(s => s.kind == k && s.name == value.getValue &&
                     !s.attributes.contains("property") && w.root(s.file).exists(r => w.namespaceVisible(root, r, qualified = false))).map(_.element))
-                  nodeTokens(value).lastOption.foreach { t => if (targets.nonEmpty) {
-                    val rr = range(t)
-                    refs += new DbtNavigationReference(file, new TextRange(rr.getStartOffset + 1, rr.getEndOffset - 1), targets, value.getValue)
-                  }}
+                  nodeTokens(value).lastOption.foreach { t =>
+                    if (targets.nonEmpty) {
+                      val rr = range(t)
+                      refs += new DbtNavigationReference(file, new TextRange(rr.getStartOffset + 1, rr.getEndOffset - 1), targets, value.getValue)
+                    }
+                  }
                 case _ => ()
               }
               super.visit(equals, context)
             }
+
             override def visit[S](c: Column, context: S): Void = {
               val ts = nodeTokens(c)
               val targets = if (aliases && Option(c.getTable).forall(_.getName == null)) projections.getOrElse(c.getUnquotedColumnName.toLowerCase, columnTargets(c)) else columnTargets(c)
@@ -173,24 +208,33 @@ private[dbt] object DbtSqlNavigation {
               null
             }
           }, null)
+
           Option(p.getSelectItems).toVector.flatMap(_.asScala).foreach { item =>
             expression(item.getExpression.asInstanceOf[Expression])
             val alias = Option(item.getAlias)
             val name = alias.map(_.getUnquotedName).orElse(item.getExpression match { case c: Column => Some(c.getUnquotedColumnName); case _ => None })
             val target = alias match {
               case Some(a) => nodeTokens(item).reverse.find(_.image.replace("\"", "").equalsIgnoreCase(a.getUnquotedName)).toVector.map(symbol("sql_projection", a.getUnquotedName, _))
-              case None => item.getExpression match { case c: Column => columnTargets(c); case _ => Vector.empty }
+              case None => item.getExpression match {
+                case c: Column => columnTargets(c);
+                case _ => Vector.empty
+              }
             }
             name.foreach(n => projections(n.toLowerCase) = target)
           }
-          expression(p.getWhere); expression(p.getHaving)
+          expression(p.getWhere);
+          expression(p.getHaving)
           Option(p.getJoins).toVector.flatMap(_.asScala).foreach(j => Option(j.getOnExpressions).toVector.flatMap(_.asScala).foreach(expression(_)))
           Option(p.getOrderByElements).toVector.flatMap(_.asScala).foreach(o => expression(o.getExpression, aliases = true))
           projections.toMap
         case _ => Map.empty
       }
     }
-    parsed match { case s: Select => select(s, Map.empty); case _ => () }
+
+    parsed match {
+      case s: Select => select(s, Map.empty);
+      case _ => ()
+    }
     refs.toVector
   }
 }
