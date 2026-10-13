@@ -15,7 +15,9 @@ private[dbt] object DbtFunctionParameters {
     if (functions.isEmpty) return Vector.empty
     val params = functions.flatMap(f => w.symbols.filter(p => p.kind == "parameter" && p.owner == f.name && p.namespace == f.namespace &&
       p.attributes.get("overload") == f.attributes.get("overload")))
-    val expression = try CCJSqlParserUtil.parseExpression(file.getText) catch { case _: JSQLParserException => return Vector.empty }
+    val expression = try CCJSqlParserUtil.parseExpression(file.getText) catch {
+      case _: JSQLParserException => return Vector.empty
+    }
     val result = ArrayBuffer.empty[DbtNavigationReference]
     expression.accept(new ExpressionVisitorAdapter[Void] {
       override def visit[S](column: Column, context: S): Void = {
