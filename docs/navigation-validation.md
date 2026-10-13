@@ -8,8 +8,8 @@ JDK 25, and plugin build `2026.2`. The examples and capability matrix are in the
 
 | Command | Result |
 | --- | --- |
-| `sbt --batch test` | 88 passed: 18 variable, 63 broader navigation, and 7 Parquet tests |
-| `python3 scripts/test-python.py` | 3 passed with the free Python Community plugin |
+| `sbt --batch test` | 121 passed: 18 variable, 63 navigation, 32 acceptance, and 8 Parquet tests |
+| `python3 scripts/test-python.py` | 5 passed with the free Python Community plugin |
 | `sbt --batch packageArtifactZip` | Distribution ZIP built successfully |
 | `git diff --check` | Passed |
 
@@ -24,6 +24,9 @@ The ZIP contains JSqlParser 5.4, Apache Parquet 1.18.1, their Apache licenses/no
 the required Hadoop client runtime, and the plugin's navigation classes. Test libraries,
 the IntelliJ SDK, and optional language plugins are not bundled.
 The artifact is `target/intellij-dbt-2026.2.zip`.
+
+The [roadmap acceptance audit](roadmap-completion.md) maps the final ticket coverage and
+version/context boundaries. Automated checks above were repeated for the delivery snapshot.
 
 ## Manual Community IDE checks
 
@@ -90,5 +93,5 @@ precedence, reverse reference search, file replacement, stale/unsaved source, en
 malformed/incompatible input, and the row limit. Runtime deferral and warehouse existence
 are not inferred. Runtime tables and column-level lineage tables are not indexed.
 SQL navigation remains bounded by JSqlParser
-and available static schema evidence. Ignore negation patterns and selector YAML alias
-expansion are unsupported. See the README for the full supported scope.
+and available static schema evidence. Ordered ignore negation patterns are supported. Selector YAML alias
+expansion remains conservative and is not inferred. See the README for the full supported scope.

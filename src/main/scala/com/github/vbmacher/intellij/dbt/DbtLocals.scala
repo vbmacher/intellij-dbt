@@ -8,6 +8,7 @@ private[dbt] object DbtLocals {
   def references(file: PsiFile, blocks: Vector[DbtSyntax.Block], workspace: DbtWorkspace): Vector[DbtNavigationReference] = {
     val result = ArrayBuffer.empty[DbtNavigationReference]
     var scopes = List(Map.empty[String, DbtSymbol])
+    var captures = List.empty[DbtSyntax.Token]
     def bind(t: DbtSyntax.Token): Unit = if (!t.string && t.image.matches("[A-Za-z_][A-Za-z_0-9]*")) {
       val parameter = workspace.symbols.find(s => s.file == file && s.kind == "parameter" && s.range == t.range)
       scopes = (scopes.head + (t.image -> parameter.getOrElse(DbtSymbol("local", t.image, "jinja", file, t.range)))) :: scopes.tail
@@ -18,6 +19,11 @@ private[dbt] object DbtLocals {
       if (Set("endfor", "endmacro", "endtest", "endcall", "endwith", "endblock").contains(tag) && scopes.size > 1) scopes = scopes.tail
       val declarationRanges = ArrayBuffer.empty[com.intellij.openapi.util.TextRange]
       def declaration(t: DbtSyntax.Token): Unit = { bind(t); declarationRanges += t.range }
+      if (tag == "endset" && captures.nonEmpty) { bind(captures.head); captures = captures.tail }
+      val attributeAssignment = tag == "set" && ts.lift(2).exists(_.image == ".")
+      val setTargets = if (tag == "set" && !attributeAssignment) ts.drop(1).takeWhile(t => t.image != "=" && t.image != "|")
+        .filter(t => !t.string && t.image.matches("[A-Za-z_][A-Za-z_0-9]*")) else Vector.empty
+      declarationRanges ++= setTargets.map(_.range)
       if (Set("for", "macro", "test", "call", "with", "block").contains(tag)) scopes = Map.empty[String, DbtSymbol] :: scopes
       val withTargets = if (tag == "with") {
         var depth = 0
@@ -53,7 +59,8 @@ private[dbt] object DbtLocals {
       // Assignment becomes visible after its RHS, preserving outer bindings in `set x = x`.
       if (tag == "set") {
         val attribute = ts.lift(2).exists(_.image == ".") && ts.lift(3).nonEmpty
-        if (!attribute) ts.lift(1).foreach(declaration)
+        if (!attribute && ts.exists(_.image == "=")) setTargets.foreach(bind)
+        else if (!attribute) setTargets.headOption.foreach(t => captures = t :: captures)
         if (attribute) {
           val name = ts(1).image + "." + ts(3).image
           val field = DbtSymbol("namespace attribute", name, "jinja", file, ts(3).range)

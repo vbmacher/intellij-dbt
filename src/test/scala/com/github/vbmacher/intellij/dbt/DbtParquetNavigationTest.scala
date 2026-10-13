@@ -81,6 +81,26 @@ final class DbtParquetNavigationTest extends BasePlatformTestCase {
     candidates.head.asInstanceOf[DbtSymbolElement]
   }
 
+  def testSameNamedProjectsKeepSelectedMetadataAndEdgesSeparate(): Unit = {
+    root()
+    add("other/dbt_project.yml", "name: analytics\n")
+    add("other/models/remote.sql", "select 1")
+    add("other/models/schema.yml", "models:\n- name: remote\n  columns: [{name: customer_id}]\n")
+    parquet("models", modelSchema, Vector(model("remote")))
+    parquet("node_columns", "optional binary node_unique_id (UTF8); optional binary column_name (UTF8); optional binary ingested_at (UTF8);",
+      Vector(Map("node_unique_id" -> "model.analytics.remote", "column_name" -> "customer_id", "ingested_at" -> future)))
+    val edgeFile = parquet("edges", "optional binary parent_unique_id (UTF8); optional binary child_unique_id (UTF8); optional binary ingested_at (UTF8);",
+      Vector(Map("parent_unique_id" -> "model.analytics.remote", "child_unique_id" -> "model.analytics.use", "ingested_at" -> future)))
+    val use = add("models/use.sql", "select r.customer_id from {{ ref('remote') }} r")
+    assertTrue(target(use, "remote").symbol.metadata)
+    assertTrue(target(use, "customer_id").symbol.metadata)
+    val w = DbtWorkspace.get(getProject)
+    val metadataEdge = DbtLineage.edges(w).find(_.reference.label == "Information Schema dependency").get
+    assertTrue(metadataEdge.to.metadata)
+    assertEquals(w.root(use), w.owner(metadataEdge.to))
+    assertEquals(1, DbtLineage.edges(w, Some(com.intellij.psi.search.GlobalSearchScope.fileScope(getProject, edgeFile))).size)
+  }
+
   def testParquetMetadataTargetsAndReverseSearch(): Unit = {
     root()
     parquet("models", modelSchema, Vector(model("remote"), model("disabled", Map("enabled" -> "false"))))

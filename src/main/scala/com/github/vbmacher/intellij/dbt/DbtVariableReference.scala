@@ -15,7 +15,7 @@ final class DbtVariableReference(element: PsiElement, range: TextRange, val name
       val shadowed = workspace.declarations(Set("macro"), "var", root).nonEmpty || call.exists(c =>
         DbtLocals.references(file, DbtSyntax.inFile(file), workspace).exists(_.getRangeInElement.containsOffset(c.callOffset)))
       if (shadowed) None else {
-        val targets = DbtVariableContexts.roots(workspace, file, root).flatMap(r => DbtNavigation.variable(workspace, r, name)).distinct
+        val targets = DbtVariableContexts.roots(workspace, file, root, call.map(_.callOffset)).flatMap(r => DbtNavigation.variable(workspace, r, name)).distinct
         if (targets.size == 1) targets.headOption else None
       }
     }.orNull

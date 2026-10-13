@@ -40,4 +40,32 @@ final class DbtPythonNavigationTest extends BasePlatformTestCase {
     val target = DbtNavigation.inFile(py).find(_.label == "versioned").get.candidates.head
     assertTrue(target.getContainingFile.getName.endsWith("_v1.sql"))
   }
+
+  def testPythonSourcesRespectDuplicateRootsAndDisabledTables(): Unit = {
+    setupProject()
+    add("other/dbt_project.yml", "name: analytics\n")
+    add("other/models/source.yml", "sources:\n- name: raw\n  tables:\n  - name: events\n")
+    val py = add("models/python_model.py", "def model(dbt, session):\n    return dbt.source('raw', 'events')\n")
+    val refs = DbtNavigation.inFile(py).filter(_.label == "events")
+    assertEquals(1, refs.flatMap(_.candidates).size)
+    assertFalse(refs.head.candidates.head.getContainingFile.getVirtualFile.getPath.contains("/other/"))
+    add("models/disabled.yml", "sources:\n- name: private\n  tables:\n  - name: events\n    config: {enabled: false}\n")
+    val disabled = add("models/disabled.py", "def model(dbt, session):\n    return dbt.source('private', 'events')\n")
+    assertTrue(DbtNavigation.inFile(disabled).filter(_.label == "events").forall(_.candidates.isEmpty))
+    val partial = add("models/partial.py", "def model(dbt, session):\n    return dbt.ref('orders'\n")
+    assertTrue(DbtNavigation.inFile(partial).forall(_.candidates.forall(_.getContainingFile.getName == "orders.sql")))
+  }
+
+  def testExplicitPythonBuiltinSourceWithoutExecutingIt(): Unit = {
+    setupProject()
+    add(".dbt-navigation.yml", "builtin-sources:\n  adapter.get_relation: vendor/adapter.py\n")
+    val source = add("vendor/adapter.py", "class Adapter:\n    def get_relation(self, database, schema, identifier):\n        raise RuntimeError('must never execute')\n")
+    val sql = add("models/use.sql", "{{ adapter.get_relation('db', 'schema', 'table') }}")
+    val reference = DbtNavigation.at(sql, sql.getText.indexOf("get_relation") + 1).head
+    assertEquals(1, reference.candidates.size)
+    val target = reference.candidates.head
+    assertEquals(source, target.getContainingFile)
+    assertEquals(source.getText.indexOf("get_relation"), target.getTextOffset)
+    assertEquals(1, ReferencesSearch.search(target).findAll().size())
+  }
 }

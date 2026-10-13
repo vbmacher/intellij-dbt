@@ -23,7 +23,7 @@ project directories. Each project retains its own names, configured paths and va
 Installed packages are indexed separately, using their `dbt_project.yml` project names.
 Generated output, `.git`, `.idea`, `logs`, and `.dbtignore` matches are excluded from source
 navigation. Configured `target-path` and `packages-install-path` are respected.
-Ignore negation patterns (`!pattern`) are not expanded.
+Ordered `.dbtignore` negation patterns (`!pattern`), anchored paths and directory patterns are supported.
 
 | Construct | Navigation targets |
 | --- | --- |
@@ -190,9 +190,9 @@ Test names navigate to custom `{% test ... %}` blocks or builtin documentation. 
 relationship target and field navigate separately. Fixtures link to files under the configured
 test paths' `fixtures/` directories. Inline rows are not treated as filenames.
 
-Calls inside YAML descriptions, configuration and hooks use decoded YAML offsets, including
+Calls inside supported YAML descriptions, configuration and hooks use decoded YAML offsets, including
 quoted and block scalars. Variable definition values do not render nested Jinja references.
-Profiles and `packages.yml` use their restricted `env_var` context.
+Profiles and `packages.yml` use their restricted `env_var` context and explicitly selected runtime variable keys.
 `dependencies.yml` does not render Jinja. Python models do not render Jinja either.
 
 ```jinja
@@ -250,6 +250,7 @@ selectors:
 ```
 
 Selection terms navigate to matching resources; broad patterns offer multiple candidates.
+YAML `method: selector` inheritance works on the baseline; string `selector:nightly` terms require Core 1.12+.
 Named selectors, nested unions/intersections/exclusions and graph operators expose their
 individual references without executing a selection. Missing state information stays unknown.
 YAML selector aliases are not expanded into inherited selections.
@@ -363,6 +364,9 @@ This plugin provides source navigation and reference search. It does not run dbt
 macros, execute Python/SQL, fetch remote metadata, query a warehouse, provide SQL highlighting,
 completion, data previews or Rename refactoring. Arbitrary runtime expressions, all SQL
 dialects and complete warehouse schema inference are outside the static resolver's coverage.
+
+The [roadmap acceptance audit](docs/roadmap-completion.md) records ticket coverage, the rendering
+context and version matrix, explicit builtin-source settings, validation and supported limits.
 
 ## Development
 

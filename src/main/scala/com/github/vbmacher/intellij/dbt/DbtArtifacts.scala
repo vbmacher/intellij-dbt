@@ -45,30 +45,43 @@ private[dbt] object DbtArtifacts {
               entries.flatMap { entry =>
                 ProgressManager.checkCanceled()
                 val id = text(entry, "unique_id").getOrElse("")
-                val kind = text(entry, "resource_type").orElse(id.split("\\.").headOption)
-                val catalogSource = workspace.symbols.find(s => uniqueId(s) == id)
+                val rawKind = text(entry, "resource_type").orElse(id.split("\\.").headOption)
+                val kind = rawKind.map(k => if (k == "source") "source_table" else k)
+                val sourceName = text(entry, "source_name").orElse(if (rawKind.contains("source")) id.split("\\.").lift(2) else None)
+                val catalogSource = workspace.symbols.find(s => workspace.owner(s).exists(r => workspace.namespaceVisible(root, r, qualified = true)) && uniqueId(s) == id)
                 val namespace = text(entry, "package_name").orElse(catalogSource.map(_.namespace)).getOrElse(root.name)
                 val name = text(entry, "name").orElse(catalogSource.map(s => if (s.kind == "source_table") s.owner + "." + s.name else s.name))
                 val original = text(entry, "original_file_path")
-                val sourceExists = original.exists(p => root.directory.findFileByRelativePath(p) != null)
-                val existing = workspace.symbols.exists(s => s.namespace == namespace && name.contains(s.name) && kind.contains(s.kind))
+                val sourceExists = namespace == root.name && original.exists(p => root.directory.findFileByRelativePath(p) != null)
+                val version = text(entry, "version")
+                val existing = workspace.symbols.exists(s => workspace.owner(s).exists(r => workspace.namespaceVisible(root, r, qualified = true)) && s.namespace == namespace &&
+                  name.contains(s.name) && kind.contains(s.kind) && s.version == version && (kind != Some("source_table") || sourceName.contains(s.owner)))
                 val enabled = property(entry, "config").collect { case c: JsonObject => c }.flatMap(property(_, "enabled")).forall(_.getText != "false")
                 val generated = metadata.flatMap(text(_, "generated_at")).flatMap(s => scala.util.Try(java.time.Instant.parse(s).toEpochMilli).toOption)
-                val stale = generated.isEmpty || workspace.files.exists(f => workspace.root(f).contains(root) && root.resource(f) &&
+                val stale = generated.isEmpty || workspace.files.exists(f => workspace.root(f).exists(r =>
+                  (r == root || workspace.packageOwner(r).contains(root)) && r.resource(f)) &&
                   (generated.exists(f.getVirtualFile.getTimeStamp > _) || Option(com.intellij.psi.PsiDocumentManager.getInstance(workspace.project).getDocument(f))
                     .exists(com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().isDocumentUnsaved)))
                 val dependencies = property(entry, "depends_on").collect { case d: JsonObject => strings(d, "nodes") ++ strings(d, "macros") }.getOrElse(Vector.empty)
-                val attrs = Map("unique_id" -> id, "artifact" -> setting, "stale" -> stale.toString, "dependencies" -> dependencies.mkString(",")) ++
+                val attrs = Map("unique_id" -> id, "artifact" -> setting, "resource-root" -> root.directory.getPath,
+                  "stale" -> stale.toString, "dependencies" -> dependencies.mkString(",")) ++
                   text(entry, "access").map("access" -> _) ++ text(entry, "latest_version").map("latest_version" -> _)
                 val declaration = for (k <- kind.toVector; n <- name.toVector if enabled && !existing && !sourceExists && setting != "catalog") yield {
                   val range = property(entry, "name").map(_.getTextRange).getOrElse(entry.getTextRange)
-                  DbtSymbol(k, n, namespace, file, range, version = text(entry, "version"), attributes = attrs, metadata = true)
+                  DbtSymbol(k, n, namespace, file, range, owner = if (k == "source_table") sourceName.getOrElse("") else "",
+                    version = version, attributes = attrs, metadata = true)
                 }
+                val sourceDeclarations = declaration.filter(_.kind == "source_table").flatMap(s => sourceName.map(n =>
+                  DbtSymbol("source", n, namespace, file, property(entry, "source_name").map(_.getTextRange).getOrElse(entry.getTextRange),
+                    attributes = attrs - "unique_id", metadata = true)))
                 val columns = if (setting == "catalog" && !stale) objects(entry, "columns").flatMap { col =>
-                  for (n <- text(col, "name").toVector; owner <- name.toVector if !workspace.symbols.exists(s => s.kind == "column" && s.namespace == namespace && s.owner == owner && s.name == n)) yield DbtSymbol("column", n, namespace, file,
-                    property(col, "name").map(_.getTextRange).getOrElse(col.getTextRange), owner, version = catalogSource.flatMap(_.version), attributes = attrs, metadata = true)
+                  for (n <- text(col, "name").toVector; owner <- name.toVector if !workspace.symbols.exists(s => s.kind == "column" &&
+                    workspace.owner(s) == catalogSource.flatMap(workspace.owner).orElse(Some(root)) &&
+                    s.namespace == namespace && s.owner == owner && s.name == n)) yield DbtSymbol("column", n, namespace, file,
+                    property(col, "name").map(_.getTextRange).getOrElse(col.getTextRange), owner, version = catalogSource.flatMap(_.version),
+                    attributes = attrs ++ catalogSource.flatMap(workspace.owner).map(r => "resource-root" -> r.directory.getPath), metadata = true)
                 } else Vector.empty
-                declaration ++ columns
+                sourceDeclarations ++ declaration ++ columns
               }
             }
           }

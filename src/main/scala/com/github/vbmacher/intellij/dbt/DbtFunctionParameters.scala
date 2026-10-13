@@ -13,7 +13,7 @@ private[dbt] object DbtFunctionParameters {
     if (file.getVirtualFile.getExtension != "sql" || file.getText.contains("{{")) return Vector.empty
     val functions = w.symbols.filter(s => s.kind == "function" && s.file == file && s.attributes.contains("code"))
     if (functions.isEmpty) return Vector.empty
-    val params = functions.flatMap(f => w.symbols.filter(p => p.kind == "parameter" && p.owner == f.name && p.namespace == f.namespace &&
+    val params = functions.flatMap(f => w.symbols.filter(p => p.kind == "parameter" && p.owner == f.name && p.namespace == f.namespace && w.root(p.file) == w.root(f.file) &&
       p.attributes.get("overload") == f.attributes.get("overload")))
     val expression = try CCJSqlParserUtil.parseExpression(file.getText) catch {
       case _: JSQLParserException => return Vector.empty

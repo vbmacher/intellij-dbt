@@ -37,8 +37,21 @@ private[dbt] object DbtPythonNavigation {
     if (quote >= 0 && !source.take(quote).toLowerCase.contains("f")) new TextRange(element.getTextOffset + quote + margin, element.getTextRange.getEndOffset - margin)
     else element.getTextRange
   }
+  def declarations(file: PsiFile, name: String): Vector[PsiElement] = {
+    if (!file.getClass.getName.startsWith("com.jetbrains.python.")) return Vector.empty
+    val result = ArrayBuffer.empty[PsiElement]
+    def walk(e: PsiElement): Unit = {
+      ProgressManager.checkCanceled()
+      if (Set("PyFunctionImpl", "PyTargetExpressionImpl").contains(e.getClass.getSimpleName) && invoke(e, "getName").contains(name))
+        psi(e, "getNameIdentifier").foreach(result += _)
+      e.getChildren.foreach(walk)
+    }
+    walk(file)
+    result.toVector
+  }
   def references(file: PsiFile, workspace: DbtWorkspace, root: DbtRoot): Vector[DbtNavigationReference] = {
-    if (file.getVirtualFile.getExtension != "py" || !file.getClass.getName.startsWith("com.jetbrains.python.")) return Vector.empty
+    if (!root.kind(file.getVirtualFile).contains("model") || file.getVirtualFile.getExtension != "py" ||
+      !file.getClass.getName.startsWith("com.jetbrains.python.")) return Vector.empty
     val result = ArrayBuffer.empty[DbtNavigationReference]
     def add(e: PsiElement, name: String, targets: Vector[PsiElement]): Unit =
       result += new DbtNavigationReference(file, literalRange(e, name), targets, name)
@@ -68,7 +81,7 @@ private[dbt] object DbtPythonNavigation {
           case "source" if literals.size == 2 && literals.forall(_.nonEmpty) =>
             val source = literals.head.get; val table = literals(1).get
             add(source._1, source._2, workspace.declarations(Set("source"), source._2, root).map(_.element))
-            add(table._1, table._2, workspace.symbols.filter(s => s.kind == "source_table" && s.owner == source._2 && s.name == table._2 && s.namespace == root.name).map(_.element))
+            add(table._1, table._2, DbtNavigation.sourceTables(workspace, root, source._2, table._2).map(_.element))
           case "config.get" => literals.headOption.flatten.foreach { case (host, key) => add(host, key, DbtConfiguration.locations(workspace, file, key)) }
           case "config" => arguments.filter(_.getClass.getSimpleName == "PyKeywordArgumentImpl").foreach { argument =>
             invoke(argument, "getName").foreach { key => result += new DbtNavigationReference(file,

@@ -6,8 +6,8 @@ import scala.collection.mutable.ArrayBuffer
 
 private[dbt] object DbtSelectors {
   private def glob(pattern: String, value: String): Boolean = {
-    val regex = pattern.split("\\*", -1).map(java.util.regex.Pattern.quote).mkString(".*")
-    value.matches(regex)
+    scala.util.Try(java.nio.file.FileSystems.getDefault.getPathMatcher("glob:" + pattern)
+      .matches(java.nio.file.Paths.get(value))).getOrElse(false)
   }
   def select(w: DbtWorkspace, root: DbtRoot, expression: String, includeGraph: Boolean): Vector[PsiElement] = {
     val prefix = "^[0-9]*\\+".r.findFirstIn(expression)
@@ -16,6 +16,8 @@ private[dbt] object DbtSelectors {
     val split = core.split(":", 2)
     val method = if (split.length == 2) split.head else "fqn"
     val value = split.last
+    if (method == "selector") return if (root.supports(12)) w.symbols.filter(s => s.kind == "selector" &&
+      s.name == value && w.root(s.file).contains(root)).map(_.element) else Vector.empty
     val kinds = Set("model", "seed", "snapshot", "source_table", "test", "generic_test", "analysis", "exposure", "metric", "saved_query", "function", "check", "group", "unit_test", "semantic_model")
     val candidates = w.symbols.filter(s => kinds(s.kind) &&
       w.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
@@ -54,17 +56,18 @@ private[dbt] object DbtSelectors {
             val key = scalar.getParent match { case kv: YAMLKeyValue => kv.getKeyText; case _ => "" }
             val mapping = Iterator.iterate(scalar.getParent)(_.getParent).takeWhile(_ != null).collectFirst { case m: YAMLMapping => m }
             val method = mapping.flatMap(DbtYaml.string(_, "method"))
-            val selectionContext = !selectionFile || ancestors.exists(Set("select", "exclude", "selector")) && !ancestors.exists(Set("vars", "env"))
+            val selectionContext = (if (selectionFile) ancestors.exists(Set("select", "exclude", "selector"))
+              else ancestors.contains("definition")) && !ancestors.exists(Set("vars", "env", "description"))
             val named = selectionContext && (key == "selector" || (key == "value" && method.contains("selector")))
             val expression = if (!selectionContext) None else if (selectionFile && Set("select", "exclude").contains(key)) Some(scalar.getTextValue)
-              else if (key == "value") method.map(_ + ":" + scalar.getTextValue) else if (key == "definition" ||
-              scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
+              else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
+              else if (Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test", "function", "check", "resource_type").contains(key)) Some(key + ":" + scalar.getTextValue)
+              else if (key == "definition" || scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
             val selectorFile = if (file.getName == "selectors.yml") Some(file) else Option(root.directory.findChild("selectors.yml"))
               .flatMap(v => Option(com.intellij.psi.PsiManager.getInstance(w.project).findFile(v)))
-            val targets = if (named) selectorFile.toVector.flatMap(DbtYaml.mapping).flatMap(DbtYaml.items(_, "selectors"))
-              .filter(m => DbtYaml.string(m, "name").contains(scalar.getTextValue)).flatMap(DbtYaml.value(_, "name"))
+            val targets = if (named) w.symbols.filter(s => s.kind == "selector" && selectorFile.contains(s.file) && s.name == scalar.getTextValue).map(_.element)
               else expression.toVector.flatMap(select(w, root, _, includeGraph))
-            if (selectionContext && selectionFile && Set("select", "exclude").contains(key)) {
+            if (selectionContext && expression.contains(scalar.getTextValue) && !named) {
               val escaper = scalar.createLiteralTextEscaper()
               val host = new com.intellij.openapi.util.TextRange(0, scalar.getTextLength)
               val decoded = new java.lang.StringBuilder

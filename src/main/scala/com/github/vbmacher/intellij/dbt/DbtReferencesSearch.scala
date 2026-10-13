@@ -12,6 +12,7 @@ import org.jetbrains.yaml.psi.YAMLKeyValue
 final class DbtReferencesSearch extends QueryExecutorBase[PsiReference, ReferencesSearch.SearchParameters](true) {
   override def processQuery(parameters: ReferencesSearch.SearchParameters, consumer: Processor[_ >: PsiReference]): Unit = {
     val declaration = parameters.getElementToSearch
+    if (declaration match { case e: DbtSymbolElement => e.symbol.kind == "documentation"; case _ => false }) return
     val supported = declaration.isInstanceOf[DbtSymbolElement] || declaration.isInstanceOf[YAMLKeyValue] ||
       DbtWorkspace.get(declaration.getProject).symbols.exists(s => s.file == declaration.getContainingFile && s.range.intersects(declaration.getTextRange))
     if (!supported) return

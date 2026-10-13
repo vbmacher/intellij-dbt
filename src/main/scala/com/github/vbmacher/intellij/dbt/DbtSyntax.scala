@@ -99,7 +99,7 @@ private[dbt] object DbtSyntax {
                 val decoded = text.toString
                 result ++= blocks(decoded, map)
                 val keys = yamlAncestors(scalar)
-                if (!decoded.contains("{{") && keys.exists(Set("input", "depends_on", "model", "where", "filter", "group_by", "order_by")) && (decoded.contains("(") || decoded == "this"))
+                if (!decoded.contains("{{") && keys.exists(Set("input", "depends_on", "model", "relation", "to", "where", "filter", "group_by", "order_by")) && (decoded.contains("(") || decoded == "this"))
                   result += Block(tokens(decoded, map), scalar.getTextRange, tag = false)
               }
             case _ => ()

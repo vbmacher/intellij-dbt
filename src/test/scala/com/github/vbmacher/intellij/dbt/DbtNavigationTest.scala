@@ -39,7 +39,7 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(usage, "countries")).endsWith("countries.csv"))
     assertTrue(path(target(usage, "history")).endsWith("snapshots.yml"))
     assertEquals(path(model), path(target(properties, "orders")))
-    assertEquals(2, uses(target(usage, "orders")))
+    assertEquals(3, uses(target(usage, "orders"))) // SQL, properties, and the snapshot relation expression.
   }
 
   def testModelVersionsDefinedInAndLatest(): Unit = {

@@ -5,23 +5,26 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.psi.PsiElement
+import com.intellij.psi.search.{PsiSearchScopeUtil, SearchScope}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 private[dbt] final case class DbtDependency(from: DbtSymbol, to: DbtSymbol, reference: DbtNavigationReference) {
-  def category: String = if (Set("macro", "parameter", "local").contains(to.kind)) "macro" else "resource"
+  def category: String = if (Set("macro", "builtin", "parameter", "local").contains(to.kind)) "macro" else "resource"
   def ambiguous: Boolean = reference.candidates.size > 1
 }
 private[dbt] object DbtLineage {
-  def edges(w: DbtWorkspace): Vector[DbtDependency] = w.files.flatMap { file =>
+  def edges(w: DbtWorkspace, scope: Option[SearchScope] = None): Vector[DbtDependency] = w.files.filter(file =>
+    scope.forall(PsiSearchScopeUtil.isInScope(_, file))).flatMap { file =>
     ProgressManager.checkCanceled()
     val references = DbtNavigation.inFile(file, includeSelections = false)
     references.flatMap { ref =>
-      val declarations = w.symbols.filter(s => s.file == file && (s.attributes.contains("code") || s.attributes.contains("property") || s.kind == "macro"))
-      val containing = declarations.filter(s => s.mapping.exists(_.getTextRange.contains(ref.getRangeInElement)))
+      val endTags = Map("macro" -> "endmacro", "generic_test" -> "endtest", "materialization" -> "endmaterialization", "snapshot" -> "endsnapshot")
+      val declarations = w.symbols.filter(s => s.file == file && (s.attributes.contains("code") || s.attributes.contains("property") || endTags.contains(s.kind)))
+      val containing = declarations.filter(s => s.mapping.exists(m => m.getContainingFile == file && m.getTextRange.contains(ref.getRangeInElement)))
       val blocks = DbtSyntax.inFile(file)
-      val macroOwner = declarations.filter(_.kind == "macro").filter { macroSymbol =>
-        val end = blocks.find(b => b.range.getStartOffset > macroSymbol.range.getStartOffset && b.tag && b.tokens.headOption.exists(_.image == "endmacro"))
+      val macroOwner = declarations.filter(s => endTags.contains(s.kind) && s.attributes.contains("block-start")).filter { macroSymbol =>
+        val end = blocks.find(b => b.range.getStartOffset > macroSymbol.range.getStartOffset && b.tag && b.tokens.headOption.exists(t => endTags(macroSymbol.kind) == t.image))
         macroSymbol.range.getStartOffset < ref.getRangeInElement.getStartOffset && end.exists(_.range.getEndOffset > ref.getRangeInElement.getEndOffset)
       }
         .sortBy(_.range.getStartOffset).lastOption.toVector
@@ -33,14 +36,18 @@ private[dbt] object DbtLineage {
             from.namespace == target.namespace && from.name == target.name && from.version == target.version))
         yield DbtDependency(from, target, ref)
     }
-  }.distinct ++ w.symbols.filter(_.metadata).flatMap { from =>
+  }.distinct ++ w.symbols.filter(s => s.metadata && scope.forall(PsiSearchScopeUtil.isInScope(_, s.file))).flatMap { from =>
     from.attributes.get("dependencies").toVector.flatMap(_.split(",")).filter(_.nonEmpty).flatMap { id =>
-      val targets = w.symbols.filter(s => DbtArtifacts.uniqueId(s) == id && s.kind != "column")
+      val targets = w.owner(from).toVector.flatMap(r => w.symbols.filter(s => DbtArtifacts.uniqueId(s) == id && s.kind != "column" &&
+        w.declarations(Set(s.kind), s.name, r, Some(s.namespace)).contains(s)))
       val selected = targets.filterNot(s => s.attributes.contains("property") && targets.exists(_.attributes.contains("code")))
       val reference = new DbtNavigationReference(from.file, from.range, selected.map(_.element), "artifact dependency")
       selected.map(to => DbtDependency(from, to, reference))
     }
-  } ++ DbtParquetArtifacts.edges(w)
+  } ++ DbtParquetArtifacts.edges(w).filter(e => scope.forall(s => PsiSearchScopeUtil.isInScope(s, e.reference.getElement) ||
+    e.reference.evidence.find(_.startsWith("Artifact: ")).map(_.stripPrefix("Artifact: "))
+      .flatMap(p => Option(com.intellij.openapi.vfs.LocalFileSystem.getInstance.findFileByPath(p)))
+      .exists(v => s match { case g: com.intellij.psi.search.GlobalSearchScope => g.contains(v); case _ => false })))
   def traverse(edges: Vector[DbtDependency], start: DbtSymbol, downstream: Boolean, depth: Int): Vector[DbtSymbol] = {
     val seen = mutable.Set(start.id)
     var frontier = Vector(start)

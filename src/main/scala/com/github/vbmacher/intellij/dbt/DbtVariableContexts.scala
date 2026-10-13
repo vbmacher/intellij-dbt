@@ -1,23 +1,47 @@
 package com.github.vbmacher.intellij.dbt
 
 import com.intellij.psi.PsiFile
+import com.intellij.openapi.progress.ProgressManager
 
 /** A package macro uses the namespace of the node that ultimately calls it. */
 private[dbt] object DbtVariableContexts {
-  def roots(w: DbtWorkspace, file: PsiFile, fallback: DbtRoot): Vector[DbtRoot] = {
+  def roots(w: DbtWorkspace, file: PsiFile, fallback: DbtRoot, offset: Option[Int] = None): Vector[DbtRoot] = {
     if (!fallback.kind(file.getVirtualFile).contains("macro")) return Vector(fallback)
-    val macros = w.symbols.filter(s => s.kind == "macro" && s.file == file)
+    val blocks = DbtSyntax.inFile(file)
+    val macros = w.symbols.filter(s => s.kind == "macro" && s.file == file && offset.forall { position =>
+      s.range.getStartOffset < position && blocks.find(b => b.tag && b.range.getStartOffset > s.range.getStartOffset &&
+        b.tokens.headOption.exists(_.image == "endmacro")).exists(_.range.getEndOffset > position)
+    })
     if (macros.isEmpty) return Vector(fallback)
-    val callers = w.files.filter(f => w.symbols.exists(s => s.file == f && s.attributes.contains("code") && s.kind != "macro"))
-      .flatMap { caller =>
-        w.root(caller).toVector.filter { root =>
-          DbtSyntax.inFile(caller).flatMap(DbtSyntax.calls).exists { call =>
-            val parts = call.name.split("\\.")
-            w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None)
-              .exists(m => macros.exists(_.id == m.id))
-          }
+    val calls = w.files.flatMap { caller =>
+      ProgressManager.checkCanceled()
+      w.root(caller).toVector.filter(_.resource(caller)).flatMap { root =>
+        val bs = DbtYamlContexts.blocks(caller, root)
+        val local = DbtLocals.references(caller, bs, w)
+        val declarations = w.symbols.filter(s => s.kind == "macro" && s.file == caller)
+        bs.flatMap(DbtSyntax.calls).filter(c => DbtYamlContexts.allows(caller, root, c.range.getStartOffset, c.name) &&
+          !local.exists(_.getRangeInElement.intersects(c.range))).flatMap { call =>
+          val parts = call.name.split("\\.")
+          val owner = declarations.find(s => s.range.getStartOffset < call.range.getStartOffset &&
+            bs.find(b => b.tag && b.range.getStartOffset > s.range.getStartOffset && b.tokens.headOption.exists(_.image == "endmacro"))
+              .exists(_.range.getEndOffset > call.range.getEndOffset))
+          w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None)
+            .map(target => (target.id, owner.map(_.id), root))
         }
-      }.distinct
-    if (callers.nonEmpty) callers else Vector(fallback)
+      }
+    }
+    var frontier = macros.map(_.id).toSet
+    val seen = scala.collection.mutable.Set.empty[String]
+    val found = scala.collection.mutable.ArrayBuffer.empty[DbtRoot]
+    var depth = 0
+    while (frontier.nonEmpty && depth < 32) {
+      ProgressManager.checkCanceled()
+      val incoming = calls.filter(c => frontier(c._1))
+      incoming.filter(_._2.isEmpty).foreach(c => found += c._3)
+      frontier = incoming.flatMap(_._2).filter(seen.add).toSet
+      depth += 1
+    }
+    val callers = found.toVector.distinct
+    if (frontier.nonEmpty) Vector.empty else if (callers.nonEmpty) callers else Vector(fallback)
   }
 }

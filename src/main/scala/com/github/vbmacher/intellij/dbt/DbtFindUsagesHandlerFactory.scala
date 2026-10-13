@@ -6,7 +6,7 @@ import com.intellij.psi.PsiElement
 
 final class DbtFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
   private def targets(element: PsiElement): Vector[PsiElement] = element match {
-    case e: DbtSymbolElement => Vector(e)
+    case e: DbtSymbolElement => if (e.symbol.kind == "documentation") Vector.empty else Vector(e)
     case _ => Option(element.getContainingFile).toVector.flatMap { file =>
       val editor = Option(FileEditorManager.getInstance(element.getProject).getSelectedTextEditor)
         .filter(e => e.getDocument == com.intellij.psi.PsiDocumentManager.getInstance(element.getProject).getDocument(file))
@@ -14,7 +14,11 @@ final class DbtFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
       val workspace = DbtWorkspace.get(element.getProject)
       val exact = workspace.symbolAt(file, offset)
       val definitions = if (exact.nonEmpty) exact else workspace.symbols.filter(s => s.file == file && s.attributes.contains("code"))
-      definitions.map(_.element)
+      definitions.flatMap { symbol =>
+        if (symbol.attributes.contains("property")) workspace.owner(symbol).toVector.flatMap(root =>
+          workspace.declarations(Set(symbol.kind), symbol.name, root, Some(symbol.namespace)).filter(_.version == symbol.version)).map(_.element)
+        else Vector(symbol.element)
+      }
     }
   }
 

@@ -80,7 +80,7 @@ private[dbt] object DbtSqlNavigation {
       if (!b.tag) {
         val marker = s"_dbt$i"
         marker.zipWithIndex.foreach { case (c, n) => if (b.range.getStartOffset + n < b.range.getEndOffset) masked(b.range.getStartOffset + n) = c }
-        val columns = candidates.flatMap(s => w.symbols.filter(c => c.kind == "column" && c.namespace == s.namespace &&
+        val columns = candidates.flatMap(s => w.symbols.filter(c => c.kind == "column" && c.namespace == s.namespace && w.owner(c) == w.owner(s) &&
             c.owner == (if (s.kind == "source_table") s.owner + "." + s.name else s.name) && c.version == s.version))
           .groupBy(_.name.toLowerCase).view.mapValues(_.map(_.element: PsiElement)).toMap
         val info = if (DbtInfoSchema.enabled(root, file)) DbtSyntax.calls(b).find(_.name == "info_schema")

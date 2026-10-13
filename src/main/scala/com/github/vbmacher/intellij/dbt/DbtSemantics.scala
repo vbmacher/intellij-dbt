@@ -8,10 +8,10 @@ private[dbt] object DbtSemantics {
     val path = name.split("__").toVector
     val field = path.last
     val scope = w.symbols.filter(s => s.kind == "semantic_model" && s.file == file && s.mapping.exists(_.getTextRange.containsOffset(offset)))
-    val candidates = w.symbols.filter(s => s.kind == resourceKind && s.name == field && s.namespace == root.name)
+    val candidates = w.symbols.filter(s => s.kind == resourceKind && s.name == field && s.namespace == root.name && w.root(s.file).contains(root))
     if (path.size == 1 && scope.nonEmpty && resourceKind != "metric") candidates.filter(s => scope.exists(_.name == s.owner))
     else if (path.size > 1) {
-      val entities = w.symbols.filter(s => s.kind == "entity" && s.namespace == root.name)
+      val entities = w.symbols.filter(s => s.kind == "entity" && s.namespace == root.name && w.root(s.file).contains(root))
       var owners = Set.empty[String]
       var known = true
       path.dropRight(1).foreach { name =>
