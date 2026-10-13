@@ -95,6 +95,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "start_date").isEmpty)
   }
 
+  def testProfileTargetAndEnvironmentNames(): Unit = {
+    root("profile: analytics\n")
+    add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev:\n      type: postgres\n      schema: public\n")
+    add(".env", "DBT_SCHEMA=private_value\n")
+    val file = add("models/use.sql", "{{ target.schema }} {{ env_var('DBT_SCHEMA') }}")
+    assertEquals("schema", target(file, "schema").asInstanceOf[org.jetbrains.yaml.psi.YAMLKeyValue].getKeyText)
+    val env = target(file, "DBT_SCHEMA")
+    assertEquals("DBT_SCHEMA", env.getText)
+    assertFalse(env.toString.contains("private_value"))
+  }
+
   def testGenericAndUnitTests(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -238,6 +249,20 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(iterable, target(file, "item", 4))
     assertEquals(target(file, "total", 1), target(file, "total", 3))
     assertEquals(3, uses(target(file, "total", 3)))
+  }
+
+  def testExplicitRunConfigurationOverridesWithoutReadingEnvironmentValues(): Unit = {
+    root("vars:\n  color: default\n")
+    add(".dbt-navigation.yml", "run-config: run/dev.yml\n")
+    val run = add("run/dev.yml", "vars:\n  color: selected\nenv:\n  DBT_ENV_SECRET_TOKEN: secret-value\n")
+    add(".env", "DBT_ENV_SECRET_TOKEN=another-secret\n")
+    val file = add("models/use.sql", "{{ var('color') }} {{ env_var('DBT_ENV_SECRET_TOKEN') }}")
+    assertEquals(path(run), path(target(file, "color")))
+    val env = target(file, "DBT_ENV_SECRET_TOKEN")
+    assertEquals(path(run), path(env))
+    assertFalse(env.toString.contains("secret-value"))
+    assertEquals("DBT_ENV_SECRET_TOKEN", env.getText)
+    assertEquals(1, uses(target(file, "color")))
   }
 
   def testUnitThisAndVariableOverrideIdentity(): Unit = {
