@@ -222,6 +222,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(3, uses(target(file, "total", 3)))
   }
 
+  def testUnitThisAndVariableOverrideIdentity(): Unit = {
+    root("vars:\n  color: default\n")
+    val model = add("models/orders.sql", "select 1")
+    val test = add("models/unit.yml", "unit_tests:\n- name: example\n  model: orders\n  given:\n  - input: this\n    rows: []\n  overrides:\n    vars:\n      color: selected\n")
+    assertEquals(path(model), path(target(test, "this")))
+    assertTrue(path(target(test, "color")).endsWith("dbt_project.yml"))
+    assertEquals(1, uses(target(test, "color")))
+  }
+
   def testUnsupportedTemplateLoaderDoesNotInventImports(): Unit = {
     root()
     add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
@@ -282,6 +291,24 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(outer, target(file, "user", 4))
     assertEquals(2, uses(outer))
     assertEquals(1, uses(parameter))
+  }
+
+  def testFixtureFormatsAndResourceExtensionsKeepSeparateIdentities(): Unit = {
+    root()
+    add("models/orders.sql", "select 1")
+    add("tests/fixtures/input.csv", "id\n1\n")
+    add("tests/fixtures/input.sql", "select 1 as id")
+    add("models/not_a_model.csv", "id\n1\n")
+    add("seeds/not_a_seed.sql", "select 1")
+    val file = add("models/unit.yml", "unit_tests:\n- name: example\n  model: orders\n  given:\n  - input: ref('orders')\n    format: csv\n    fixture: input\n  expect:\n    format: sql\n    fixture: input\n")
+    val csv = target(file, "input", 1)
+    val sql = target(file, "input", 2)
+    assertTrue(path(csv).endsWith("input.csv"))
+    assertTrue(path(sql).endsWith("input.sql"))
+    assertEquals("fixture", csv.asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals(1, uses(csv))
+    assertEquals(1, uses(sql))
+    assertFalse(DbtWorkspace.get(getProject).symbols.exists(s => Set("not_a_model", "not_a_seed").contains(s.name)))
   }
 
   def testWithValuesUseOuterScopeAndNestedKeywordsAreNotBindings(): Unit = {
