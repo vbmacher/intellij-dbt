@@ -10,28 +10,37 @@ private[dbt] object DbtYamlNavigation {
   def references(file: PsiFile, w: DbtWorkspace, r: DbtRoot): Vector[DbtNavigationReference] = {
     if (!file.isInstanceOf[YAMLFile]) return Vector.empty
     val result = ArrayBuffer.empty[DbtNavigationReference]
+
     def add(e: PsiElement, targets: Iterable[PsiElement], name: String): Unit =
       result += new DbtNavigationReference(file, e.getTextRange, targets.toVector.distinct, name)
+
     def lookup(kinds: Set[String], name: String): Vector[PsiElement] = {
       val split = name.split("\\.", 2)
       w.declarations(kinds, split.last, r, if (split.length == 2) Some(split.head) else None).map(_.element)
     }
+
     def parentMapping(e: PsiElement): Option[YAMLMapping] = Iterator.iterate(e.getParent)(_.getParent)
       .takeWhile(_ != null).collectFirst { case m: YAMLMapping => m }
+
     def containingName(e: PsiElement): Option[String] = Iterator.iterate(e.getParent)(_.getParent)
       .takeWhile(_ != null).collect { case m: YAMLMapping => m }.flatMap(m => DbtYaml.string(m, "name")).toSeq.headOption
+
     def test(name: String, element: PsiElement): Unit = {
       val defs = lookup(Set("generic_test"), name)
       val builtin = Set("unique", "not_null", "accepted_values", "relationships").contains(name)
       add(element, if (defs.nonEmpty) defs else if (builtin) Vector(DbtNavigation.documentation(file, name, "data-tests", r)) else Vector.empty, name)
     }
+
     file.accept(new PsiRecursiveElementWalkingVisitor {
       override def visitElement(e: PsiElement): Unit = {
         val ancestry = DbtSyntax.yamlAncestors(e)
         e match {
           case scalar: YAMLScalar if !ancestry.contains("vars") =>
             val name = scalar.getTextValue
-            val key = scalar.getParent match { case kv: YAMLKeyValue => kv.getKeyText; case _ => "" }
+            val key = scalar.getParent match {
+              case kv: YAMLKeyValue => kv.getKeyText;
+              case _ => ""
+            }
             if (!name.contains("{{")) key match {
               case "package" | "git" | "local" if Set("packages.yml", "dependencies.yml", "package-lock.yml").contains(file.getName) =>
                 val declaration = parentMapping(scalar)
@@ -54,8 +63,10 @@ private[dbt] object DbtYamlNavigation {
                 val exports = w.symbols.filter(s => s.file == file && s.range == scalar.getTextRange && s.kind == "export")
                 exports.foreach(e => add(scalar, lookup(Set("saved_query"), e.owner), name))
                 val props = w.symbols.filter(s => s.file == file && s.range == scalar.getTextRange && s.attributes.contains("property"))
-                props.foreach { p => add(scalar, w.declarations(Set(p.kind), p.name, r, Some(p.namespace))
-                  .filterNot(_.attributes.contains("property")).filter(_.version == p.version).map(_.element), name) }
+                props.foreach { p =>
+                  add(scalar, w.declarations(Set(p.kind), p.name, r, Some(p.namespace))
+                    .filterNot(_.attributes.contains("property")).filter(_.version == p.version).map(_.element), name)
+                }
                 if (ancestry.exists(Set("measures", "metrics")) && !props.exists(_.kind == "metric")) add(scalar, lookup(Set("measure", "metric"), name), name)
               case "group" | "+group" => add(scalar, lookup(Set("group"), name), name)
               case "model" if ancestry.contains("unit_tests") => add(scalar, lookup(Set("model"), name), name)
@@ -121,7 +132,7 @@ private[dbt] object DbtYamlNavigation {
               (names.isEmpty || names.contains(s.name) || r.relative(s.file.getVirtualFile).exists(p => names.forall(p.split("/").contains(_)))))
             val locations = if (key.startsWith("+")) targets.filter(_.attributes.contains("code"))
               .flatMap(s => DbtConfiguration.locations(w, s.file, key.drop(1))).filterNot(_ == kv)
-              else targets.map(_.element)
+            else targets.map(_.element)
             Option(kv.getKey).foreach(e => add(e, locations, key))
           case kv: YAMLKeyValue if ancestry.contains("config") =>
             val owners = w.symbols.filter(s => s.file == file && s.attributes.contains("property") && s.mapping.exists(_.getTextRange.contains(kv.getTextRange)))
