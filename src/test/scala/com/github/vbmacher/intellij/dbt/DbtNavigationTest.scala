@@ -84,6 +84,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     refs(yaml, "start_date").foreach(ref => assertEquals("start_date", ref.getRangeInElement.substring(yaml.getText)))
   }
 
+  def testLocalScopesAndShadowedBuiltin(): Unit = {
+    root("vars:\n  start_date: today\n")
+    val file = add("models/use.sql", "{% set x = 1 %}{{ x }}{% for x in [1] %}{{ x }}{% endfor %}{{ x }}\n{% set var = custom %}{{ var('start_date') }}")
+    val first = target(file, "x", 1)
+    val loop = target(file, "x", 3)
+    val last = target(file, "x", 4)
+    assertEquals(first, last)
+    assertNotEquals(first, loop)
+    assertTrue(refs(file, "start_date").isEmpty)
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -136,6 +147,18 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(schema, "unknown").isEmpty)
   }
 
+  def testMacroParametersAndNamespaceFieldsFindUsages(): Unit = {
+    root()
+    val macroFile = add("macros/format.sql", "{% macro format(value) %}{{ value }}{% endmacro %}")
+    val local = add("models/use.sql", "{% set ns = namespace(found=false) %}{{ ns.found }}{% with item=1 %}{{ item }}{% endwith %}{{ item }}")
+    val parameter = target(macroFile, "value", 1)
+    assertEquals("parameter", parameter.asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals(1, uses(parameter))
+    assertEquals("namespace attribute", target(local, "found", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertNotNull(target(local, "item", 1))
+    assertTrue(refs(local, "item", 2).forall(_.candidates.isEmpty))
+  }
+
   def testResourceMovesInvalidateIndex(): Unit = {
     root()
     val model = add("models/orders.sql", "select 1")
@@ -176,6 +199,25 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(file, "model_80")).endsWith("model_80.sql"))
     assertTrue(path(target(file, "model_1")).endsWith("model_1.sql"))
   }
+  def testLoopIterableAndNamespaceMutationKeepOuterBindings(): Unit = {
+    root()
+    val file = add("models/use.sql", "{% set item = 'orders' %}{% set ns = namespace(total=0) %}{% for item in item %}{% set ns.total = ns.total + 1 %}{{ item }}{% endfor %}{{ ns.total }} {{ item }}")
+    val iterable = target(file, "item", 2)
+    assertEquals(file.getText.indexOf("item"), iterable.getTextOffset)
+    assertTrue(target(file, "item", 3).getTextOffset > iterable.getTextOffset)
+    assertEquals(iterable, target(file, "item", 4))
+    assertEquals(target(file, "total", 1), target(file, "total", 3))
+    assertEquals(3, uses(target(file, "total", 3)))
+  }
+
+  def testUnsupportedTemplateLoaderDoesNotInventImports(): Unit = {
+    root()
+    add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
+    val file = add("models/use.sql", "{% from 'macros/math.sql' import double as twice %} {{ twice(2) }} {% include 'macros/math.sql' %}")
+    assertTrue(refs(file, "twice", 1).flatMap(_.candidates).isEmpty)
+    assertTrue(refs(file, "macros/math.sql").flatMap(_.candidates).isEmpty)
+  }
+
   def testDeclarationTargetsSurviveInsertedText(): Unit = {
     root()
     val macroFile = add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
@@ -218,4 +260,29 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("triple", target(file, "value", 1).asInstanceOf[DbtSymbolElement].symbol.owner)
   }
 
+  def testCallBlockParametersDoNotShadowTheInvocationArguments(): Unit = {
+    root()
+    val file = add("models/use.sql", "{% set user = 'outer' %}{% call(user) consume(user) %}{{ user }}{% endcall %}{{ user }}")
+    val outer = target(file, "user", 2)
+    val parameter = target(file, "user", 3)
+    assertEquals(file.getText.indexOf("user"), outer.getTextOffset)
+    assertEquals(file.getText.indexOf("user", outer.getTextOffset + 1), parameter.getTextOffset)
+    assertEquals(outer, target(file, "user", 4))
+    assertEquals(2, uses(outer))
+    assertEquals(1, uses(parameter))
+  }
+
+  def testWithValuesUseOuterScopeAndNestedKeywordsAreNotBindings(): Unit = {
+    root()
+    val file = add("models/use.sql", "{% set x = 'outer' %}{% with x=x, y=namespace(flag=true) %}{{ x }} {{ y }} {{ flag }}{% endwith %}{{ x }}")
+    val outer = target(file, "x", 2)
+    val inner = target(file, "x", 3)
+    assertEquals(file.getText.indexOf("x"), outer.getTextOffset)
+    assertEquals(file.getText.indexOf("x", outer.getTextOffset + 1), inner.getTextOffset)
+    assertEquals(outer, target(file, "x", 4))
+    assertEquals(2, uses(outer))
+    assertEquals(1, uses(inner))
+    assertTrue(refs(file, "flag", 1).forall(_.candidates.isEmpty))
+    assertEquals("local", target(file, "y", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
+  }
 }
