@@ -18,19 +18,19 @@ private[dbt] object DbtInfoSchema {
   )
 
   def enabled(root: DbtRoot, file: PsiFile): Boolean = root.engine == "v2" && root.kind(file.getVirtualFile).contains("check") &&
-    !DbtWorkspace.get(file.getProject).symbols.exists(s => s.file == file && s.kind == "check" && s.attributes.get("enabled").contains("false")) &&
+    !DbtWorkspace.get(file.getProject).symbols.exists(s => s.file == file && s.kind == "check" && !s.isEnabled) &&
     DbtYaml.map(root.config, "info_schema").flatMap(DbtYaml.string(_, "version")).forall(_ == "1")
 
   def columns(file: PsiFile, root: DbtRoot, view: String): Map[String, Vector[PsiElement]] =
-    views.getOrElse(view, Set.empty).map { n =>
-      val metadata = DbtWorkspace.get(file.getProject).symbols.filter(s => s.kind == "information_schema_column" &&
-        s.namespace == root.name && DbtWorkspace.get(file.getProject).owner(s).contains(root) && s.owner == view && s.name == n).map(_.element)
-      n -> (if (metadata.nonEmpty) metadata else Vector(DbtNavigation.documentation(file, s"$view.$n", "info-schema", root)))
-    }.toMap
+    views.getOrElse(view, Set.empty).map(n => n -> metadata(file, root, "information_schema_column", n, view)).toMap
 
-  def view(file: PsiFile, root: DbtRoot, name: String): Vector[PsiElement] = {
-    val metadata = DbtWorkspace.get(file.getProject).symbols.filter(s => s.kind == "information_schema_view" &&
-      s.namespace == root.name && DbtWorkspace.get(file.getProject).owner(s).contains(root) && s.name == name).map(_.element)
-    if (metadata.nonEmpty) metadata else Vector(DbtNavigation.documentation(file, name, "info-schema", root))
+  def view(file: PsiFile, root: DbtRoot, name: String): Vector[PsiElement] = metadata(file, root, "information_schema_view", name)
+
+  /** Declarations read from Information Schema artifacts, or the documentation when none were read. */
+  private def metadata(file: PsiFile, root: DbtRoot, kind: String, name: String, owner: String = ""): Vector[PsiElement] = {
+    val w = DbtWorkspace.get(file.getProject)
+    val found = w.symbols.filter(s => s.kind == kind && s.namespace == root.name && w.owner(s).contains(root) && s.owner == owner && s.name == name)
+    if (found.nonEmpty) found.map(_.element)
+    else Vector(DbtNavigation.documentation(file, if (owner.isEmpty) name else s"$owner.$name", "info-schema", root))
   }
 }

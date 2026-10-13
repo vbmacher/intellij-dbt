@@ -74,12 +74,10 @@ private[dbt] object DbtPythonNavigation {
             val ns = if (literals.size == 2) literals.head.map(_._2) else None
             val selected = literals.last.get
             val defs = workspace.declarations(Set("model", "seed", "snapshot"), selected._2, root, ns)
-            val latest = defs.flatMap(_.attributes.get("latest_version")).distinct
-            val chosen = version.orElse(if (latest.size == 1) latest.headOption else None)
-            val targets = defs.filter(s => chosen.fold(s.version.isEmpty)(v => s.version.contains(v))).map(_.element)
-            add(selected._1, selected._2, targets)
+            add(selected._1, selected._2, DbtNavigation.versioned(defs, version).map(_.element))
           case "source" if literals.size == 2 && literals.forall(_.nonEmpty) =>
-            val source = literals.head.get; val table = literals(1).get
+            val source = literals.head.get
+            val table = literals(1).get
             add(source._1, source._2, workspace.declarations(Set("source"), source._2, root).map(_.element))
             add(table._1, table._2, DbtNavigation.sourceTables(workspace, root, source._2, table._2).map(_.element))
           case "config.get" => literals.headOption.flatten.foreach { case (host, key) => add(host, key, DbtConfiguration.locations(workspace, file, key)) }

@@ -1,14 +1,22 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.psi.{PsiElement, PsiFile}
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.{PsiElement, PsiFile, PsiRecursiveElementWalkingVisitor}
 import org.jetbrains.yaml.psi._
+
+import java.nio.file.{FileSystems, Paths}
 import scala.collection.mutable.ArrayBuffer
+import scala.util.Try
 
 private[dbt] object DbtSelectors {
-  private def glob(pattern: String, value: String): Boolean = {
-    scala.util.Try(java.nio.file.FileSystems.getDefault.getPathMatcher("glob:" + pattern)
-      .matches(java.nio.file.Paths.get(value))).getOrElse(false)
-  }
+  private val SelectableKinds = Set("model", "seed", "snapshot", "source_table", "test", "generic_test", "analysis", "exposure", "metric",
+    "saved_query", "function", "check", "group", "unit_test", "semantic_model")
+  private val MethodKeys = Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test", "function",
+    "check", "resource_type")
+
+  private def glob(pattern: String, value: String): Boolean =
+    Try(FileSystems.getDefault.getPathMatcher("glob:" + pattern).matches(Paths.get(value))).getOrElse(false)
+
   def select(w: DbtWorkspace, root: DbtRoot, expression: String, includeGraph: Boolean): Vector[PsiElement] = {
     val prefix = "^[0-9]*\\+".r.findFirstIn(expression)
     val suffix = "\\+[0-9]*$".r.findFirstIn(expression)
@@ -18,8 +26,7 @@ private[dbt] object DbtSelectors {
     val value = split.last
     if (method == "selector") return if (root.supports(12)) w.symbols.filter(s => s.kind == "selector" &&
       s.name == value && w.root(s.file).contains(root)).map(_.element) else Vector.empty
-    val kinds = Set("model", "seed", "snapshot", "source_table", "test", "generic_test", "analysis", "exposure", "metric", "saved_query", "function", "check", "group", "unit_test", "semantic_model")
-    val candidates = w.symbols.filter(s => kinds(s.kind) &&
+    val candidates = w.symbols.filter(s => SelectableKinds(s.kind) &&
       w.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
     val selected = candidates.filter { s => method match {
       case "fqn" =>
@@ -44,38 +51,31 @@ private[dbt] object DbtSelectors {
   }
 
   def references(file: PsiFile, w: DbtWorkspace, root: DbtRoot, includeGraph: Boolean): Vector[DbtNavigationReference] = {
-    val configured = root.settings.toVector.flatMap(DbtYaml.strings(_, "selection-files")) ++ root.setting("run-config")
-    val selectionFile = root.relative(file.getVirtualFile).exists(configured.contains)
+    val selectionFile = root.isSelectionFile(file)
     if (file.getName != "selectors.yml" && !selectionFile) return Vector.empty
+    val selectorFile = if (file.getName == "selectors.yml") Some(file) else root.psiFile("selectors.yml")
     val result = ArrayBuffer.empty[DbtNavigationReference]
-    file.accept(new com.intellij.psi.PsiRecursiveElementWalkingVisitor {
+    file.accept(new PsiRecursiveElementWalkingVisitor {
       override def visitElement(e: PsiElement): Unit = {
         e match {
           case scalar: YAMLScalar =>
-            val ancestors = DbtSyntax.yamlAncestors(scalar)
-            val key = scalar.getParent match { case kv: YAMLKeyValue => kv.getKeyText; case _ => "" }
-            val mapping = Iterator.iterate(scalar.getParent)(_.getParent).takeWhile(_ != null).collectFirst { case m: YAMLMapping => m }
-            val method = mapping.flatMap(DbtYaml.string(_, "method"))
+            val ancestors = DbtYaml.ancestors(scalar)
+            val key = DbtYaml.key(scalar)
+            val method = DbtYaml.parentMapping(scalar).flatMap(DbtYaml.string(_, "method"))
             val selectionContext = (if (selectionFile) ancestors.exists(Set("select", "exclude", "selector"))
               else ancestors.contains("definition")) && !ancestors.exists(Set("vars", "env", "description"))
             val named = selectionContext && (key == "selector" || (key == "value" && method.contains("selector")))
             val expression = if (!selectionContext) None else if (selectionFile && Set("select", "exclude").contains(key)) Some(scalar.getTextValue)
               else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
-              else if (Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test", "function", "check", "resource_type").contains(key)) Some(key + ":" + scalar.getTextValue)
+              else if (MethodKeys(key)) Some(key + ":" + scalar.getTextValue)
               else if (key == "definition" || scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
-            val selectorFile = if (file.getName == "selectors.yml") Some(file) else Option(root.directory.findChild("selectors.yml"))
-              .flatMap(v => Option(com.intellij.psi.PsiManager.getInstance(w.project).findFile(v)))
-            val targets = if (named) w.symbols.filter(s => s.kind == "selector" && selectorFile.contains(s.file) && s.name == scalar.getTextValue).map(_.element)
+            lazy val targets = if (named) w.symbols.filter(s => s.kind == "selector" && selectorFile.contains(s.file) && s.name == scalar.getTextValue).map(_.element)
               else expression.toVector.flatMap(select(w, root, _, includeGraph))
             if (selectionContext && expression.contains(scalar.getTextValue) && !named) {
-              val escaper = scalar.createLiteralTextEscaper()
-              val host = new com.intellij.openapi.util.TextRange(0, scalar.getTextLength)
-              val decoded = new java.lang.StringBuilder
-              if (escaper.decode(host, decoded)) "[^\\s,]+".r.findAllMatchIn(decoded.toString).foreach { term =>
-                val range = new com.intellij.openapi.util.TextRange(scalar.getTextOffset + escaper.getOffsetInHost(term.start, host),
-                  scalar.getTextOffset + escaper.getOffsetInHost(term.end, host))
+              DbtYaml.decoded(scalar).foreach { case (text, offset) => "[^\\s,]+".r.findAllMatchIn(text).foreach { term =>
+                val range = new TextRange(offset(term.start), offset(term.end))
                 result += new DbtNavigationReference(file, range, select(w, root, term.matched, includeGraph), term.matched)
-              }
+              }}
             } else if (named || expression.nonEmpty) result += new DbtNavigationReference(file, scalar.getTextRange, targets, scalar.getTextValue)
           case _ => ()
         }

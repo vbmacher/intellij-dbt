@@ -32,20 +32,15 @@ private[dbt] object DbtStaticCalls {
     var captures = List.empty[String]
     blocks.takeWhile(_.range.getStartOffset < before).foreach { b =>
       val ts = b.tokens
-      val tag = if (b.tag) ts.headOption.map(_.image).getOrElse("") else ""
-      if (Set("for", "macro", "test", "call", "with", "block").contains(tag)) {
+      val tag = b.tagName.getOrElse("")
+      if (DbtSyntax.ScopeTags(tag)) {
         val outer = scopes.reverse.foldLeft(Map.empty[String, Vector[String]])(_ ++ _)
         val bindings = if (tag == "for") {
           val targets = ts.drop(1).takeWhile(_.image != "in").filterNot(_.image == ",")
           targets.map(t => t.image -> (if (targets.size == 1) value(ts.dropWhile(_.image != "in").drop(1), outer) else Vector.empty[String])).toMap
         } else if (Set("macro", "test", "call").contains(tag)) DbtSyntax.parameters(b).map(t => t.image -> Vector.empty[String]).toMap
         else if (tag == "with") {
-          var depth = 0
-          val assignments = ts.indices.filter { i =>
-            if (Set("(", "[", "{").contains(ts(i).image)) depth += 1
-            if (Set(")", "]", "}").contains(ts(i).image)) depth -= 1
-            depth == 0 && ts.lift(i + 1).exists(_.image == "=")
-          }
+          val assignments = DbtSyntax.assignedNames(ts)
           assignments.zipWithIndex.map { case (i, index) =>
             val end = assignments.lift(index + 1).map(_ - 1).getOrElse(ts.size)
             ts(i).image -> value(ts.slice(i + 2, end), outer)
@@ -53,7 +48,7 @@ private[dbt] object DbtStaticCalls {
         } else Map.empty[String, Vector[String]]
         scopes = bindings :: scopes
       }
-      if (Set("endfor", "endmacro", "endtest", "endcall", "endwith", "endblock").contains(tag) && scopes.size > 1) scopes = scopes.tail
+      if (DbtSyntax.ScopeEndTags(tag) && scopes.size > 1) scopes = scopes.tail
       if (tag == "endset" && captures.nonEmpty) {
         scopes = (scopes.head + (captures.head -> Vector.empty[String])) :: scopes.tail
         captures = captures.tail
@@ -63,14 +58,14 @@ private[dbt] object DbtStaticCalls {
         val name = ts(1).image
         val next = value(ts.drop(3), env)
         // Conditional branches remain a finite set of candidates, never an assumed runtime branch.
-        val conditional = blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset).count(x => x.tag && x.tokens.headOption.exists(_.image == "if")) >
-          blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset).count(x => x.tag && x.tokens.headOption.exists(_.image == "endif"))
+        val preceding = blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset)
+        val conditional = preceding.count(_.isTag("if")) > preceding.count(_.isTag("endif"))
         val values = if (conditional && (next.isEmpty || env.get(name).exists(_.isEmpty))) Vector.empty
         else if (conditional) (env.getOrElse(name, Vector.empty) ++ next).distinct else next
         scopes = (scopes.head + (name -> values)) :: scopes.tail
       } else if (tag == "set" && !ts.lift(2).exists(_.image == ".")) {
         if (!ts.exists(_.image == "=")) ts.lift(1).foreach(t => captures = t.image :: captures)
-        else ts.drop(1).takeWhile(_.image != "=").filter(t => !t.string && t.image.matches("[A-Za-z_][A-Za-z_0-9]*"))
+        else ts.drop(1).takeWhile(_.image != "=").filter(t => !t.string && DbtSyntax.isIdentifier(t.image))
           .foreach(t => scopes = (scopes.head + (t.image -> Vector.empty[String])) :: scopes.tail)
       }
     }
@@ -78,7 +73,7 @@ private[dbt] object DbtStaticCalls {
   }
 
   def targets(w: DbtWorkspace, root: DbtRoot, call: DbtSyntax.Call, env: Map[String, Vector[String]]): Vector[PsiElement] = {
-    val args = call.arguments.filter(_.keyword.isEmpty).map(a => value(a.tokens, env))
+    val args = call.positional.map(a => value(a.tokens, env))
     val base = call.name.stripPrefix("builtins.")
     if (!call.name.startsWith("builtins.") && w.declarations(Set("macro"), base, root).nonEmpty) return Vector.empty
     base match {
@@ -87,13 +82,11 @@ private[dbt] object DbtStaticCalls {
         val qualified = args.size >= 2
         val names = args.lift(if (qualified) 1 else 0).getOrElse(Vector.empty)
         val namespaces = if (qualified) args.head.map(Some(_)) else Vector(None)
-        val versionArgument = call.arguments.find(a => a.keyword.exists(Set("v", "version")))
-        val version = versionArgument.flatMap(_.literal)
-        if (versionArgument.nonEmpty && version.isEmpty) return Vector.empty
-        (for (name <- names; ns <- namespaces; defs = w.declarations(kinds, name, root, ns);
-              latest = defs.flatMap(_.attributes.get("latest_version")).distinct;
-              selected = version.orElse(if (latest.size == 1) latest.headOption else None);
-              s <- defs if selected.fold(s.version.isEmpty)(v => s.version.contains(v))) yield s.element).distinct
+        call.version match {
+          case Some(None) => Vector.empty
+          case version => (for (name <- names; ns <- namespaces;
+                                s <- DbtNavigation.versioned(w.declarations(kinds, name, root, ns), version.flatten)) yield s.element).distinct
+        }
       case "source" if args.size == 2 =>
         (for (source <- args.head; table <- args(1); s <- DbtNavigation.sourceTables(w, root, source, table)) yield s.element).distinct
       case "var" => args.headOption.toVector.flatten.flatMap(DbtNavigation.variable(w, root, _))
@@ -108,10 +101,10 @@ private[dbt] object DbtStaticCalls {
     val blocks = DbtSyntax.inFile(macroSymbol.file)
     val start = blocks.indexWhere(b => b.tag && b.tokens.lift(1).exists(_.range == macroSymbol.range))
     if (start < 0) return Vector.empty
-    val body = blocks.drop(start + 1).takeWhile(b => !(b.tag && b.tokens.headOption.exists(_.image == "endmacro")))
+    val body = blocks.drop(start + 1).takeWhile(!_.isTag("endmacro"))
     val params = w.symbols.filter(s => s.kind == "parameter" && s.owner == macroSymbol.name && s.file == macroSymbol.file).sortBy(_.range.getStartOffset)
     val bindings = params.zipWithIndex.flatMap { case (p, i) =>
-      call.arguments.find(_.keyword.contains(p.name)).orElse(call.arguments.filter(_.keyword.isEmpty).lift(i)).map(a => p.name -> (a, value(a.tokens, constants)))
+      call.arguments.find(_.keyword.contains(p.name)).orElse(call.positional.lift(i)).map(a => p.name -> (a, value(a.tokens, constants)))
     }.toMap
     val env = bindings.view.mapValues(_._2).toMap
     val result = ArrayBuffer.empty[(DbtSyntax.Argument, Vector[PsiElement])]
@@ -124,8 +117,7 @@ private[dbt] object DbtStaticCalls {
           if (targets.nonEmpty) result += argument -> targets
         }
       }
-      val parts = delegated.name.split("\\.")
-      if (targets.isEmpty) w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None).foreach { next =>
+      if (targets.isEmpty) w.macros(delegated, root).foreach { next =>
         wrapperTargets(w, root, next, delegated, local, visited + macroSymbol.id).foreach { case (arg, candidates) =>
           arg.tokens.flatMap(t => bindings.get(t.image)).foreach { case (original, _) => result += original -> candidates }
         }

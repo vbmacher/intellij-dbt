@@ -8,6 +8,7 @@ import com.intellij.openapi.progress.{ProcessCanceledException, ProgressManager}
 import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.{PsiFile, PsiManager}
+import scala.util.Try
 import com.intellij.psi.util.{CachedValue, CachedValueProvider, CachedValuesManager}
 import com.intellij.testFramework.LightVirtualFile
 import org.apache.parquet.ParquetReadOptions
@@ -36,17 +37,19 @@ private[dbt] object DbtParquetArtifacts {
   private val fields = Set("unique_id", "name", "resource_type", "package_name", "original_file_path",
     "source_name", "version", "latest_version", "enabled", "access", "ingested_at",
     "node_unique_id", "column_name", "parent_unique_id", "child_unique_id")
+
   private final case class Row(values: Map[String, String], json: JsonObject) {
     def range(key: String): TextRange = Option(json.findProperty(key)).flatMap(p => Option(p.getValue))
       .map(_.getTextRange).getOrElse(json.getTextRange)
   }
+
   private final case class Table(name: String, artifact: VirtualFile, file: JsonFile,
     columns: Vector[(String, TextRange)], rows: Vector[Row])
 
   private def directory(root: DbtRoot): Option[VirtualFile] = if (root.engine != "v2" ||
     DbtYaml.map(root.config, "info_schema").flatMap(DbtYaml.string(_, "version")).exists(_ != "1")) None
-    else root.setting("info-schema-dir").flatMap(p => Option(root.directory.findFileByRelativePath(p)))
-      .filter(d => d.isDirectory && d.getName == "v1" && d.isInLocalFileSystem)
+  else root.setting("info-schema-dir").flatMap(p => Option(root.directory.findFileByRelativePath(p)))
+    .filter(d => d.isDirectory && d.getName == "v1" && d.isInLocalFileSystem)
 
   def files(workspace: DbtWorkspace): Vector[VirtualFile] = workspace.roots.flatMap { root =>
     directory(root).toVector.flatMap(d => (kinds.keys.toVector ++ Vector("node_columns", "edges"))
@@ -55,11 +58,10 @@ private[dbt] object DbtParquetArtifacts {
 
   private def tables(workspace: DbtWorkspace, root: DbtRoot): Vector[Table] = directory(root).toVector.flatMap { d =>
     (kinds.keys.toVector.sorted ++ Vector("node_columns", "edges")).flatMap { name =>
-      Option(d.findChild(s"dbt.$name.parquet")).flatMap(v => Option(PsiManager.getInstance(workspace.project).findFile(v)))
-        .flatMap { binary =>
-          CachedValuesManager.getManager(workspace.project).getCachedValue(binary, cache, () =>
-            CachedValueProvider.Result.create(read(binary, name), binary), false)
-        }
+      DbtYaml.psiFile(workspace.project, d.findChild(s"dbt.$name.parquet")).flatMap { binary =>
+        CachedValuesManager.getManager(workspace.project).getCachedValue(binary, cache, () =>
+          CachedValueProvider.Result.create(read(binary, name), binary), false)
+      }
     }
   }
 
@@ -73,7 +75,7 @@ private[dbt] object DbtParquetArtifacts {
       try {
         val schema = reader.getFooter.getFileMetaData.getSchema
         val required = if (name == "node_columns") Set("node_unique_id", "column_name")
-          else if (name == "edges") Set("parent_unique_id", "child_unique_id") else Set("unique_id", "name")
+        else if (name == "edges") Set("parent_unique_id", "child_unique_id") else Set("unique_id", "name")
         val compatible = required.forall { name =>
           if (!schema.containsField(name)) false else {
             val field = schema.getType(schema.getFieldIndex(name))
@@ -141,13 +143,8 @@ private[dbt] object DbtParquetArtifacts {
     }
   }
 
-  private def stale(workspace: DbtWorkspace, root: DbtRoot, row: Row): Boolean = {
-    val ingested = row.values.get("ingested_at").flatMap(s => scala.util.Try(Instant.parse(s).toEpochMilli).toOption)
-    ingested.isEmpty || workspace.files.exists(f => workspace.root(f).exists(r =>
-      (r == root || workspace.packageOwner(r).contains(root)) && r.resource(f)) &&
-      (ingested.exists(f.getVirtualFile.getTimeStamp > _) || Option(com.intellij.psi.PsiDocumentManager.getInstance(workspace.project).getDocument(f))
-        .exists(com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().isDocumentUnsaved)))
-  }
+  private def stale(workspace: DbtWorkspace, root: DbtRoot, row: Row): Boolean =
+    workspace.outdated(root, row.values.get("ingested_at").flatMap(s => Try(Instant.parse(s).toEpochMilli).toOption))
 
   private def attributes(table: Table, row: Row, stale: Boolean): Map[String, String] = Map(
     "artifact" -> "info-schema", "artifact_path" -> table.artifact.getPath, "stale" -> stale.toString) ++
@@ -170,7 +167,7 @@ private[dbt] object DbtParquetArtifacts {
         val idKind = if (kind == "source_table") "source" else kind
         val consistent = parts.headOption.contains(idKind) && parts.lift(1).contains(namespace) &&
           row.values.get("resource_type").forall(_ == idKind)
-        if (parts.size < 3 || !consistent || name.isEmpty || existing || sourceExists || row.values.get("enabled").contains("false")) Vector.empty
+        if (parts.size < 3 || !consistent || name.isEmpty || existing || sourceExists || row.values.get("enabled").exists(_.equalsIgnoreCase("false"))) Vector.empty
         else {
           val attrs = attributes(table, row, stale(workspace, root, row)) + ("resource-root" -> root.directory.getPath)
           val symbol = DbtSymbol(kind, name, namespace, table.file, row.range("name"), owner, version, attrs, metadata = true)
@@ -179,19 +176,21 @@ private[dbt] object DbtParquetArtifacts {
         }
       }
     }
-    val columns = loaded.filter(_.name == "node_columns").flatMap { table => table.rows.flatMap { row =>
-      val id = row.values.getOrElse("node_unique_id", "")
-      val name = row.values.getOrElse("column_name", "")
-      val owners = (workspace.symbols ++ resources).filter(s => s.kind != "column" && DbtArtifacts.uniqueId(s) == id &&
-        workspace.owner(s).exists(r => workspace.namespaceVisible(root, r, qualified = true)))
-      owners.headOption.toVector.filter(_ => name.nonEmpty && !stale(workspace, root, row)).flatMap { owner =>
-        val ownerName = if (owner.kind == "source_table") owner.owner + "." + owner.name else owner.name
-        if (workspace.symbols.exists(s => s.kind == "column" && workspace.owner(s) == workspace.owner(owner) && s.namespace == owner.namespace &&
-          s.owner == ownerName && s.name == name && s.version == owner.version)) Vector.empty
-        else Vector(DbtSymbol("column", name, owner.namespace, table.file, row.range("column_name"), ownerName, owner.version,
-          (attributes(table, row, stale = false) - "unique_id") ++ workspace.owner(owner).map(r => "resource-root" -> r.directory.getPath), metadata = true))
+    val columns = loaded.filter(_.name == "node_columns").flatMap { table =>
+      table.rows.flatMap { row =>
+        val id = row.values.getOrElse("node_unique_id", "")
+        val name = row.values.getOrElse("column_name", "")
+        val owners = (workspace.symbols ++ resources).filter(s => s.kind != "column" && DbtArtifacts.uniqueId(s) == id &&
+          workspace.owner(s).exists(r => workspace.namespaceVisible(root, r, qualified = true)))
+        owners.headOption.toVector.filter(_ => name.nonEmpty && !stale(workspace, root, row)).flatMap { owner =>
+          val ownerName = owner.relationName
+          if (workspace.symbols.exists(s => s.kind == "column" && workspace.owner(s) == workspace.owner(owner) && s.namespace == owner.namespace &&
+            s.owner == ownerName && s.name == name && s.version == owner.version)) Vector.empty
+          else Vector(DbtSymbol("column", name, owner.namespace, table.file, row.range("column_name"), ownerName, owner.version,
+            (attributes(table, row, stale = false) - "unique_id") ++ workspace.owner(owner).map(r => "resource-root" -> r.directory.getPath), metadata = true))
+        }
       }
-    }}
+    }
     val views = loaded.flatMap { table =>
       val attrs = Map("artifact" -> "info-schema", "artifact_path" -> table.artifact.getPath, "resource-root" -> root.directory.getPath)
       val top = table.file.getTopLevelValue.asInstanceOf[JsonObject]
@@ -202,18 +201,21 @@ private[dbt] object DbtParquetArtifacts {
   }
 
   def edges(workspace: DbtWorkspace): Vector[DbtDependency] = workspace.roots.flatMap { root =>
-    tables(workspace, root).filter(_.name == "edges").flatMap { table => table.rows.filterNot(stale(workspace, root, _)).flatMap { row =>
-      def targets(key: String): Vector[DbtSymbol] = {
-        val all = workspace.symbols.filter(s => s.kind != "column" && row.values.get(key).contains(DbtArtifacts.uniqueId(s)) &&
-          workspace.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
-        val code = all.filter(_.attributes.contains("code"))
-        if (code.nonEmpty) code else all
+    tables(workspace, root).filter(_.name == "edges").flatMap { table =>
+      table.rows.filterNot(stale(workspace, root, _)).flatMap { row =>
+        def targets(key: String): Vector[DbtSymbol] = {
+          val all = workspace.symbols.filter(s => s.kind != "column" && row.values.get(key).contains(DbtArtifacts.uniqueId(s)) &&
+            workspace.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
+          val code = all.filter(_.isCode)
+          if (code.nonEmpty) code else all
+        }
+
+        for (child <- targets("child_unique_id"); parent <- targets("parent_unique_id")) yield {
+          val ref = new DbtNavigationReference(table.file, row.range("parent_unique_id"), Vector(parent.element), "Information Schema dependency",
+            Vector("Artifact: " + table.artifact.getPath))
+          DbtDependency(child, parent, ref)
+        }
       }
-      for (child <- targets("child_unique_id"); parent <- targets("parent_unique_id")) yield {
-        val ref = new DbtNavigationReference(table.file, row.range("parent_unique_id"), Vector(parent.element), "Information Schema dependency",
-          Vector("Artifact: " + table.artifact.getPath))
-        DbtDependency(child, parent, ref)
-      }
-    }}
+    }
   }
 }

@@ -11,7 +11,7 @@ import scala.collection.mutable.ArrayBuffer
 private[dbt] object DbtFunctionParameters {
   def references(file: PsiFile, w: DbtWorkspace): Vector[DbtNavigationReference] = {
     if (file.getVirtualFile.getExtension != "sql" || file.getText.contains("{{")) return Vector.empty
-    val functions = w.symbols.filter(s => s.kind == "function" && s.file == file && s.attributes.contains("code"))
+    val functions = w.codeSymbols(file).filter(_.kind == "function")
     if (functions.isEmpty) return Vector.empty
     val params = functions.flatMap(f => w.symbols.filter(p => p.kind == "parameter" && p.owner == f.name && p.namespace == f.namespace && w.root(p.file) == w.root(f.file) &&
       p.attributes.get("overload") == f.attributes.get("overload")))

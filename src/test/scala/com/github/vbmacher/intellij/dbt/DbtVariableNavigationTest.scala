@@ -1,6 +1,7 @@
 package com.github.vbmacher.intellij.dbt
 
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
+import com.intellij.json.JsonFileType
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.{PsiDocumentManager, PsiFile, PsiReference}
@@ -8,7 +9,6 @@ import com.intellij.psi.search.{GlobalSearchScope, LocalSearchScope}
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jetbrains.yaml.psi.YAMLKeyValue
-import org.jetbrains.yaml.YAMLFileType
 import org.junit.Assert._
 
 import scala.jdk.CollectionConverters._
@@ -21,9 +21,14 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
 
   private def sql(path: String, text: String): PsiFile = myFixture.addFileToProject(path, text)
 
-  private def declaration(name: String): YAMLKeyValue = DbtProject.forProject(getProject).get.resolve(name).get
+  private def root: DbtRoot = DbtWorkspace.get(getProject).roots.find(_.name == "example").get
 
-  private def references(file: PsiFile): Seq[DbtVariableReference] = DbtVariableReference.inFile(file)
+  private def declaration(name: String): YAMLKeyValue =
+    DbtNavigation.variable(DbtWorkspace.get(getProject), root, name).head.asInstanceOf[YAMLKeyValue]
+
+  // Variable name arguments, excluding the `var` builtin itself and dynamic expressions.
+  private def references(file: PsiFile): Seq[DbtNavigationReference] =
+    DbtNavigation.inFile(file).filterNot(r => Set("var", "static reference").contains(r.getCanonicalText))
 
   private def usages(name: String): Seq[PsiReference] = ReferencesSearch.search(declaration(name)).findAll().asScala.toSeq
 
@@ -60,7 +65,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     assertEquals("global", refs(1).resolve().asInstanceOf[YAMLKeyValue].getValueText)
     assertNull(refs(2).resolve())
     assertEquals(1, usages("start_date").size)
-    val globals = DbtProject.forProject(getProject).get.config.getKeyValueByKey("vars").getValue
+    val globals = root.config.getKeyValueByKey("vars").getValue
       .asInstanceOf[org.jetbrains.yaml.psi.YAMLMapping]
     assertTrue(ReferencesSearch.search(globals.getKeyValueByKey("start_date")).findAll().isEmpty)
   }
@@ -95,15 +100,18 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
       assertTrue(references(sql(s"$directory/use.sql", "{{ var('start_date') }}")).isEmpty)
     }
     myFixture.addFileToProject("nested/dbt_project.yml", "name: nested\nvars:\n  start_date: other\n")
-    assertTrue(references(sql("nested/models/use.sql", "{{ var('start_date') }}")).isEmpty)
+    assertEquals("other", references(sql("nested/models/use.sql", "{{ var('start_date') }}")).head.resolve()
+      .asInstanceOf[YAMLKeyValue].getValueText)
     assertNotNull(references(sql("models/use.sql", "{{ var('start_date') }}")).head.resolve())
     assertEquals(1, usages("start_date").size)
   }
 
-  def testMissingRootDoesNotActivateNavigation(): Unit = {
+  def testFilesOutsideAProjectDoNotActivateNavigation(): Unit = {
     assertTrue(references(sql("models/use.sql", "{{ var('start_date') }}")).isEmpty)
     myFixture.addFileToProject("nested/dbt_project.yml", "name: nested\nvars:\n  start_date: other\n")
-    assertTrue(references(sql("nested/models/use.sql", "{{ var('start_date') }}")).isEmpty)
+    assertTrue(references(sql("models/other.sql", "{{ var('start_date') }}")).isEmpty)
+    assertEquals("other", references(sql("nested/models/use.sql", "{{ var('start_date') }}")).head.resolve()
+      .asInstanceOf[YAMLKeyValue].getValueText)
   }
 
   def testJinjaCommentsRawBlocksAndNonCallsAreIgnored(): Unit = {
@@ -130,8 +138,8 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     project("vars:\n  start_date: today\n  fallback: yesterday\n")
     val file = sql("models/use.sql", "select\n{{-\n var (\n 'start_date', var('fallback')\n )\n-}}")
     val refs = references(file)
-    assertEquals(Seq("start_date", "fallback"), refs.map(_.name))
-    refs.foreach(reference => assertEquals(reference.name, reference.getRangeInElement.substring(file.getText)))
+    assertEquals(Seq("start_date", "fallback"), refs.map(_.getCanonicalText))
+    refs.foreach(reference => assertEquals(reference.getCanonicalText, reference.getRangeInElement.substring(file.getText)))
     assertEquals(1, usages("start_date").size)
     assertEquals(1, usages("fallback").size)
   }
@@ -156,7 +164,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
   def testUnsavedEditsInvalidateCallsAndDefinitions(): Unit = {
     val config = project("vars:\n  start_date: today\n  end_date: tomorrow\n")
     val file = sql("models/use.sql", "{{ var('start_date') }}")
-    assertEquals("start_date", references(file).head.name)
+    assertEquals("start_date", references(file).head.getCanonicalText)
     val documents = PsiDocumentManager.getInstance(getProject)
     WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
       override def run(): Unit = {
@@ -165,7 +173,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
         documents.commitAllDocuments()
       }
     })
-    assertEquals("end_date", references(file).head.name)
+    assertEquals("end_date", references(file).head.getCanonicalText)
     assertEquals("changed", references(file).head.resolve().asInstanceOf[YAMLKeyValue].getValueText)
     assertEquals(1, usages("end_date").size)
   }
@@ -180,7 +188,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     project("vars:\n  \"it's_ready\": true\n")
     val file = sql("models/use.sql", "{{ var('it\\'s_ready') }}")
     val reference = references(file).head
-    assertEquals("it's_ready", reference.name)
+    assertEquals("it's_ready", reference.getCanonicalText)
     assertEquals("it\\'s_ready", reference.getRangeInElement.substring(file.getText))
     assertSame(declaration("it's_ready"), reference.resolve())
     assertEquals(1, usages("it's_ready").size)
@@ -202,7 +210,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
   def testTrimNormalizationDoesNotChangeVariableNames(): Unit = {
     project("vars:\n  '{%-name': true\n")
     val file = sql("models/use.sql", "{{ var('{%-name') }}")
-    assertEquals("{%-name", references(file).head.name)
+    assertEquals("{%-name", references(file).head.getCanonicalText)
     assertSame(declaration("{%-name"), references(file).head.resolve())
     assertEquals(1, usages("{%-name").size)
   }
@@ -214,11 +222,11 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     // An existing parser with no contributed dbt file references exercises the same
     // navigation fallback needed by SQL PSI, without requiring a paid SQL plugin.
     WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit = fileTypes.associateExtension(YAMLFileType.YML, "sql")
+      override def run(): Unit = fileTypes.associateExtension(JsonFileType.INSTANCE, "sql")
     })
     try {
       val file = sql("models/use.sql", "value: \"{{ var('start_date') }}\"")
-      assertTrue(file.isInstanceOf[org.jetbrains.yaml.psi.YAMLFile])
+      assertTrue(file.isInstanceOf[com.intellij.json.psi.JsonFile])
       val handler = new DbtGotoDeclarationHandler
       val offset = file.getText.indexOf("start_date") + 2
       myFixture.configureFromExistingVirtualFile(file.getVirtualFile)
@@ -228,7 +236,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     } finally {
       WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
         override def run(): Unit = {
-          fileTypes.removeAssociatedExtension(YAMLFileType.YML, "sql")
+          fileTypes.removeAssociatedExtension(JsonFileType.INSTANCE, "sql")
           fileTypes.associateExtension(originalType, "sql")
         }
       })

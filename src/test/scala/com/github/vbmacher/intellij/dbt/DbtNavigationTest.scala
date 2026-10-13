@@ -402,7 +402,7 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     root("vars:\n  color: red\n")
     add("macros/var.sql", "{% macro var(name) %}{{ builtins.var(name) }}{% endmacro %}")
     val file = add("models/use.sql", "{{ var('color') }} {{ builtins.var('color') }}")
-    assertNull(DbtVariableReference.inFile(file).head.resolve())
+    assertTrue(refs(file, "color").forall(_.getCanonicalText == "delegated reference"))
     assertEquals("macro", target(file, "var").asInstanceOf[DbtSymbolElement].symbol.kind)
     assertNotNull(target(file, "color", 1))
   }

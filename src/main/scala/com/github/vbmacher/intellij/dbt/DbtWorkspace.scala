@@ -1,166 +1,60 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.lang.Language
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
-import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.{LocalFileSystem, VfsUtilCore, VirtualFile, VirtualFileManager}
-import com.intellij.psi.{PsiElement, PsiFile, PsiManager, PsiNamedElement}
-import com.intellij.psi.impl.light.LightElement
-import com.intellij.psi.util.{CachedValueProvider, CachedValuesManager, PsiModificationTracker}
-import org.jetbrains.yaml.psi._
-import scala.jdk.CollectionConverters._
-import scala.collection.mutable.ArrayBuffer
+import com.intellij.psi.util.{CachedValue, CachedValueProvider, CachedValuesManager, PsiModificationTracker}
+import com.intellij.psi.{PsiDocumentManager, PsiFile}
 
-private[dbt] object DbtYaml {
-  def mapping(file: PsiFile): Option[YAMLMapping] = file match {
-    case yaml: YAMLFile => yaml.getDocuments.asScala.headOption.flatMap(d => Option(d.getTopLevelValue)).collect {
-      case m: YAMLMapping => m
-    }
-    case _ => None
-  }
-  def value(m: YAMLMapping, key: String): Option[YAMLValue] = Option(m.getKeyValueByKey(key)).flatMap(k => Option(k.getValue))
-  def map(m: YAMLMapping, key: String): Option[YAMLMapping] = value(m, key).collect { case x: YAMLMapping => x }
-  def string(m: YAMLMapping, key: String): Option[String] = value(m, key).collect { case s: YAMLScalar => s.getTextValue }
-  def items(m: YAMLMapping, key: String): Vector[YAMLMapping] = value(m, key).collect {
-    case s: YAMLSequence => s.getItems.asScala.toVector.flatMap(i => Option(i.getValue).collect { case x: YAMLMapping => x })
-  }.getOrElse(Vector.empty)
-  def strings(m: YAMLMapping, key: String, default: Vector[String] = Vector.empty): Vector[String] = value(m, key) match {
-    case Some(s: YAMLSequence) => s.getItems.asScala.toVector.flatMap(i => Option(i.getValue).collect { case x: YAMLScalar => x.getTextValue })
-    case Some(s: YAMLScalar) => Vector(s.getTextValue)
-    case None => default
-    case _ => Vector.empty
-  }
-  def nameRange(m: YAMLMapping, key: String = "name"): TextRange = value(m, key).map(_.getTextRange).getOrElse(m.getTextRange)
-  def attributes(m: YAMLMapping): Map[String, String] = m.getKeyValues.asScala.flatMap(k => Option(k.getValue).collect {
-    case s: YAMLScalar => k.getKeyText -> s.getTextValue
-    case s: YAMLSequence if k.getKeyText.stripPrefix("+") == "tags" => k.getKeyText -> strings(m, k.getKeyText).mkString(",")
-  }).toMap ++ map(m, "config").toVector.flatMap(attributes)
-}
+import scala.collection.mutable
 
-private[dbt] object DbtSymbolLanguage extends Language("dbt-symbol")
-
-/** A source declaration with a stable identity, including declarations in plain-text Community files. */
-final class DbtSymbolElement private[dbt] (val symbol: DbtSymbol)
-  extends LightElement(symbol.file.getManager, DbtSymbolLanguage) with PsiNamedElement {
-  private val pointer = com.intellij.psi.SmartPointerManager.getInstance(symbol.file.getProject)
-    .createSmartPsiFileRangePointer(symbol.file, symbol.range)
-  override def getName: String = symbol.name
-  override def getIcon(flags: Int): javax.swing.Icon = DbtIcons.forKind(symbol.kind)
-  override def getPresentation: com.intellij.navigation.ItemPresentation = new com.intellij.navigation.ItemPresentation {
-    override def getPresentableText: String = s"${symbol.namespace}.${symbol.name}${symbol.version.map(" v" + _).getOrElse("")}${
-      if (symbol.attributes.get("stale").contains("true")) " (stale metadata)" else if (symbol.metadata) " (metadata)" else ""}"
-    override def getLocationString: String = symbol.file.getName
-    override def getIcon(unused: Boolean): javax.swing.Icon = DbtIcons.forKind(symbol.kind)
-  }
-  override def setName(name: String): PsiElement = throw new UnsupportedOperationException("dbt rename is not supported")
-  override def getContainingFile: PsiFile = symbol.file
-  override def getTextRange: TextRange = Option(pointer.getRange).map(r => new TextRange(r.getStartOffset, r.getEndOffset)).getOrElse(TextRange.EMPTY_RANGE)
-  override def getTextOffset: Int = getTextRange.getStartOffset
-  override def getText: String = symbol.name
-  override def getParent: PsiElement = symbol.file
-  override def isValid: Boolean = symbol.file.isValid && pointer.getRange != null
-  override def isWritable: Boolean = false
-  override def navigate(requestFocus: Boolean): Unit = symbol.attributes.get("url") match {
-    case Some(url) => com.intellij.ide.BrowserUtil.browse(url)
-    case None => new OpenFileDescriptor(getProject, symbol.file.getVirtualFile, getTextOffset).navigate(requestFocus)
-  }
-  override def canNavigate: Boolean = isValid
-  override def canNavigateToSource: Boolean = isValid && !symbol.metadata
-  override def toString: String = s"dbt ${symbol.kind}: ${symbol.namespace}.${symbol.name}${if (symbol.metadata && symbol.attributes.get("stale").contains("true")) " (stale metadata)" else if (symbol.metadata) " (metadata)" else ""}"
-  override def equals(other: Any): Boolean = other match {
-    case e: DbtSymbolElement => symbol.id == e.symbol.id
-    case _ => false
-  }
-  override def hashCode(): Int = symbol.id.hashCode
-}
-
-private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: String, file: PsiFile,
-  range: TextRange, owner: String = "", version: Option[String] = None,
-  attributes: Map[String, String] = Map.empty, mapping: Option[YAMLMapping] = None, metadata: Boolean = false) {
-  def id: String = s"${file.getVirtualFile.getPath}:${range.getStartOffset}:$kind:$name:$owner:${version.getOrElse("")}"
-  lazy val element: DbtSymbolElement = new DbtSymbolElement(this)
-}
-
-private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping, settings: Option[YAMLMapping]) {
-  val name: String = DbtYaml.string(config, "name").getOrElse(directory.getName)
-  def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key))
-  def runConfiguration: Option[YAMLMapping] = setting("run-config").flatMap(p => Option(directory.findFileByRelativePath(p)))
-    .flatMap(f => Option(PsiManager.getInstance(config.getProject).findFile(f))).flatMap(DbtYaml.mapping)
-  def runtimeSetting(key: String): Option[String] = setting(key).orElse(runConfiguration.flatMap(DbtYaml.string(_, key)))
-  val engine: String = setting("engine").getOrElse("core")
-  val version: String = setting("dbt-version").orElse(DbtYaml.string(config, "require-dbt-version")
-    .flatMap("[0-9]+\\.[0-9]+".r.findFirstIn)).getOrElse("1.10")
-  def supports(minor: Int, patch: Int = 0): Boolean = engine == "v2" || engine == "core" && (version.split("\\.").take(2).flatMap(_.toIntOption).toVector match {
-    case Vector(major, _) if major >= 2 => true
-    case Vector(1, m) => m > minor || m == minor && version.split("\\.").lift(2).flatMap(_.toIntOption).forall(_ >= patch)
-    case _ => false
-  })
-  val pathKinds: Vector[(String, String)] = Vector(
-    "model" -> "models", "seed" -> "seeds", "snapshot" -> "snapshots", "analysis" -> "analyses",
-    "macro" -> "macros", "test" -> "tests", "doc" -> "docs", "function" -> "functions", "check" -> "checks")
-    .filter { case (k, _) => (k != "function" || supports(11)) && (k != "check" || engine == "v2") }
-    .flatMap { case (kind, default) =>
-      val key = Map("model" -> "model-paths", "analysis" -> "analysis-paths", "doc" -> "docs-paths").getOrElse(kind, s"$kind-paths")
-      DbtYaml.strings(config, key, Vector(default)).map(kind -> _)
-    }
-  val packagePath: String = DbtYaml.string(config, "packages-install-path").getOrElse("dbt_packages")
-  private val ignores: Vector[(Boolean, Boolean, Vector[java.nio.file.PathMatcher])] = Option(directory.findChild(".dbtignore")).toVector.flatMap { file =>
-    Option(PsiManager.getInstance(config.getProject).findFile(file)).map(_.getText).getOrElse("").linesIterator
-      .map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>
-        val negated = pattern.startsWith("!")
-        val raw = if (negated) pattern.drop(1) else pattern
-        val relative = raw.stripPrefix("/").stripSuffix("/")
-        val patterns = Vector(relative) ++ (if (!raw.startsWith("/") && !relative.contains("/")) Vector("**/" + relative) else Vector.empty) ++
-          (if (relative.startsWith("**/")) Vector(relative.stripPrefix("**/")) else Vector.empty)
-        (negated, raw.endsWith("/"), patterns.flatMap(p => scala.util.Try(java.nio.file.FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
-      }.toVector
-  }
-  val exclusions: Vector[String] = Vector(".git", ".idea", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target"))
-  def relative(file: VirtualFile): Option[String] = Option(VfsUtilCore.getRelativePath(file, directory, '/'))
-  def pathContains(path: String, relative: String): Boolean = path == "." || relative == path || relative.startsWith(path.stripSuffix("/") + "/")
-  def excluded(file: VirtualFile): Boolean = relative(file).exists { r =>
-    val parts = r.split("/").toVector
-    val paths = parts.indices.map(i => java.nio.file.Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || file.isDirectory))
-    exclusions.exists(pathContains(_, r)) || ignores.foldLeft(false) { case (ignored, (negated, directoriesOnly, matchers)) =>
-      if (paths.exists { case (path, directory) => (!directoriesOnly || directory) && matchers.exists(_.matches(path)) }) !negated else ignored
-    }
-  }
-  def kind(file: VirtualFile): Option[String] = relative(file).flatMap { r => pathKinds.collectFirst { case (k, p) if pathContains(p, r) => k } }
-  def resource(file: PsiFile): Boolean = !excluded(file.getVirtualFile) && kind(file.getVirtualFile).nonEmpty
-}
-
+/** All dbt projects of an IDE project with their files and declarations; cached until PSI or VFS changes. */
 private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[DbtRoot], val files: Vector[PsiFile],
   val symbols: Vector[DbtSymbol]) {
   private lazy val byKindAndName = symbols.groupBy(s => (s.kind, s.name))
-  def root(file: PsiFile): Option[DbtRoot] = Option(file.getVirtualFile).flatMap(v => roots.filter(r => VfsUtilCore.isAncestor(r.directory, v, false))
-    .sortBy(_.directory.getPath.length).lastOption)
+
+  private def rootOf(file: VirtualFile): Option[DbtRoot] =
+    roots.filter(r => VfsUtilCore.isAncestor(r.directory, file, false)).sortBy(_.directory.getPath.length).lastOption
+
+  def root(file: PsiFile): Option[DbtRoot] = Option(file.getVirtualFile).flatMap(rootOf)
+
+  /** The project which declares a symbol, including metadata symbols read from artifacts. */
   def owner(symbol: DbtSymbol): Option[DbtRoot] = symbol.attributes.get("resource-root").flatMap(p => roots.find(_.directory.getPath == p))
-    .orElse(root(symbol.file)).orElse(symbol.attributes.get("artifact_path")
-    .flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).flatMap(v =>
-      roots.filter(r => VfsUtilCore.isAncestor(r.directory, v, false)).sortBy(_.directory.getPath.length).lastOption))
+    .orElse(root(symbol.file))
+    .orElse(symbol.attributes.get("artifact_path").flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).flatMap(rootOf))
+
+  /** A file directly in the project directory. */
+  def rootFile(root: DbtRoot, name: String): Option[PsiFile] =
+    files.find(f => f.getVirtualFile.getParent == root.directory && f.getName == name)
+
+  /** The project which installed a package. */
   def packageOwner(r: DbtRoot): Option[DbtRoot] = roots.filter(p => p != r &&
     p.relative(r.directory).exists(p.pathContains(p.packagePath, _))).sortBy(_.directory.getPath.length).lastOption
-  def namespaceVisible(from: DbtRoot, target: DbtRoot, qualified: Boolean): Boolean = {
-    if (from == target || packageOwner(target).contains(packageOwner(from).getOrElse(from))) true
-    else if (!qualified) false
-    else from.supports(6) && files.find(f => f.getVirtualFile.getParent == from.directory && f.getName == "dependencies.yml")
-      .flatMap(DbtYaml.mapping).exists(m => DbtYaml.items(m, "projects").exists(x => DbtYaml.string(x, "name").contains(target.name)))
-  }
-  private def projectDependency(from: DbtRoot, namespace: String): Boolean = files.find(f =>
-    f.getVirtualFile.getParent == from.directory && f.getName == "dependencies.yml").flatMap(DbtYaml.mapping)
-    .exists(m => DbtYaml.items(m, "projects").exists(p => DbtYaml.string(p, "name").contains(namespace)))
+
+  private def samePackageTree(from: DbtRoot, target: DbtRoot): Boolean =
+    packageOwner(target).contains(packageOwner(from).getOrElse(from))
+
+  private def projectDependency(from: DbtRoot, namespace: String): Boolean = rootFile(from, "dependencies.yml")
+    .flatMap(DbtYaml.mapping).exists(m => DbtYaml.items(m, "projects").exists(p => DbtYaml.string(p, "name").contains(namespace)))
+
+  def namespaceVisible(from: DbtRoot, target: DbtRoot, qualified: Boolean): Boolean =
+    from == target || samePackageTree(from, target) || qualified && from.supports(6) && projectDependency(from, target.name)
+
   private def visibleSymbol(symbol: DbtSymbol, from: DbtRoot, qualified: Boolean): Boolean = {
-    if (symbol.metadata) owner(symbol).contains(from) && (symbol.namespace == from.name ||
-      qualified && projectDependency(from, symbol.namespace) && symbol.attributes.get("access").contains("public"))
+    val public = symbol.attributes.get("access").contains("public")
+    if (symbol.metadata) owner(symbol).contains(from) &&
+      (symbol.namespace == from.name || qualified && projectDependency(from, symbol.namespace) && public)
     else root(symbol.file).exists { target =>
       if (target == from) true
-      else if (packageOwner(target).contains(packageOwner(from).getOrElse(from))) !symbol.attributes.get("access").contains("private")
-      else qualified && from.supports(6) && projectDependency(from, target.name) && symbol.attributes.get("access").contains("public")
+      else if (samePackageTree(from, target)) !symbol.attributes.get("access").contains("private")
+      else qualified && from.supports(6) && projectDependency(from, target.name) && public
     }
   }
+
+  /** Declarations visible from a project; unqualified names prefer the project's own declarations. */
   def declarations(kind: Set[String], name: String, from: DbtRoot, namespace: Option[String] = None): Vector[DbtSymbol] = {
     ProgressManager.checkCanceled()
     val candidates = kind.toVector.flatMap(k => byKindAndName.getOrElse(k -> name, Vector.empty)).filter { s =>
@@ -176,221 +70,137 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
       case "saved_query" => from.supports(7)
       case "unit_test" => from.supports(8)
       case _ => true
-    }).filter(s => !s.attributes.get("enabled").exists(_.equalsIgnoreCase("false")) || s.kind == "source" && symbols.exists(t =>
-      t.kind == "source_table" && t.owner == s.name && t.namespace == s.namespace && owner(t) == owner(s) &&
-        !t.attributes.get("enabled").exists(_.equalsIgnoreCase("false")) && s.mapping.exists(_.getTextRange.contains(t.range))))
-      .filterNot(s => s.attributes.contains("property") && selected.exists(c =>
-      !c.attributes.contains("property") && c.kind == s.kind && c.namespace == s.namespace && c.name == s.name && c.version == s.version))
+    }).filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
+      t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
+      .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
   }
+
   private def functionSupported(symbol: DbtSymbol, from: DbtRoot): Boolean = {
-    val language = if (symbol.attributes.contains("code")) Option(symbol.file.getVirtualFile.getExtension)
+    val language = if (symbol.isCode) Option(symbol.file.getVirtualFile.getExtension)
       else symbol.attributes.get("language").orElse(symbol.attributes.get("node_language"))
-    val adapter = from.runtimeSetting("adapter").orElse(DbtNavigation.target(this, from, "type").headOption
-      .collect { case k: YAMLKeyValue => Option(k.getValue).collect { case s: YAMLScalar => s.getTextValue } }.flatten)
+    val adapter = from.adapter
     val languages = language.forall {
       case "js" | "javascript" => from.supports(12) && adapter.forall(Set("snowflake", "bigquery"))
       case "py" | "python" => adapter.forall(Set("snowflake", "bigquery", "databricks"))
-      case "sql" => adapter.forall(a => Set("snowflake", "bigquery", "databricks", "redshift", "postgres")(a) && !(from.engine == "v2" && a == "postgres"))
+      case "sql" => adapter.forall(a => Set("snowflake", "bigquery", "databricks", "redshift", "postgres")(a) &&
+        !(from.engine == "v2" && a == "postgres"))
       case _ => false
     }
     from.supports(11) && languages && (!symbol.attributes.contains("overload") || from.supports(12) &&
       adapter.forall(a => a == "snowflake" || a == "postgres" && language.forall(_ == "sql")))
   }
-  def properties(symbol: DbtSymbol): Vector[DbtSymbol] = symbols.filter(s => s.attributes.contains("property") &&
-    s.kind == symbol.kind && s.namespace == symbol.namespace && root(s.file) == root(symbol.file) && s.name == symbol.name && s.version == symbol.version)
+
+  def properties(symbol: DbtSymbol): Vector[DbtSymbol] =
+    symbols.filter(s => s.isProperty && s.sameResource(symbol) && root(s.file) == root(symbol.file))
+
   def symbolAt(file: PsiFile, offset: Int): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.range.containsOffset(offset))
+
+  /** Symbols of the resources defined by a file itself, rather than by blocks or properties inside it. */
+  def codeSymbols(file: PsiFile): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.isCode)
+
+  /** Macros a call may invoke, honouring an explicit `namespace.macro` qualifier. */
+  def macros(call: DbtSyntax.Call, from: DbtRoot): Vector[DbtSymbol] = {
+    val (namespace, name) = call.callee
+    declarations(Set("macro"), name, from, namespace)
+  }
+
+  /** Model, function and doc declarations named by `ref`-like calls, optionally qualified by a package. */
+  def definitions(call: DbtSyntax.Call, kinds: Set[String], from: DbtRoot): Vector[DbtSymbol] =
+    call.qualifiedName.toVector.flatMap { case (namespace, name) => declarations(kinds, name, from, namespace) }
+
+  /** Whether metadata generated at a time is older than the resource sources of a project, including unsaved edits. */
+  def outdated(root: DbtRoot, generatedAt: Option[Long]): Boolean = generatedAt.isEmpty || files.exists(f =>
+    this.root(f).exists(r => (r == root || packageOwner(r).contains(root)) && r.resource(f)) &&
+      (generatedAt.exists(f.getVirtualFile.getTimeStamp > _) || Option(PsiDocumentManager.getInstance(project).getDocument(f))
+        .exists(FileDocumentManager.getInstance().isDocumentUnsaved)))
 }
 
 private[dbt] object DbtWorkspace {
-  private val FileIndex = com.intellij.openapi.util.Key.create[com.intellij.psi.util.CachedValue[Vector[DbtSymbol]]]("dbt.file.declarations")
-  private val resourceKeys = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "analyses" -> "analysis",
-    "macros" -> "macro", "sources" -> "source", "exposures" -> "exposure", "groups" -> "group", "metrics" -> "metric",
-    "semantic_models" -> "semantic_model", "saved_queries" -> "saved_query", "functions" -> "function", "unit_tests" -> "unit_test", "checks" -> "check")
+  val ProjectFileName = "dbt_project.yml"
+  private val SettingsFileName = ".dbt-navigation.yml"
+  private val FileIndex = Key.create[CachedValue[Vector[DbtSymbol]]]("dbt.file.declarations")
+
   def get(project: Project): DbtWorkspace = CachedValuesManager.getManager(project).getCachedValue(project, () => {
     val workspace = build(project)
-    val artifacts = DbtParquetArtifacts.files(workspace).flatMap(f => Option(PsiManager.getInstance(project).findFile(f)))
+    val artifacts = DbtParquetArtifacts.files(workspace).flatMap(DbtYaml.psiFile(project, _))
     CachedValueProvider.Result.create(workspace, (Vector[AnyRef](PsiModificationTracker.MODIFICATION_COUNT,
       VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++ artifacts): _*)
   })
 
-  private def build(project: Project): DbtWorkspace = {
-    val manager = PsiManager.getInstance(project)
+  private def configFile(project: Project, directory: VirtualFile): Option[PsiFile] =
+    DbtYaml.psiFile(project, directory.findChild(ProjectFileName))
+
+  private def settingsFile(project: Project, directory: VirtualFile): Option[PsiFile] =
+    DbtYaml.psiFile(project, directory.findChild(SettingsFileName))
+
+  private def loadRoot(project: Project, directory: VirtualFile): Option[DbtRoot] =
+    configFile(project, directory).flatMap(DbtYaml.mapping)
+      .map(DbtRoot(directory, _, settingsFile(project, directory).flatMap(DbtYaml.mapping)))
+
+  private def discoverRoots(project: Project): Vector[DbtRoot] = {
     val bases = (Option(project.getBasePath).flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).toVector ++
       ProjectRootManager.getInstance(project).getContentRoots.toVector).distinct
-    val configs = ArrayBuffer.empty[VirtualFile]
-    val discoveryRoots = scala.collection.mutable.Map.empty[VirtualFile, Option[DbtRoot]]
-    def discoveryRoot(directory: VirtualFile): Option[DbtRoot] = if (directory == null) None else discoveryRoots.getOrElseUpdate(directory, {
-      Option(directory.findChild(DbtPlugin.ProjectFileName)).flatMap(f => Option(manager.findFile(f))).flatMap(DbtYaml.mapping)
-        .map(m => DbtRoot(directory, m, None)).orElse(discoveryRoot(directory.getParent))
-    })
+    val enclosing = mutable.Map.empty[VirtualFile, Option[DbtRoot]]
+    def enclosingRoot(directory: VirtualFile): Option[DbtRoot] = if (directory == null) None
+      else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
+    // Installed packages are excluded from their owner's resources, but they are projects of their own.
     def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", "target", "logs").contains(file.getName) &&
-      discoveryRoot(file.getParent).forall(r => !r.excluded(file) || r.relative(file).exists(r.pathContains(r.packagePath, _)))
-    bases.foreach(b => VfsUtilCore.iterateChildrenRecursively(b, discoverable, f => {
+      enclosingRoot(file.getParent).forall(r => !r.excluded(file) || r.relative(file).exists(r.pathContains(r.packagePath, _)))
+    val configs = mutable.ArrayBuffer.empty[VirtualFile]
+    bases.foreach(b => VfsUtilCore.iterateChildrenRecursively(b, discoverable(_), f => {
       ProgressManager.checkCanceled()
-      if (f.getName == DbtPlugin.ProjectFileName) configs += f
+      if (f.getName == ProjectFileName) configs += f
       true
     }))
-    val roots = configs.distinct.toVector.flatMap(f => Option(manager.findFile(f)).flatMap(DbtYaml.mapping).map { m =>
-      val settings = Option(f.getParent.findChild(".dbt-navigation.yml")).flatMap(v => Option(manager.findFile(v))).flatMap(DbtYaml.mapping)
-      DbtRoot(f.getParent, m, settings)
-    })
-    val virtualFiles = ArrayBuffer.empty[VirtualFile]
+    configs.distinct.toVector.flatMap(f => loadRoot(project, f.getParent))
+  }
+
+  private def projectFiles(project: Project, roots: Vector[DbtRoot]): Vector[PsiFile] = {
+    val extensions = Set("sql", "py", "yml", "yaml", "md", "csv", "json", "js")
+    val result = mutable.ArrayBuffer.empty[VirtualFile]
     roots.foreach(r => VfsUtilCore.iterateChildrenRecursively(r.directory,
-      f => !r.excluded(f) && !(f.isDirectory && f != r.directory && f.findChild(DbtPlugin.ProjectFileName) != null), f => {
+      f => !r.excluded(f) && !(f.isDirectory && f != r.directory && f.findChild(ProjectFileName) != null), f => {
         ProgressManager.checkCanceled()
-        if (!f.isDirectory && Set("sql", "py", "yml", "yaml", "md", "csv", "json", "js").contains(Option(f.getExtension).getOrElse(""))) virtualFiles += f
+        if (!f.isDirectory && extensions.contains(Option(f.getExtension).getOrElse(""))) result += f
         true
       }))
-    val files = virtualFiles.distinct.toVector.flatMap(f => Option(manager.findFile(f)))
+    result.distinct.toVector.flatMap(DbtYaml.psiFile(project, _))
+  }
+
+  /** Declarations of a single file, cached until the file or its project configuration changes. */
+  private def fileSymbols(project: Project, file: PsiFile, directory: VirtualFile): Vector[DbtSymbol] =
+    CachedValuesManager.getManager(project).getCachedValue(file, FileIndex, () => {
+      val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++
+        configFile(project, directory) ++ settingsFile(project, directory)
+      CachedValueProvider.Result.create(loadRoot(project, directory).map(DbtDeclarations.inFile(file, _))
+        .getOrElse(Vector.empty), dependencies: _*)
+    }, false)
+
+  private def build(project: Project): DbtWorkspace = {
+    val roots = discoverRoots(project)
+    val files = projectFiles(project, roots)
     val initial = new DbtWorkspace(project, roots, files, Vector.empty)
-    val symbols = files.flatMap(file => initial.root(file).toVector.flatMap { r =>
-      val directory = r.directory
-      CachedValuesManager.getManager(project).getCachedValue(file, FileIndex, () => {
-        val configFile = manager.findFile(directory.findChild(DbtPlugin.ProjectFileName))
-        val settingsFile = Option(directory.findChild(".dbt-navigation.yml")).flatMap(f => Option(manager.findFile(f)))
-        val currentRoot = DbtRoot(directory, DbtYaml.mapping(configFile).get, settingsFile.flatMap(DbtYaml.mapping))
-        val dependencies: Vector[AnyRef] = Vector(file, configFile, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++ settingsFile
-        CachedValueProvider.Result.create(indexFile(file, currentRoot), dependencies: _*)
-      }, false)
-    })
+    val symbols = files.flatMap(file => initial.root(file).toVector.flatMap(r => fileSymbols(project, file, r.directory)))
     // Versioned model properties identify the physical file using defined_in, independently of aliases.
     val remapped = symbols.map { s =>
-      if (s.attributes.contains("code")) {
-        val matches = symbols.filter(p => p.attributes.contains("property") && p.kind == s.kind && p.namespace == s.namespace && initial.root(p.file) == initial.root(s.file) &&
-          p.attributes.get("defined_in").getOrElse(p.name + p.version.map("_v" + _).getOrElse("")) == s.name)
-        val resolved = matches.headOption.filter(_ => matches.size == 1).map(p => s.copy(name = p.name, version = p.version,
-          attributes = (p.attributes - "property") ++ s.attributes, mapping = p.mapping)).getOrElse(s)
+      if (s.isCode) {
+        val matches = symbols.filter(p => p.isProperty && p.kind == s.kind && p.namespace == s.namespace &&
+          initial.root(p.file) == initial.root(s.file) &&
+          p.attributes.getOrElse("defined_in", p.name + p.version.map("_v" + _).getOrElse("")) == s.name)
+        val resolved = if (matches.size != 1) s else s.copy(name = matches.head.name, version = matches.head.version,
+          attributes = (matches.head.attributes - "property") ++ s.attributes, mapping = matches.head.mapping)
         resolved.copy(attributes = DbtConfiguration.inherited(initial, resolved.file, resolved.name) ++ resolved.attributes)
-      } else if (s.attributes.contains("property") || s.kind == "source_table")
+      } else if (s.isProperty || s.kind == "source_table")
         s.copy(attributes = DbtConfiguration.propertyAttributes(initial, s) ++ s.attributes)
       else s
     }
-    val projections = remapped.filter(s => s.kind == "model" && s.attributes.contains("code")).flatMap(DbtSqlNavigation.projections)
-      .filterNot(c => remapped.exists(s => s.kind == "column" && s.namespace == c.namespace && initial.root(s.file) == initial.root(c.file) &&
-        s.owner == c.owner && s.name == c.name && s.version == c.version))
-    val local = new DbtWorkspace(project, roots, files, remapped ++ projections ++ DbtBuiltinSources.symbols(initial) ++ DbtNavigation.environmentDeclarations(initial))
+    val projections = remapped.filter(s => s.kind == "model" && s.isCode).flatMap(DbtSqlNavigation.projections)
+      .filterNot(c => remapped.exists(s => s.kind == "column" && s.namespace == c.namespace &&
+        initial.root(s.file) == initial.root(c.file) && s.owner == c.owner && s.name == c.name && s.version == c.version))
+    // Each stage sees the declarations of the previous ones; artifacts never shadow source declarations.
+    val local = new DbtWorkspace(project, roots, files, remapped ++ projections ++ DbtBuiltinSources.symbols(initial) ++
+      DbtNavigation.environmentDeclarations(initial))
     val json = new DbtWorkspace(project, roots, files, local.symbols ++ DbtArtifacts.symbols(local))
     new DbtWorkspace(project, roots, files, json.symbols ++ DbtParquetArtifacts.symbols(json))
-  }
-
-  private def indexFile(file: PsiFile, root: DbtRoot): Vector[DbtSymbol] = {
-    val result = ArrayBuffer.empty[DbtSymbol]
-    val ext = Option(file.getVirtualFile.getExtension).getOrElse("")
-    val kind = root.kind(file.getVirtualFile)
-    def symbol(k: String, name: String, range: TextRange, owner: String = "", version: Option[String] = None,
-      attrs: Map[String, String] = Map.empty, mapping: Option[YAMLMapping] = None): DbtSymbol =
-      DbtSymbol(k, name, root.name, file, range, owner, version, attrs, mapping)
-    if (root.relative(file.getVirtualFile).contains("selectors.yml")) DbtYaml.mapping(file).foreach { top =>
-      DbtYaml.items(top, "selectors").foreach(m => DbtYaml.string(m, "name").foreach(n =>
-        result += symbol("selector", n, DbtYaml.nameRange(m), mapping = Some(m))))
-    }
-    val fixture = kind.contains("test") && root.relative(file.getVirtualFile).exists(relative => root.pathKinds.exists {
-      case ("test", path) => root.pathContains(path.stripSuffix("/") + "/fixtures", relative)
-      case _ => false
-    }) && Set("csv", "sql").contains(ext)
-    if (fixture) result += symbol("fixture", file.getVirtualFile.getNameWithoutExtension, new TextRange(0, 0), attrs = Map("code" -> "true"))
-    val code = kind.exists {
-      case "seed" => ext == "csv"
-      case "model" => Set("sql", "py").contains(ext)
-      case "function" => Set("sql", "py", "js").contains(ext)
-      case "snapshot" | "analysis" | "test" | "check" => ext == "sql"
-      case _ => false
-    }
-    val blocks = if (Set("sql", "md").contains(ext)) DbtSyntax.inFile(file) else Vector.empty
-    if (code && !fixture && !(kind.contains("snapshot") && blocks.exists(b => b.tag && b.tokens.headOption.exists(_.image == "snapshot")))) {
-      val attrs = Map("code" -> "true") ++ DbtSyntax.inFile(file).flatMap(DbtSyntax.calls).filter(_.name == "config")
-        .flatMap(_.arguments.flatMap(a => for (key <- a.keyword; value <- a.literal) yield key -> value))
-      result += symbol(kind.get, file.getVirtualFile.getNameWithoutExtension, new TextRange(0, 0), attrs = attrs)
-    }
-    if (root.resource(file) && Set("sql", "md").contains(ext)) {
-      blocks.filter(_.tag).foreach { b =>
-        b.tokens.take(2) match {
-          case Vector(tag, name) if Set("macro", "test", "docs", "snapshot", "materialization").contains(tag.image) =>
-            val k = Map("docs" -> "doc", "test" -> "generic_test").getOrElse(tag.image, tag.image)
-            val adapter = if (k == "materialization") b.tokens.sliding(3).collectFirst {
-              case Vector(key, eq, value) if key.image == "adapter" && eq.image == "=" && value.string => value.image
-            }.getOrElse("default") else ""
-            val snapshotConfig = if (k == "snapshot") blocks.dropWhile(_.range.getStartOffset <= b.range.getStartOffset)
-              .takeWhile(x => !(x.tag && x.tokens.headOption.exists(_.image == "endsnapshot")))
-              .flatMap(DbtSyntax.calls).filter(_.name == "config").flatMap(_.arguments.flatMap(a =>
-                for (key <- a.keyword; value <- a.literal) yield key -> value)).toMap else Map.empty[String, String]
-            result += symbol(k, name.image, name.range, attrs = Map("block-start" -> b.range.getEndOffset.toString) ++
-              (if (k == "snapshot") Map("code" -> "true") else Map.empty[String, String]) ++
-              snapshotConfig ++
-              (if (k == "materialization") Map("adapter" -> adapter) else Map.empty[String, String]))
-            if (Set("macro", "test").contains(tag.image)) DbtSyntax.parameters(b).foreach(t =>
-              result += symbol("parameter", t.image, t.range, name.image))
-          case _ => ()
-        }
-      }
-    }
-    if (kind.nonEmpty && Set("yml", "yaml").contains(ext)) DbtYaml.mapping(file).foreach { top =>
-      resourceKeys.foreach { case (key, k) =>
-        if ((k != "function" || root.supports(11)) && (k != "check" || root.engine == "v2") &&
-          (k != "unit_test" || root.supports(8)) && (k != "semantic_model" || root.supports(6))) DbtYaml.items(top, key).foreach { m =>
-          DbtYaml.string(m, "name").foreach { name =>
-            if (k == "model" && root.supports(12)) {
-              DbtYaml.map(m, "semantic_model").foreach { semantic =>
-                val semanticName = DbtYaml.string(semantic, "name").getOrElse(name)
-                result += symbol("semantic_model", semanticName, DbtYaml.nameRange(semantic), name,
-                  attrs = Map("embedded" -> "true"), mapping = Some(m))
-                DbtYaml.items(m, "columns").foreach { column =>
-                  DbtYaml.string(column, "name").foreach { columnName =>
-                    Vector("entity", "dimension").foreach { field => DbtYaml.map(column, field).foreach { definition =>
-                      val n = DbtYaml.string(definition, "name").getOrElse(columnName)
-                      result += symbol(field, n, DbtYaml.value(definition, "name").map(_.getTextRange).getOrElse(DbtYaml.nameRange(column)),
-                        semanticName, attrs = DbtYaml.attributes(definition) ++ Map("column" -> columnName, "model" -> name), mapping = Some(definition))
-                    }}
-                  }
-                }
-                DbtYaml.map(m, "derived_semantics").foreach { derived =>
-                  Vector("dimensions" -> "dimension", "entities" -> "entity").foreach { case (key, childKind) =>
-                    DbtYaml.items(derived, key).foreach { definition => DbtYaml.string(definition, "name").foreach { n =>
-                      result += symbol(childKind, n, DbtYaml.nameRange(definition), semanticName,
-                        attrs = DbtYaml.attributes(definition) ++ Map("model" -> name), mapping = Some(definition))
-                    }}
-                  }
-                }
-              }
-              DbtYaml.items(m, "metrics").foreach { metric => DbtYaml.string(metric, "name").foreach { n =>
-                result += symbol("metric", n, DbtYaml.nameRange(metric), name, attrs = DbtYaml.attributes(metric), mapping = Some(metric))
-              }}
-            }
-            if (k == "function" && root.supports(12)) DbtYaml.items(m, "overloads").foreach { overload =>
-              DbtYaml.string(overload, "defined_in").foreach { body =>
-                result += symbol(k, name, DbtYaml.nameRange(m), attrs = DbtYaml.attributes(m) ++ DbtYaml.attributes(overload) ++
-                  Map("property" -> "true", "overload" -> body), mapping = Some(overload))
-                DbtYaml.items(overload, "arguments").foreach { argument => DbtYaml.string(argument, "name").foreach { n =>
-                  result += symbol("parameter", n, DbtYaml.nameRange(argument), name, attrs = Map("overload" -> body), mapping = Some(argument))
-                }}
-              }
-            }
-            val versions = if (root.supports(5)) DbtYaml.items(m, "versions") else Vector.empty
-            val entries = if (versions.isEmpty) Vector(m -> Option.empty[String]) else versions.map(v => v -> DbtYaml.string(v, "v"))
-            entries.foreach { case (entry, version) =>
-              val attrs = DbtYaml.attributes(m) ++ DbtYaml.attributes(entry) ++ Map("property" -> "true")
-              result += symbol(k, name, DbtYaml.nameRange(m), version = version, attrs = attrs, mapping = Some(entry))
-              Vector("columns" -> "column", "entities" -> "entity", "dimensions" -> "dimension", "measures" -> "measure",
-                "arguments" -> "parameter", "tables" -> "source_table", "exports" -> "export").foreach { case (children, childKind) =>
-                val entries = if (children == "columns" && version.nonEmpty && DbtYaml.value(entry, children).isEmpty) DbtYaml.items(m, children) else DbtYaml.items(entry, children)
-                entries.foreach { c => DbtYaml.string(c, "name").foreach { n =>
-                  result += symbol(childKind, n, DbtYaml.nameRange(c), name, version, (if (childKind == "source_table") DbtYaml.attributes(m) else Map.empty[String, String]) ++ DbtYaml.attributes(c), Some(c))
-                  if (childKind == "source_table") DbtYaml.items(c, "columns").foreach { col => DbtYaml.string(col, "name").foreach { cn =>
-                    result += symbol("column", cn, DbtYaml.nameRange(col), s"$name.$n", attrs = DbtYaml.attributes(col), mapping = Some(col))
-                  }}
-                }}
-              }
-            }
-          }
-        }
-      }
-    }
-    result.filter(_.kind == "metric").toVector.foreach { metric => metric.mapping.foreach { m =>
-      val parameters = DbtYaml.map(m, "type_params").getOrElse(m)
-      (DbtYaml.items(parameters, "metrics") ++ (if (root.supports(12)) DbtYaml.items(m, "input_metrics") else Vector.empty)).foreach { input => DbtYaml.string(input, "alias").foreach { alias =>
-        result += symbol("metric_alias", alias, DbtYaml.nameRange(input, "alias"), metric.name, attrs = DbtYaml.attributes(input), mapping = Some(input))
-      }}
-    }}
-    result.toVector
   }
 }

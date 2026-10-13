@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.psi.{PsiElement, PsiFile}
+import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.{YAMLFile, YAMLScalar}
 
 /** dbt renders these hosts with different contexts, including deferred hooks and descriptions. */
@@ -14,7 +14,7 @@ private[dbt] object DbtYamlContexts {
 
   private def context(file: PsiFile, root: DbtRoot, offset: Int): String = {
     if (!file.isInstanceOf[YAMLFile]) return "runtime"
-    val keys = scalar(file, offset).map(DbtSyntax.yamlAncestors).getOrElse(Vector.empty).map(_.stripPrefix("+"))
+    val keys = scalar(file, offset).map(DbtYaml.ancestors).getOrElse(Vector.empty).map(_.stripPrefix("+"))
     val relative = root.relative(file.getVirtualFile)
     val unsupported = keys.lastOption.exists {
       case "unit_tests" => !root.supports(8)
@@ -26,7 +26,7 @@ private[dbt] object DbtYamlContexts {
     }
     if (unsupported || keys.contains("vars") || relative.contains("dependencies.yml") || relative.contains("package-lock.yml") ||
       relative.contains("vars.yml") || relative == root.setting("run-config")) "none"
-    else if (relative.contains(root.runtimeSetting("profiles-file").getOrElse("profiles.yml")) || relative.contains("packages.yml")) "profile"
+    else if (relative.contains(root.profilesFile) || relative.contains("packages.yml")) "profile"
     else if (relative.contains("selectors.yml")) if (keys.headOption.contains("default")) "project" else "none"
     else if (relative.contains("dbt_project.yml")) if (keys.exists(hooks)) "runtime" else "project"
     else if (!keys.lastOption.exists(resources)) "none"
@@ -59,8 +59,9 @@ private[dbt] object DbtYamlContexts {
   }
 
   def description(file: PsiFile, root: DbtRoot, offset: Int): Boolean = context(file, root, offset) == "description"
-  def profile(file: PsiFile, root: DbtRoot): Boolean = root.relative(file.getVirtualFile)
-    .contains(root.runtimeSetting("profiles-file").getOrElse("profiles.yml"))
+
+  def profile(file: PsiFile, root: DbtRoot): Boolean = root.isFile(file, root.profilesFile)
+
   def projectConfiguration(file: PsiFile, root: DbtRoot, offset: Int): Boolean =
-    root.relative(file.getVirtualFile).contains("dbt_project.yml") && context(file, root, offset) == "project"
+    root.isFile(file, DbtWorkspace.ProjectFileName) && context(file, root, offset) == "project"
 }

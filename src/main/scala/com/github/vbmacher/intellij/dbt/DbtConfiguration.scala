@@ -1,16 +1,18 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.psi.{PsiElement, PsiFile}
+import com.intellij.psi.{PsiElement, PsiFile, PsiManager}
 import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping}
 
+/** Resource configuration in `dbt_project.yml`: `<section>: <project>: <folder>...: <resource>` with `+`-prefixed keys. */
 private[dbt] object DbtConfiguration {
   val sections: Map[String, String] = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "analyses" -> "analysis",
     "tests" -> "test", "data_tests" -> "test", "sources" -> "source", "exposures" -> "exposure", "groups" -> "group",
     "metrics" -> "metric", "semantic-models" -> "semantic_model", "semantic_models" -> "semantic_model",
     "saved-queries" -> "saved_query", "saved_queries" -> "saved_query", "functions" -> "function", "checks" -> "check")
 
+  /** Folders and resources configured by a key path of `dbt_project.yml`. */
   def pathTargets(w: DbtWorkspace, root: DbtRoot, kv: YAMLKeyValue): Vector[PsiElement] = {
-    val parts = DbtSyntax.yamlAncestors(kv).reverse
+    val parts = DbtYaml.ancestors(kv).reverse
     val kind = parts.headOption.flatMap(sections.get)
     val namespace = parts.lift(1)
     val path = parts.drop(2)
@@ -19,64 +21,61 @@ private[dbt] object DbtConfiguration {
     else roots.flatMap { r =>
       val symbols = w.symbols.filter(s => (kind.contains(s.kind) || kind.contains("source") && s.kind == "source_table") &&
         w.owner(s).contains(r) && path.lastOption.contains(s.name) && (if (s.kind == "source_table") path.dropRight(1).lastOption.contains(s.owner)
-        else !s.attributes.contains("code") || r.relative(s.file.getVirtualFile).exists(relative => r.pathKinds.exists { case (k, base) =>
-          k == s.kind && r.pathContains(base, relative) && relative.stripPrefix(base.stripSuffix("/") + "/").split("/").dropRight(1).toVector == path.dropRight(1)
+        else !s.isCode || r.relative(s.file.getVirtualFile).exists(relative => r.pathKinds.exists { case (k, base) =>
+          k == s.kind && r.folders(base, relative).contains(path.dropRight(1))
         })))
       val folders = r.pathKinds.filter(p => kind.contains(p._1)).flatMap { case (_, base) =>
-        Option(r.directory.findFileByRelativePath((Vector(base) ++ path).mkString("/"))).filter(_.isDirectory)
-          .flatMap(d => Option(com.intellij.psi.PsiManager.getInstance(w.project).findDirectory(d)))
+        Option(r.directory.findFileByRelativePath((base +: path).mkString("/"))).filter(_.isDirectory)
+          .flatMap(d => Option(PsiManager.getInstance(w.project).findDirectory(d)))
       }
       folders ++ symbols.filter(s => w.declarations(Set(s.kind), s.name, root, namespace).contains(s)).map(_.element)
     }.distinct
   }
-  def propertyAttributes(w: DbtWorkspace, symbol: DbtSymbol): Map[String, String] = w.owner(symbol).toVector.flatMap { root =>
+
+  /** Configuration inherited by a property declaration from its project and the project installing it. */
+  def propertyAttributes(w: DbtWorkspace, symbol: DbtSymbol): Map[String, String] = merge(w.owner(symbol).toVector.flatMap { root =>
     val sectionNames = sections.collect { case (key, kind) if kind == symbol.kind || kind == "source" && symbol.kind == "source_table" => key }.toVector
-    val path = if (symbol.kind == "source_table") Vector(symbol.owner, symbol.name) else if (symbol.kind == "source") Vector(symbol.name)
-      else root.relative(symbol.file.getVirtualFile).toVector.flatMap { relative =>
-        root.pathKinds.find { case (_, base) => root.pathContains(base, relative) }.toVector.flatMap { case (_, base) =>
-          relative.stripPrefix(base.stripSuffix("/") + "/").split("/").toVector.dropRight(1) :+ symbol.name
-        }
-      }
-    (Vector(root) ++ w.packageOwner(root)).flatMap { config =>
-      val top = sectionNames.flatMap(DbtYaml.map(config.config, _))
-      var current = top.flatMap(DbtYaml.map(_, root.name))
-      var result = top ++ current
-      path.foreach { part => current = current.flatMap(DbtYaml.map(_, part)); result ++= current }
-      result
+    val path = symbol.kind match {
+      case "source_table" => Vector(symbol.owner, symbol.name)
+      case "source" => Vector(symbol.name)
+      case _ => root.resourceFolders(symbol.file.getVirtualFile).toVector.flatMap(_._2 :+ symbol.name)
     }
-  }.foldLeft(Map.empty[String, String])((attrs, mapping) => attrs ++ DbtYaml.attributes(mapping).map { case (k, v) => k.stripPrefix("+") -> v })
-  private def levels(config: DbtRoot, resource: DbtRoot, file: PsiFile, name: String): Vector[YAMLMapping] = {
-    val kind = resource.kind(file.getVirtualFile)
-    val section = kind.map(k => if (k == "analysis") "analyses" else k + "s")
-    val path = for (k <- kind; relative <- resource.relative(file.getVirtualFile); entry <- resource.pathKinds.find { case (kk, p) => kk == k && resource.pathContains(p, relative) })
-      yield relative.stripPrefix(entry._2.stripSuffix("/") + "/").split("/").toVector.dropRight(1) :+ name
-    val sections = section.flatMap(DbtYaml.map(config.config, _)).toVector
-    val namespace = sections.flatMap(DbtYaml.map(_, resource.name))
-    var result = sections ++ namespace
-    var current = namespace
-    path.toVector.flatten.foreach { part => current = current.flatMap(DbtYaml.map(_, part)); result ++= current }
-    result
-  }
+    configurationRoots(w, root).flatMap(config => walk(config, sectionNames, root.name, path))
+  })
 
-  def inherited(w: DbtWorkspace, file: PsiFile, name: String): Map[String, String] = w.root(file).toVector.flatMap { resource =>
-    (Vector(resource) ++ w.packageOwner(resource)).flatMap(config => levels(config, resource, file, name))
-  }.foldLeft(Map.empty[String, String]) { (attrs, mapping) => attrs ++ DbtYaml.attributes(mapping).map { case (key, value) => key.stripPrefix("+") -> value } }
+  /** Configuration inherited by a resource file from its project and the project installing it. */
+  def inherited(w: DbtWorkspace, file: PsiFile, name: String): Map[String, String] = merge(w.root(file).toVector.flatMap(levels(w, _, file, name)))
 
+  /** Every place configuring a key of the resources of a file: project levels, property patches and inline `config()` calls. */
   def locations(w: DbtWorkspace, file: PsiFile, key: String): Vector[PsiElement] = {
     val root = w.root(file).toVector
-    val symbols = w.symbols.filter(s => s.file == file && s.attributes.contains("code"))
-    val inherited = root.flatMap { r =>
-      val name = symbols.map(_.name).distinct.headOption.getOrElse(file.getVirtualFile.getNameWithoutExtension)
-      (Vector(r) ++ w.packageOwner(r)).flatMap(config => levels(config, r, file, name))
-        .flatMap(m => Vector(key, "+" + key).flatMap(k => Option(m.getKeyValueByKey(k))))
-    }
-    val props = symbols.flatMap(w.properties).flatMap(_.mapping.toVector)
-    val patches = props.flatMap(m => DbtYaml.map(m, "config").toVector.flatMap(c => Option(c.getKeyValueByKey(key))))
+    val symbols = w.codeSymbols(file)
+    val name = symbols.map(_.name).distinct.headOption.getOrElse(file.getVirtualFile.getNameWithoutExtension)
+    val inherited = root.flatMap(levels(w, _, file, name)).flatMap(m => Vector(key, "+" + key).flatMap(DbtYaml.keyValue(m, _)))
+    val patches = symbols.flatMap(w.properties).flatMap(_.mapping.toVector).flatMap(m => DbtYaml.map(m, "config").flatMap(DbtYaml.keyValue(_, key)))
     val inline = DbtSyntax.inFile(file).flatMap(DbtSyntax.calls).filter(_.name == "config").flatMap { call =>
-      call.arguments.filter(_.keyword.contains(key)).flatMap { argument =>
-        argument.keywordRange.map(range => DbtSymbol("configuration", key, root.headOption.map(_.name).getOrElse("dbt"), file, range).element)
-      }
+      call.arguments.filter(_.keyword.contains(key)).flatMap(_.keywordRange)
+        .map(range => DbtSymbol("configuration", key, root.headOption.map(_.name).getOrElse("dbt"), file, range).element)
     }
     (inherited ++ patches ++ inline).distinct
+  }
+
+  private def configurationRoots(w: DbtWorkspace, resource: DbtRoot): Vector[DbtRoot] = resource +: w.packageOwner(resource).toVector
+
+  private def levels(w: DbtWorkspace, resource: DbtRoot, file: PsiFile, name: String): Vector[YAMLMapping] =
+    resource.resourceFolders(file.getVirtualFile).toVector.flatMap { case (kind, folders) =>
+      val section = if (kind == "analysis") "analyses" else kind + "s"
+      configurationRoots(w, resource).flatMap(config => walk(config, Vector(section), resource.name, folders :+ name))
+    }
+
+  /** Configuration mappings from the sections down a project path, outermost first. */
+  private def walk(config: DbtRoot, sectionNames: Vector[String], namespace: String, path: Vector[String]): Vector[YAMLMapping] = {
+    val top = sectionNames.flatMap(DbtYaml.map(config.config, _))
+    top ++ path.scanLeft(top.flatMap(DbtYaml.map(_, namespace)))((current, part) => current.flatMap(DbtYaml.map(_, part))).flatten
+  }
+
+  /** Inner levels override outer ones; `+` prefixes are only a syntax marker. */
+  private def merge(mappings: Vector[YAMLMapping]): Map[String, String] = mappings.foldLeft(Map.empty[String, String]) { (attrs, mapping) =>
+    attrs ++ DbtYaml.attributes(mapping).map { case (key, value) => key.stripPrefix("+") -> value }
   }
 }

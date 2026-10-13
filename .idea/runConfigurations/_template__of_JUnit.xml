@@ -1,0 +1,31 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="true" type="JUnit" factoryName="JUnit">
+    <useClassPathOnly />
+        <option name="ALTERNATIVE_JRE_PATH" value="/home/vbmacher/.intellij-dbtPluginIC/sdk/262.9437.185/jbr" />
+    <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
+    <shortenClasspath name="ARGS_FILE" />
+    <option name="MAIN_CLASS_NAME" value="" />
+    <option name="METHOD_NAME" value="" />
+    <option name="TEST_OBJECT" value="class" />
+    <module name="intellij-dbt.test" />
+    <option name="VM_PARAMETERS" value="-cp &quot;&quot; @/home/vbmacher/projects/intellij-dbt/.idea/runConfigurations/junit_template_argfile.txt" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/" />
+    <option name="TEST_SEARCH_SCOPE">
+      <value defaultName="moduleWithDependencies" />
+    </option>
+    <RunnerSettings RunnerId="Profile " />
+    <RunnerSettings RunnerId="Run" />
+    <ConfigurationWrapper RunnerId="Run" />
+    <envs>
+     <env name="NO_FS_ROOTS_ACCESS_CHECK" value="yes" />
+    </envs>
+
+    <method v="2">
+      <!-- We need to explicitly build the project, build artifact doesn't compile the tests -->
+      <option name="Make" enabled="true" />
+      <option name="BuildArtifacts" enabled="true">
+        <artifact name="intellij-dbt" />
+      </option>
+    </method>
+  </configuration>
+</component>

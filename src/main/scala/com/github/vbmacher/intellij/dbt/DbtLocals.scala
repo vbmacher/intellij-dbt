@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt
 
+import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiFile
 import scala.collection.mutable.ArrayBuffer
 
@@ -9,32 +10,23 @@ private[dbt] object DbtLocals {
     val result = ArrayBuffer.empty[DbtNavigationReference]
     var scopes = List(Map.empty[String, DbtSymbol])
     var captures = List.empty[DbtSyntax.Token]
-    def bind(t: DbtSyntax.Token): Unit = if (!t.string && t.image.matches("[A-Za-z_][A-Za-z_0-9]*")) {
+    def bind(t: DbtSyntax.Token): Unit = if (!t.string && DbtSyntax.isIdentifier(t.image)) {
       val parameter = workspace.symbols.find(s => s.file == file && s.kind == "parameter" && s.range == t.range)
       scopes = (scopes.head + (t.image -> parameter.getOrElse(DbtSymbol("local", t.image, "jinja", file, t.range)))) :: scopes.tail
     }
     blocks.foreach { b =>
       val ts = b.tokens
-      val tag = if (b.tag) ts.headOption.map(_.image).getOrElse("") else ""
-      if (Set("endfor", "endmacro", "endtest", "endcall", "endwith", "endblock").contains(tag) && scopes.size > 1) scopes = scopes.tail
-      val declarationRanges = ArrayBuffer.empty[com.intellij.openapi.util.TextRange]
+      val tag = b.tagName.getOrElse("")
+      if (DbtSyntax.ScopeEndTags(tag) && scopes.size > 1) scopes = scopes.tail
+      val declarationRanges = ArrayBuffer.empty[TextRange]
       def declaration(t: DbtSyntax.Token): Unit = { bind(t); declarationRanges += t.range }
       if (tag == "endset" && captures.nonEmpty) { bind(captures.head); captures = captures.tail }
       val attributeAssignment = tag == "set" && ts.lift(2).exists(_.image == ".")
       val setTargets = if (tag == "set" && !attributeAssignment) ts.drop(1).takeWhile(t => t.image != "=" && t.image != "|")
-        .filter(t => !t.string && t.image.matches("[A-Za-z_][A-Za-z_0-9]*")) else Vector.empty
+        .filter(t => !t.string && DbtSyntax.isIdentifier(t.image)) else Vector.empty
       declarationRanges ++= setTargets.map(_.range)
-      if (Set("for", "macro", "test", "call", "with", "block").contains(tag)) scopes = Map.empty[String, DbtSymbol] :: scopes
-      val withTargets = if (tag == "with") {
-        var depth = 0
-        ts.drop(1).zipWithIndex.collect {
-          case (t, i) if {
-            if (Set("(", "[", "{").contains(t.image)) depth += 1
-            if (Set(")", "]", "}").contains(t.image)) depth -= 1
-            depth == 0 && ts.lift(i + 2).exists(_.image == "=")
-          } => t
-        }
-      } else Vector.empty
+      if (DbtSyntax.ScopeTags(tag)) scopes = Map.empty[String, DbtSymbol] :: scopes
+      val withTargets = if (tag == "with") DbtSyntax.assignedNames(ts).map(ts) else Vector.empty
       declarationRanges ++= withTargets.map(_.range)
       val loopTargets = if (tag == "for") ts.drop(1).takeWhile(_.image != "in").filter(_.image != ",") else Vector.empty
       declarationRanges ++= loopTargets.map(_.range)

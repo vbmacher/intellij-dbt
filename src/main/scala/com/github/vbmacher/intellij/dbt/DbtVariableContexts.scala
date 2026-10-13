@@ -1,17 +1,18 @@
 package com.github.vbmacher.intellij.dbt
 
-import com.intellij.psi.PsiFile
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiFile
+
+import scala.collection.mutable
 
 /** A package macro uses the namespace of the node that ultimately calls it. */
 private[dbt] object DbtVariableContexts {
   def roots(w: DbtWorkspace, file: PsiFile, fallback: DbtRoot, offset: Option[Int] = None): Vector[DbtRoot] = {
     if (!fallback.kind(file.getVirtualFile).contains("macro")) return Vector(fallback)
     val blocks = DbtSyntax.inFile(file)
-    val macros = w.symbols.filter(s => s.kind == "macro" && s.file == file && offset.forall { position =>
-      s.range.getStartOffset < position && blocks.find(b => b.tag && b.range.getStartOffset > s.range.getStartOffset &&
-        b.tokens.headOption.exists(_.image == "endmacro")).exists(_.range.getEndOffset > position)
-    })
+    val macros = w.symbols.filter(s => s.kind == "macro" && s.file == file &&
+      offset.forall(p => DbtSyntax.encloses(blocks, s.range.getStartOffset, "endmacro", new TextRange(p, p))))
     if (macros.isEmpty) return Vector(fallback)
     val calls = w.files.flatMap { caller =>
       ProgressManager.checkCanceled()
@@ -21,18 +22,14 @@ private[dbt] object DbtVariableContexts {
         val declarations = w.symbols.filter(s => s.kind == "macro" && s.file == caller)
         bs.flatMap(DbtSyntax.calls).filter(c => DbtYamlContexts.allows(caller, root, c.range.getStartOffset, c.name) &&
           !local.exists(_.getRangeInElement.intersects(c.range))).flatMap { call =>
-          val parts = call.name.split("\\.")
-          val owner = declarations.find(s => s.range.getStartOffset < call.range.getStartOffset &&
-            bs.find(b => b.tag && b.range.getStartOffset > s.range.getStartOffset && b.tokens.headOption.exists(_.image == "endmacro"))
-              .exists(_.range.getEndOffset > call.range.getEndOffset))
-          w.declarations(Set("macro"), parts.last, root, if (parts.length == 2) Some(parts.head) else None)
-            .map(target => (target.id, owner.map(_.id), root))
+          val owner = declarations.find(s => DbtSyntax.encloses(bs, s.range.getStartOffset, "endmacro", call.range))
+          w.macros(call, root).map(target => (target.id, owner.map(_.id), root))
         }
       }
     }
     var frontier = macros.map(_.id).toSet
-    val seen = scala.collection.mutable.Set.empty[String]
-    val found = scala.collection.mutable.ArrayBuffer.empty[DbtRoot]
+    val seen = mutable.Set.empty[String]
+    val found = mutable.ArrayBuffer.empty[DbtRoot]
     var depth = 0
     while (frontier.nonEmpty && depth < 32) {
       ProgressManager.checkCanceled()
