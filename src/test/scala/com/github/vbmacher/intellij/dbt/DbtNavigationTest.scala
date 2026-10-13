@@ -49,6 +49,19 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals(path(latest), path(target(file, "orders", 2)))
   }
 
+  def testSourceArgumentsUseLogicalNamesAndExactDeclarations(): Unit = {
+    root()
+    val schema = add("models/sources.yml", "sources:\n- name: raw\n  schema: warehouse\n  tables:\n  - name: orders\n    identifier: physical_orders\n    columns:\n    - name: order_id\n")
+    val file = add("models/use.sql", "select * from {{ source('raw', 'orders') }}")
+    val first = target(file, "raw").asInstanceOf[DbtSymbolElement]
+    val second = target(file, "orders").asInstanceOf[DbtSymbolElement]
+    assertEquals("source", first.symbol.kind)
+    assertEquals("source_table", second.symbol.kind)
+    assertEquals(path(schema), path(first))
+    assertTrue(first.getTextOffset < second.getTextOffset)
+    assertEquals(1, uses(second))
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -112,6 +125,16 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(s"Native Find Usages target: $selected", selected.isInstanceOf[DbtSymbolElement])
     assertEquals(1, myFixture.findUsages(selected).size())
     assertEquals("model", com.intellij.lang.findUsages.LanguageFindUsages.INSTANCE.forLanguage(selected.getLanguage).getType(selected))
+  }
+
+  def testSourceNamespaceDoesNotLeakFromInstalledPackage(): Unit = {
+    root()
+    add("models/sources.yml", "sources:\n- name: raw\n  tables:\n  - name: events\n")
+    add("dbt_packages/util/dbt_project.yml", "name: util\n")
+    add("dbt_packages/util/models/sources.yml", "sources:\n- name: raw\n  tables:\n  - name: events\n")
+    val file = add("models/use.sql", "{{ source('raw', 'events') }}")
+    assertEquals(1, refs(file, "events").flatMap(_.candidates).distinct.size)
+    assertFalse(path(target(file, "events")).contains("dbt_packages"))
   }
 
   def testIndexLargeProjectAndPartialTemplates(): Unit = {
