@@ -24,6 +24,31 @@ final class DbtNavigationTest extends BasePlatformTestCase {
   private def path(e: PsiElement): String = e.getContainingFile.getVirtualFile.getPath
   private def uses(e: PsiElement): Int = ReferencesSearch.search(e).findAll().size()
 
+  def testRefSeedsSnapshotsPropertiesAndReverseUsages(): Unit = {
+    root()
+    val model = add("models/orders.sql", "select 1 as id")
+    add("seeds/countries.csv", "country\nUS\n")
+    add("snapshots/snapshots.yml", "snapshots:\n- name: history\n  relation: ref('orders')\n")
+    val properties = add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n")
+    val usage = add("models/use.sql", "select * from {{ ref('orders') }} -- {{ ref('countries') }} {{ ref('history') }}")
+    assertEquals(path(model), path(target(usage, "orders")))
+    assertTrue(path(target(usage, "countries")).endsWith("countries.csv"))
+    assertTrue(path(target(usage, "history")).endsWith("snapshots.yml"))
+    assertEquals(path(model), path(target(properties, "orders")))
+    assertEquals(2, uses(target(usage, "orders")))
+  }
+
+  def testModelVersionsDefinedInAndLatest(): Unit = {
+    root()
+    add("models/order_previous.sql", "select 1")
+    val latest = add("models/orders_v2.sql", "select 2")
+    add("models/orders.yml", "models:\n- name: orders\n  latest_version: 2\n  versions:\n  - v: 1\n    defined_in: order_previous\n  - v: 2\n")
+    val file = add("models/use.sql", "{{ ref('orders') }} {{ ref('orders', v=1) }} {{ ref('orders', version=2) }}")
+    assertEquals(path(latest), path(target(file, "orders")))
+    assertTrue(path(target(file, "orders", 1)).endsWith("order_previous.sql"))
+    assertEquals(path(latest), path(target(file, "orders", 2)))
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -40,6 +65,18 @@ final class DbtNavigationTest extends BasePlatformTestCase {
       }
     })
     assertEquals(1, uses(expected))
+  }
+
+  def testAmbiguityAndDisabledResourcesDoNotPickFirst(): Unit = {
+    root()
+    add("models/a/orders.sql", "select 1")
+    add("models/b/orders.sql", "select 2")
+    add("models/off.sql", "{{ config(enabled=false) }}select 3")
+    val file = add("models/use.sql", "{{ ref('orders') }} {{ ref('off') }}")
+    val reference = refs(file, "orders").head
+    assertEquals(2, reference.multiResolve(false).length)
+    assertNull(reference.resolve())
+    assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
   }
 
   def testIgnorePathsAndOlderVersionGates(): Unit = {
