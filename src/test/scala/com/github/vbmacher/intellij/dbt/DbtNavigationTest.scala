@@ -137,6 +137,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
   }
 
+  def testConfigurationHierarchyAndCustomMaterialization(): Unit = {
+    root("models:\n  analytics:\n    +materialized: view\n    marts:\n      +materialized: table\n")
+    add("macros/custom.sql", "{% materialization incremental_custom, adapter='default' %}select 1{% endmaterialization %}")
+    add("models/marts/schema.yml", "models:\n- name: orders\n  config:\n    materialized: incremental_custom\n")
+    val file = add("models/marts/orders.sql", "{{ config(materialized='incremental_custom') }} {{ config.get('materialized') }}select 1")
+    assertEquals(4, refs(file, "materialized").flatMap(_.candidates).distinct.size)
+    assertEquals("materialization", target(file, "incremental_custom").asInstanceOf[DbtSymbolElement].symbol.kind)
+  }
+
   def testIgnorePathsAndOlderVersionGates(): Unit = {
     root()
     add(".dbtignore", "models/ignored/**\n")
@@ -204,6 +213,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertFalse(path(target(file, "events")).contains("dbt_packages"))
   }
 
+  def testSqlConfigEnabledOverridesPropertyDefaults(): Unit = {
+    root()
+    add("models/off.sql", "{{ config(enabled=false) }}select 1")
+    add("models/off.yml", "models:\n- name: off\n  config:\n    enabled: true\n")
+    val file = add("models/use.sql", "{{ ref('off') }}")
+    assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
+  }
+
+
   def testIndexLargeProjectAndPartialTemplates(): Unit = {
     root()
     (1 to 80).foreach(i => add(s"models/model_$i.sql", s"select $i as id"))
@@ -261,6 +279,20 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(DbtNavigation.inFile(temporary).isEmpty)
     assertTrue(temporary.getReferences.isEmpty)
     assertTrue(DbtWorkspace.get(getProject).root(temporary).isEmpty)
+  }
+
+  def testInheritedDisabledConfigurationAndPackageOverrides(): Unit = {
+    root("models:\n  analytics:\n    disabled:\n      +enabled: false\n  utils:\n    +group: finance\n")
+    add("models/disabled/off.sql", "select 1")
+    add("models/disabled/on.sql", "{{ config(enabled=true) }}select 1")
+    add("dbt_packages/utils/dbt_project.yml", "name: utils\n")
+    add("dbt_packages/utils/models/orders.sql", "select 1")
+    val file = add("models/use.sql", "{{ ref('off') }} {{ ref('on') }} {{ ref('utils', 'orders') }}")
+    assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
+    assertTrue(path(target(file, "on")).endsWith("on.sql"))
+    assertEquals("finance", target(file, "orders").asInstanceOf[DbtSymbolElement].symbol.attributes("group"))
+    val w = DbtWorkspace.get(getProject)
+    assertFalse(DbtLineage.edges(w).exists(e => e.from.attributes.contains("property") && e.from.name == e.to.name && e.from.kind == e.to.kind))
   }
 
   def testNestedDefaultsDoNotCreateFakeMacroParameters(): Unit = {
