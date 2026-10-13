@@ -110,6 +110,14 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(file, "util.double")).contains("dbt_packages/util"))
   }
 
+  def testDispatchAdapterAndDefaults(): Unit = {
+    root()
+    add(".dbt-navigation.yml", "adapter: postgres\n")
+    add("macros/adapters.sql", "{% macro default__hash(x) %}{{ x }}{% endmacro %}\n{% macro postgres__hash(x) %}{{ x }}{% endmacro %}")
+    val file = add("models/use.sql", "{{ adapter.dispatch('hash')(1) }}")
+    assertEquals("postgres__hash", target(file, "hash").asInstanceOf[DbtSymbolElement].getName)
+  }
+
   def testProfileTargetAndEnvironmentNames(): Unit = {
     root("profile: analytics\n")
     add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev:\n      type: postgres\n      schema: public\n")
@@ -288,6 +296,21 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(dependencies, "dbt-labs/dbt_utils")).endsWith("vendor/dbt_utils/dbt_project.yml"))
     assertEquals(path(lock), path(target(dependencies, "1.2.0")))
     assertTrue(refs(dependencies, "missing/unknown").forall(_.candidates.isEmpty))
+  }
+
+  def testMaterializationAdapterSelectionAndIndirectUsages(): Unit = {
+    root()
+    val settings = add(".dbt-navigation.yml", "adapter: redshift\n")
+    add("macros/table.sql", "{% materialization audit, adapter='default' %}select 1{% endmaterialization %}{% materialization audit, adapter='postgres' %}select 2{% endmaterialization %}")
+    val file = add("models/use.sql", "{{ config(materialized='audit') }} select 1")
+    val selected = target(file, "audit").asInstanceOf[DbtSymbolElement]
+    assertEquals("postgres", selected.symbol.attributes("adapter"))
+    assertEquals(1, uses(selected))
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
+      val dm = PsiDocumentManager.getInstance(getProject)
+      dm.getDocument(settings).setText("adapter: bigquery\n"); dm.commitAllDocuments()
+    }})
+    assertEquals("default", target(file, "audit").asInstanceOf[DbtSymbolElement].symbol.attributes("adapter"))
   }
 
   def testUnitThisAndVariableOverrideIdentity(): Unit = {
