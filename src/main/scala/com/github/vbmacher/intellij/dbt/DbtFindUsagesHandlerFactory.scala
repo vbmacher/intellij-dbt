@@ -17,9 +17,13 @@ final class DbtFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
       definitions.map(_.element)
     }
   }
+
   override def canFindUsages(element: PsiElement): Boolean = targets(element).nonEmpty
+
   override def createFindUsagesHandler(element: PsiElement, forHighlightUsages: Boolean): FindUsagesHandler =
-    targets(element).headOption.map { first => new FindUsagesHandler(first) {
-      override def getPrimaryElements: Array[PsiElement] = targets(element).toArray
-    }}.orNull
+    targets(element).headOption.map { first =>
+      new FindUsagesHandler(first) {
+        override def getPrimaryElements: Array[PsiElement] = targets(element).toArray
+      }
+    }.orNull
 }

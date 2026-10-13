@@ -6,6 +6,7 @@ import com.intellij.psi.PsiElement
 
 /** Make declarations in plain-text Community resources available to native Find Usages actions. */
 final class DbtTargetElementEvaluator extends TargetElementEvaluatorEx2 {
+
   override def adjustReferenceOrReferencedElement(file: com.intellij.psi.PsiFile, editor: Editor, offset: Int,
     flags: Int, refElement: PsiElement): PsiElement = {
     if (refElement != null) return refElement

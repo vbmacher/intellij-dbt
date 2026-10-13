@@ -1,27 +1,31 @@
 package com.github.vbmacher.intellij.dbt
 
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile}
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
+import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile}
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert._
-import scala.jdk.CollectionConverters._
 
 final class DbtNavigationTest extends BasePlatformTestCase {
   private def add(path: String, text: String): PsiFile = myFixture.addFileToProject(path, text)
+
   private def root(config: String = "", path: String = ""): PsiFile = add(path + "dbt_project.yml", "name: analytics\n" + config)
+
   private def refs(file: PsiFile, text: String, occurrence: Int = 0): Vector[DbtNavigationReference] = {
     val start = Iterator.iterate(file.getText.indexOf(text))(i => file.getText.indexOf(text, i + 1)).drop(occurrence).next()
     assertTrue(s"Missing text $text", start >= 0)
     DbtNavigation.at(file, start + math.min(1, text.length - 1))
   }
+
   private def target(file: PsiFile, text: String, occurrence: Int = 0): PsiElement = {
     val all = refs(file, text, occurrence).flatMap(_.candidates).distinct
     assertEquals(s"Targets for $text: $all", 1, all.size)
     all.head
   }
+
   private def path(e: PsiElement): String = e.getContainingFile.getVirtualFile.getPath
+
   private def uses(e: PsiElement): Int = ReferencesSearch.search(e).findAll().size()
 
   def testRefSeedsSnapshotsPropertiesAndReverseUsages(): Unit = {
@@ -230,10 +234,13 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("override", target(file, "scoped").asInstanceOf[org.jetbrains.yaml.psi.YAMLKeyValue].getValueText)
     assertTrue(path(target(file, "fallback")).endsWith("dbt_packages/util/dbt_project.yml"))
     val dm = PsiDocumentManager.getInstance(getProject)
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
-      val config = getProjectFile("dbt_project.yml")
-      dm.getDocument(config).setText("name: analytics\nvars:\n  color: conflict\n"); dm.commitAllDocuments()
-    }})
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = {
+        val config = getProjectFile("dbt_project.yml")
+        dm.getDocument(config).setText("name: analytics\nvars:\n  color: conflict\n")
+        dm.commitAllDocuments()
+      }
+    })
     assertTrue(refs(file, "color").forall(_.candidates.isEmpty))
   }
 
@@ -345,7 +352,9 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     val model = add("models/orders.sql", "select 1")
     val file = add("models/use.sql", "{{ ref('orders') }} {{ ref('renamed') }}")
     assertNotNull(target(file, "orders"))
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = model.getVirtualFile.rename(this, "renamed.sql") })
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = model.getVirtualFile.rename(this, "renamed.sql")
+    })
     assertTrue(refs(file, "orders").forall(_.candidates.isEmpty))
     assertTrue(path(target(file, "renamed")).endsWith("renamed.sql"))
   }
@@ -448,6 +457,7 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(file, "model_80")).endsWith("model_80.sql"))
     assertTrue(path(target(file, "model_1")).endsWith("model_1.sql"))
   }
+
   def testLoopIterableAndNamespaceMutationKeepOuterBindings(): Unit = {
     root()
     val file = add("models/use.sql", "{% set item = 'orders' %}{% set ns = namespace(total=0) %}{% for item in item %}{% set ns.total = ns.total + 1 %}{{ item }}{% endfor %}{{ ns.total }} {{ item }}")
@@ -491,10 +501,13 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     val selected = target(file, "audit").asInstanceOf[DbtSymbolElement]
     assertEquals("postgres", selected.symbol.attributes("adapter"))
     assertEquals(1, uses(selected))
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
-      val dm = PsiDocumentManager.getInstance(getProject)
-      dm.getDocument(settings).setText("adapter: bigquery\n"); dm.commitAllDocuments()
-    }})
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = {
+        val dm = PsiDocumentManager.getInstance(getProject)
+        dm.getDocument(settings).setText("adapter: bigquery\n");
+        dm.commitAllDocuments()
+      }
+    })
     assertEquals("default", target(file, "audit").asInstanceOf[DbtSymbolElement].symbol.attributes("adapter"))
   }
 
@@ -541,10 +554,13 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     val file = add("models/use.sql", "{{ double(2) }}")
     val oldTarget = target(file, "double")
     val oldOffset = oldTarget.getTextOffset
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
-      val dm = PsiDocumentManager.getInstance(getProject)
-      dm.getDocument(macroFile).insertString(0, "-- Added comment\n"); dm.commitAllDocuments()
-    }})
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = {
+        val dm = PsiDocumentManager.getInstance(getProject)
+        dm.getDocument(macroFile).insertString(0, "-- Added comment\n");
+        dm.commitAllDocuments()
+      }
+    })
     assertTrue(oldTarget.isValid)
     assertEquals(oldOffset + 17, oldTarget.getTextOffset)
     assertEquals(1, uses(oldTarget))
@@ -695,6 +711,7 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "orders", 2).forall(_.candidates.isEmpty))
     assertEquals("customers", refs(file, "customers").head.getRangeInElement.substring(file.getText))
   }
+
   def testFixtureFormatsAndResourceExtensionsKeepSeparateIdentities(): Unit = {
     root()
     add("models/orders.sql", "select 1")
