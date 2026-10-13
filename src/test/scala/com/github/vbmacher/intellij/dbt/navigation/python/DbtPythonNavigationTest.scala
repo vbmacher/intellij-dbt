@@ -1,10 +1,18 @@
 package com.github.vbmacher.intellij.dbt.navigation.python
 
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
+import com.intellij.codeInsight.navigation.CtrlMouseData
+import com.intellij.codeInsight.navigation.actions.GotoDeclarationAction
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.util.TextRange
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.psi.PsiFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.psi.search.searches.ReferencesSearch
 import org.junit.Assert._
+
+import java.util.concurrent.{Callable, TimeUnit}
+import scala.jdk.CollectionConverters._
 
 /** Run with the free Python Community plugin enabled; the main suite also runs without it. */
 final class DbtPythonNavigationTest extends BasePlatformTestCase {
@@ -24,6 +32,25 @@ final class DbtPythonNavigationTest extends BasePlatformTestCase {
     val sql = add("models/use.sql", "{{ ref('orders') }}")
     val declaration = refs.find(_.label == "orders").get.candidates.head
     assertEquals(2, ReferencesSearch.search(declaration).findAll().size())
+  }
+
+  def testCtrlHoverHighlightsOnlyThePythonModelAndSourceNames(): Unit = {
+    setupProject()
+    val py = add("models/python_model.py",
+      "def model(dbt, session):\n    orders = dbt.ref('orders')\n    events = dbt.source('raw', 'events')\n    return orders\n")
+    assertTrue("Enable the free Python Community plugin to run these tests", py.getClass.getName.startsWith("com.jetbrains.python."))
+    myFixture.configureFromExistingVirtualFile(py.getVirtualFile)
+    val editor = myFixture.getEditor
+
+    Seq("orders", "raw", "events").foreach { name =>
+      val start = py.getText.indexOf(s"'$name'") + 1
+      val data = ReadAction.nonBlocking(new Callable[CtrlMouseData] {
+        override def call(): CtrlMouseData = new GotoDeclarationAction().getCtrlMouseData(editor, py, start + 1)
+      }).submit(AppExecutorUtil.getAppExecutorService).get(10, TimeUnit.SECONDS)
+      assertNotNull(s"Ctrl-hover should offer navigation for $name", data)
+      assertTrue(s"Ctrl-hover on $name should highlight a link", data.isNavigatable)
+      assertEquals(Vector(new TextRange(start, start + name.length)), data.getRanges.asScala.toVector)
+    }
   }
   def testPythonCommentsStringsShadowingAndProvedAlias(): Unit = {
     setupProject()

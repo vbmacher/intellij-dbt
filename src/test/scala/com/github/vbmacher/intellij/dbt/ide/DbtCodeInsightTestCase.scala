@@ -1,10 +1,13 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.intellij.codeInsight.navigation.actions.GotoDeclarationAction
+import com.intellij.model.psi.PsiSymbolService
+import com.intellij.model.psi.impl.TargetsKt
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile, PsiReference}
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert._
+
+import scala.jdk.CollectionConverters._
 
 /** Editor fixtures shared by behavior tests; expectations come from source locations. */
 abstract class DbtCodeInsightTestCase extends BasePlatformTestCase {
@@ -29,7 +32,8 @@ abstract class DbtCodeInsightTestCase extends BasePlatformTestCase {
   protected def reference: PsiReference = myFixture.getReferenceAtCaretPositionWithAssertion()
 
   protected def declarationTargets: Vector[PsiElement] =
-    GotoDeclarationAction.findAllTargetElements(getProject, myFixture.getEditor, myFixture.getCaretOffset).toVector
+    TargetsKt.targetDeclarationAndReferenceSymbols(myFixture.getFile, myFixture.getCaretOffset).getSecond.asScala
+      .map(PsiSymbolService.getInstance().extractElementFromSymbol).toVector
 
   protected def assertTarget(file: PsiFile, offset: Int = 0): PsiElement = {
     val targets = declarationTargets

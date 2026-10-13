@@ -52,7 +52,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
-        <gotoDeclarationHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtGotoDeclarationHandler"/>
+        <psi.implicitReferenceProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtImplicitReferenceProvider"/>
         <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesProvider"/>
         <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
         <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>

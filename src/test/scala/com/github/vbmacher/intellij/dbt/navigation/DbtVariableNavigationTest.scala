@@ -1,9 +1,9 @@
 package com.github.vbmacher.intellij.dbt.navigation
 
-import com.github.vbmacher.intellij.dbt.ide.DbtGotoDeclarationHandler
 import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
-import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.json.JsonFileType
+import com.intellij.model.psi.PsiSymbolService
+import com.intellij.model.psi.impl.TargetsKt
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.{PsiDocumentManager, PsiFile, PsiReference}
@@ -47,10 +47,9 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     })
 
     // Exercise the registered navigation extension, not just the resolver.
-    val handler = GotoDeclarationHandler.EP_NAME.getExtensionList.asScala.find(_.isInstanceOf[DbtGotoDeclarationHandler]).get
     myFixture.configureFromExistingVirtualFile(model.getVirtualFile)
     val offset = model.getText.indexOf("start_date") + 3
-    assertSame(expected, handler.getGotoDeclarationTargets(model.findElementAt(offset), offset, myFixture.getEditor).head)
+    assertSame(expected, PsiSymbolService.getInstance().extractElementFromSymbol(TargetsKt.targetSymbols(model, offset).asScala.head))
     assertSame(expected, model.findReferenceAt(offset).resolve())
 
     val found = usages("start_date")
@@ -229,11 +228,10 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     try {
       val file = sql("models/use.sql", "value: \"{{ var('start_date') }}\"")
       assertTrue(file.isInstanceOf[com.intellij.json.psi.JsonFile])
-      val handler = new DbtGotoDeclarationHandler
       val offset = file.getText.indexOf("start_date") + 2
       myFixture.configureFromExistingVirtualFile(file.getVirtualFile)
       assertSame(declaration("start_date"),
-        handler.getGotoDeclarationTargets(file.findElementAt(offset), offset, myFixture.getEditor).head)
+        PsiSymbolService.getInstance().extractElementFromSymbol(TargetsKt.targetSymbols(file, offset).asScala.head))
       assertEquals(1, usages("start_date").size)
     } finally {
       WriteCommandAction.runWriteCommandAction(getProject, new Runnable {

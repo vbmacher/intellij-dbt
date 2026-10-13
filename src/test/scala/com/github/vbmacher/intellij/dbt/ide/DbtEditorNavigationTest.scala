@@ -1,7 +1,10 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiPolyVariantReference
+import com.intellij.testFramework.PlatformTestUtil
 import org.junit.Assert._
 
 /** User-guide navigation contracts exercised through IntelliJ's Go to Declaration helpers. */
@@ -13,6 +16,17 @@ final class DbtEditorNavigationTest extends DbtCodeInsightTestCase {
 
     assertTarget(orders)
     assertEquals("orders", reference.getRangeInElement.substring(reference.getElement.getText))
+  }
+
+  def testGoToDeclarationActionOpensTheReferencedModel(): Unit = {
+    project()
+    val orders = add("models/orders.sql", "select 1 as order_id")
+    configure("models/report.sql", "select * from {{ ref('or<caret>ders') }}")
+
+    myFixture.performEditorAction("GotoDeclaration")
+    val expected = PsiDocumentManager.getInstance(getProject).getDocument(orders)
+    PlatformTestUtil.waitWithEventsDispatching("Go to Declaration should open orders.sql", () =>
+      Option(FileEditorManager.getInstance(getProject).getSelectedTextEditor).exists(_.getDocument == expected), 5)
   }
 
   def testSeedReferenceOpensTheCsvFile(): Unit = {

@@ -1,11 +1,11 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
+import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtNavigationReference}
 import com.github.vbmacher.intellij.dbt.project.{DbtEnvironment, DbtSymbolElement, DbtWorkspace}
 import com.intellij.codeInsight.{TargetElementEvaluatorEx2, TargetElementUtil}
-import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.find.findUsages.{FindUsagesHandler, FindUsagesHandlerFactory}
 import com.intellij.lang.findUsages.FindUsagesProvider
+import com.intellij.model.psi.{ImplicitReferenceProvider, PsiSymbolReference, PsiSymbolService}
 import com.intellij.openapi.application.QueryExecutorBase
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -19,12 +19,18 @@ import org.jetbrains.yaml.psi.YAMLKeyValue
 
 // IDE extension points registered in plugin.xml; all of them delegate to DbtNavigation and DbtWorkspace.
 
-/** SQL PSI may not accept contributed references on Jinja tokens; navigation still uses the same resolver. */
-final class DbtGotoDeclarationHandler extends GotoDeclarationHandler {
-  override def getGotoDeclarationTargets(sourceElement: PsiElement, offset: Int, editor: Editor): Array[PsiElement] =
-    Option(sourceElement).flatMap(e => Option(e.getContainingFile))
-      .map(file => DbtNavigation.at(file, offset).flatMap(_.candidates).distinct)
-      .filter(_.nonEmpty).map(_.toArray).orNull
+/** Supplies exact reference ranges to native navigation and Ctrl-hover for any source language. */
+final class DbtImplicitReferenceProvider extends ImplicitReferenceProvider {
+  override def getImplicitReference(element: PsiElement, offsetInElement: Int): PsiSymbolReference = element match {
+    case file: PsiFile =>
+      val references = DbtNavigation.at(file, offsetInElement)
+      val candidates = references.flatMap(_.candidates).distinct
+      references.headOption.filter(_ => candidates.nonEmpty).map { first =>
+        val reference = new DbtNavigationReference(file, first.getRangeInElement, candidates, first.label)
+        PsiSymbolService.getInstance().asSymbolReference(reference)
+      }.orNull
+    case _ => null
+  }
 }
 
 /** Plain SQL files in Community expose references on the file rather than on individual tokens. */
