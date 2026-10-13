@@ -181,6 +181,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "off").forall(_.candidates.isEmpty))
   }
 
+  def testStaticArgumentsAndWrapperMacros(): Unit = {
+    root()
+    add("models/orders.sql", "select 1")
+    add("macros/wrapper.sql", "{% macro lookup(model_name) %}{{ builtins.ref(model_name) }}{% endmacro %}")
+    val file = add("models/use.sql", "{% set resource = 'ord' ~ 'ers' %}{{ ref(resource) }} {{ lookup('orders') }} {{ ref('ord' ~ 'ers') }}")
+    assertTrue(refs(file, "resource", 1).flatMap(_.candidates).exists(e => path(e).endsWith("orders.sql")))
+    assertTrue(path(target(file, "orders")).endsWith("orders.sql"))
+    val concatenated = DbtNavigation.inFile(file).find(_.label == "static reference").get
+    assertTrue(concatenated.candidates.nonEmpty)
+  }
+
   def testVarsFileConflictAndPackageDefaults(): Unit = {
     root()
     add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
@@ -396,6 +407,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(oldTarget.isValid)
     assertEquals(oldOffset + 17, oldTarget.getTextOffset)
     assertEquals(1, uses(oldTarget))
+  }
+
+  def testFiniteCollectionAndUnknownConditionalNames(): Unit = {
+    root()
+    add("models/orders.sql", "select 1")
+    add("models/customers.sql", "select 1")
+    val file = add("models/use.sql", "{% set names = ['orders', 'customers'] %}{% for name in names %}{{ ref(name) }}{% endfor %}{% if execute %}{% set unknown = 'orders' %}{% else %}{% set unknown = env_var('MODEL') %}{% endif %}{{ ref(unknown) }}")
+    assertEquals(Set("orders", "customers"), refs(file, "name", 3).flatMap(_.candidates).collect { case e: DbtSymbolElement if e.symbol.kind == "model" => e.getName }.toSet)
+    assertTrue(refs(file, "unknown", 2).flatMap(_.candidates).forall(e => e.asInstanceOf[DbtSymbolElement].symbol.kind == "local"))
   }
 
   def testTemporaryCompletionFilesHaveNoDbtReferences(): Unit = {
