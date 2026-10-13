@@ -95,6 +95,18 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(refs(file, "start_date").isEmpty)
   }
 
+  def testGenericAndUnitTests(): Unit = {
+    root()
+    add("models/orders.sql", "select 1")
+    add("macros/tests.sql", "{% test positive(model, column_name, threshold) %}select 1{% endtest %}")
+    add("tests/fixtures/orders.csv", "id\n1\n")
+    val file = add("models/schema.yml", "models:\n- name: orders\n  data_tests:\n  - positive:\n      arguments:\n        threshold: 0\nunit_tests:\n- name: test_orders\n  model: orders\n  given:\n  - input: ref('orders')\n    format: csv\n    fixture: orders\n")
+    assertEquals("generic_test", target(file, "positive").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("parameter", target(file, "threshold").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertTrue(path(target(file, "orders", 2)).endsWith("orders.sql"))
+    assertTrue(path(target(file, "orders", 4)).endsWith("orders.csv"))
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
