@@ -278,6 +278,15 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("model", com.intellij.lang.findUsages.LanguageFindUsages.INSTANCE.forLanguage(selected.getLanguage).getType(selected))
   }
 
+  def testNoPythonPluginIsRequiredForSqlNavigation(): Unit = {
+    root()
+    val definition = add("models/orders.sql", "select 1")
+    val py = add("models/fallback.py", "def model(dbt, session): return dbt.ref('orders')")
+    assertTrue(DbtNavigation.inFile(py).isEmpty)
+    val usage = add("models/use.sql", "{{ ref('orders') }}")
+    assertEquals(path(definition), path(target(usage, "orders")))
+  }
+
   def testBuiltinVarOverridesAndExplicitBuiltinEscape(): Unit = {
     root("vars:\n  color: red\n")
     add("macros/var.sql", "{% macro var(name) %}{{ builtins.var(name) }}{% endmacro %}")
