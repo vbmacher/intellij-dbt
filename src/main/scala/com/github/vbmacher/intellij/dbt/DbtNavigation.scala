@@ -100,7 +100,8 @@ private[dbt] object DbtNavigation {
           source.foreach(n => arg(call, 0).foreach(x => add(x, lookup(Set("source"), n).map(_.element), n)))
           table.foreach(n => arg(call, 1).foreach(x => add(x, workspace.symbols.filter(s => s.kind == "source_table" &&
             s.name == n && source.contains(s.owner) && !s.attributes.get("enabled").exists(_.equalsIgnoreCase("false")) &&
-            source.toVector.flatMap(src => lookup(Set("source"), src)).exists(parent => parent.namespace == s.namespace && parent.file == s.file && parent.mapping.exists(_.getTextRange.contains(s.range))))
+            source.toVector.flatMap(src => lookup(Set("source"), src)).exists(parent => parent.namespace == s.namespace &&
+              ((parent.file == s.file && parent.mapping.exists(_.getTextRange.contains(s.range))) || (s.metadata && s.owner == parent.name))))
             .map(_.element), n)))
         case "var" =>
           literal(call, 0).foreach(n => arg(call, 0).foreach(x => add(x, if (file.getName == "dbt_project.yml" && r.runConfiguration.flatMap(DbtYaml.map(_, "vars")).isEmpty && (!r.supports(12) ||
