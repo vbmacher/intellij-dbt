@@ -1,0 +1,6 @@
+JSqlParser 5.4
+https://github.com/JSQLParser/JSqlParser
+
+This distribution uses JSqlParser under its Apache License, Version 2.0 option.
+JSqlParser is dual licensed under Apache License 2.0 and LGPL 2.1.
+The Apache license is included in LICENSE_APACHEV2.

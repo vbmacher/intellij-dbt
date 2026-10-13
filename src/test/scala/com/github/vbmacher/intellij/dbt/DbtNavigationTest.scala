@@ -159,6 +159,17 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("metric", target(schema, "total_revenue", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
   }
 
+  def testSqlCteAliasesAndDeclaredColumns(): Unit = {
+    root()
+    add("models/orders.sql", "select 1 as order_id")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: order_id\n")
+    val file = add("models/use.sql", "with recent as (select order_id from {{ ref('orders') }}) select r.order_id as id from recent r order by id")
+    assertEquals("cte", target(file, "recent", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("sql_alias", target(file, "r.order_id").asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("column", target(file, "order_id", 1).asInstanceOf[DbtSymbolElement].symbol.kind)
+    assertEquals("sql_projection", target(file, "id", 3).asInstanceOf[DbtSymbolElement].symbol.kind)
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")
@@ -306,6 +317,14 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(s"Native Find Usages target: $selected", selected.isInstanceOf[DbtSymbolElement])
     assertEquals(1, myFixture.findUsages(selected).size())
     assertEquals("model", com.intellij.lang.findUsages.LanguageFindUsages.INSTANCE.forLanguage(selected.getLanguage).getType(selected))
+  }
+
+  def testSqlProjectionColumnsWithoutYamlSchema(): Unit = {
+    root()
+    val definition = add("models/orders.sql", "select 1 as order_id")
+    val file = add("models/use.sql", "select o.order_id from {{ ref('orders') }} o")
+    assertEquals(path(definition), path(target(file, "order_id")))
+    assertEquals("order_id", target(file, "order_id").getText)
   }
 
   def testFunctionBodyArgumentsUseLibraryExpressionParser(): Unit = {
@@ -509,6 +528,27 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("finance", target(file, "orders").asInstanceOf[DbtSymbolElement].symbol.attributes("group"))
     val w = DbtWorkspace.get(getProject)
     assertFalse(DbtLineage.edges(w).exists(e => e.from.attributes.contains("property") && e.from.name == e.to.name && e.from.kind == e.to.kind))
+  }
+
+  def testMultilineSqlNavigationKeepsDeclarationOffsets(): Unit = {
+    root()
+    add("models/orders.sql", "select 1 as order_id")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: order_id\n")
+    val file = add("models/use.sql", "with recent as (\n  select order_id from {{ ref('orders') }}\n)\nselect r.order_id as id from recent r order by id\n")
+    assertEquals(file.getText.indexOf("recent"), target(file, "recent", 1).getTextOffset)
+    assertTrue(path(target(file, "order_id", 1)).endsWith("schema.yml"))
+    assertEquals(1, uses(target(file, "recent", 1)))
+  }
+
+  def testNativeGoToDeclarationActionNavigatesWithinSqlFile(): Unit = {
+    root()
+    add("models/orders.sql", "select 1 as order_id")
+    val file = add("models/use.sql", "with recent as (\n  select order_id from {{ ref('orders') }}\n)\nselect r.order_id from recent r\n")
+    myFixture.configureFromExistingVirtualFile(file.getVirtualFile)
+    myFixture.getEditor.getCaretModel.moveToOffset(file.getText.lastIndexOf("recent") + 1)
+    myFixture.performEditorAction("GotoDeclaration")
+    com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Go to Declaration did not move to the CTE", () =>
+      myFixture.getEditor.getCaretModel.getOffset == file.getText.indexOf("recent"), 5)
   }
 
   def testNestedDefaultsDoNotCreateFakeMacroParameters(): Unit = {
