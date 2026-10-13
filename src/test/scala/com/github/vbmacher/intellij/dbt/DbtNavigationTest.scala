@@ -110,6 +110,16 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(path(target(file, "util.double")).contains("dbt_packages/util"))
   }
 
+  def testMeshDependenciesAndAccess(): Unit = {
+    root()
+    add("finance/dbt_project.yml", "name: finance\n")
+    val finance = add("finance/models/orders.sql", "{{ config(access='public') }}select 1")
+    val file = add("models/use.sql", "{{ ref('finance', 'orders') }}")
+    assertTrue(refs(file, "orders").forall(_.candidates.isEmpty))
+    add("dependencies.yml", "projects:\n- name: finance\n")
+    assertEquals(path(finance), path(target(file, "orders")))
+  }
+
   def testDispatchAdapterAndDefaults(): Unit = {
     root()
     add(".dbt-navigation.yml", "adapter: postgres\n")
@@ -352,6 +362,19 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertTrue(DbtNavigation.inFile(temporary).isEmpty)
     assertTrue(temporary.getReferences.isEmpty)
     assertTrue(DbtWorkspace.get(getProject).root(temporary).isEmpty)
+  }
+
+  def testGeneratedAndIgnoredNestedProjectsAreNotActivated(): Unit = {
+    root("target-path: build-output\n")
+    add(".dbtignore", "scratch/\n")
+    add("build-output/generated/dbt_project.yml", "name: generated\n")
+    add("build-output/generated/models/orders.sql", "select 1")
+    add("scratch/dbt_project.yml", "name: scratch\n")
+    add("scratch/models/orders.sql", "select 1")
+    add("dbt_packages/utils/dbt_project.yml", "name: utils\n")
+    add("dbt_packages/utils/models/orders.sql", "select 1")
+    val roots = DbtWorkspace.get(getProject).roots.map(_.name).toSet
+    assertEquals(Set("analytics", "utils"), roots)
   }
 
   def testInheritedDisabledConfigurationAndPackageOverrides(): Unit = {
