@@ -48,6 +48,13 @@ final class DbtSymbolElement private[dbt] (val symbol: DbtSymbol)
   private val pointer = com.intellij.psi.SmartPointerManager.getInstance(symbol.file.getProject)
     .createSmartPsiFileRangePointer(symbol.file, symbol.range)
   override def getName: String = symbol.name
+  override def getIcon(flags: Int): javax.swing.Icon = DbtIcons.forKind(symbol.kind)
+  override def getPresentation: com.intellij.navigation.ItemPresentation = new com.intellij.navigation.ItemPresentation {
+    override def getPresentableText: String = s"${symbol.namespace}.${symbol.name}${symbol.version.map(" v" + _).getOrElse("")}${
+      if (symbol.attributes.get("stale").contains("true")) " (stale metadata)" else if (symbol.metadata) " (metadata)" else ""}"
+    override def getLocationString: String = symbol.file.getName
+    override def getIcon(unused: Boolean): javax.swing.Icon = DbtIcons.forKind(symbol.kind)
+  }
   override def setName(name: String): PsiElement = throw new UnsupportedOperationException("dbt rename is not supported")
   override def getContainingFile: PsiFile = symbol.file
   override def getTextRange: TextRange = Option(pointer.getRange).map(r => new TextRange(r.getStartOffset, r.getEndOffset)).getOrElse(TextRange.EMPTY_RANGE)

@@ -1,57 +1,51 @@
 # intellij-dbt
 
-[![Build](https://img.shields.io/github/actions/workflow/status/vbmacher/intellij-dbt/build.yml?branch=main&style=flat-square)](https://github.com/vbmacher/intellij-dbt/actions?query=branch%3Amain)
+[![Build](https://img.shields.io/github/actions/workflow/status/vbmacher/intellij-dbt/build.yml?branch=main&style=flat-square)](https://github.com/vbmacher/intellij-dbt/actions?query=branch%3Amain) [![License](https://img.shields.io/github/license/vbmacher/intellij-dbt?style=flat-square)](LICENSE)
 
 An IntelliJ IDEA plugin for [dbt](https://www.getdbt.com/) declaration navigation and Find Usages.
 
 Works in **IntelliJ IDEA Community Edition**, including SQL files opened as plain text.
-The bundled YAML plugin is required. SQL navigation uses JSqlParser and does not require
-Ultimate or Database Tools. Python model navigation optionally uses the free Python
+The bundled YAML plugin is required. SQL navigation does not require Ultimate or
+Database Tools. Python model navigation optionally uses the free Python
 Community Edition plugin.
 
-## Features
+## Getting started
 
-### Go to Declaration and Find Usages
+Open a directory containing `dbt_project.yml` in IntelliJ IDEA. Use **Ctrl+Click**
+or **Go to Declaration** on a referenced name to open the file or YAML entry where it
+is defined. Use **Find Usages** on a definition to see where it is referenced.
 
-Use **Ctrl+Click** or **Go to Declaration** on a name to open its declaration. Use
-**Find Usages** on a declaration to find calls that resolve to that identity. Ambiguous
-names offer multiple candidates; missing or runtime-dependent names remain unresolved.
-The index updates after editor changes and file moves and respects the IDE search scope.
+For example, in `ref('orders')`, click **orders** to open `models/orders.sql`.
+If several definitions match, the IDE offers a chooser. Names that depend on runtime
+values may have no navigation target.
 
-Open a directory containing `dbt_project.yml`, or an IDE project containing several dbt
-project directories. Each project retains its own names, configured paths and variables.
-Installed packages are indexed separately, using their `dbt_project.yml` project names.
-Generated output, `.git`, `.idea`, `logs`, and `.dbtignore` matches are excluded from source
-navigation. Configured `target-path` and `packages-install-path` are respected.
-Ordered `.dbtignore` negation patterns (`!pattern`), anchored paths and directory patterns are supported.
+See the [user guide](docs/README.md) for installation, navigation, settings and troubleshooting.
 
-| Construct | Navigation targets |
-| --- | --- |
-| `ref()` | Models, seeds, snapshots, package/project names, model versions |
-| `source()` | Logical source and table declarations, independently |
-| Macro calls | Macro blocks, package namespaces and named parameters |
-| `doc()` | Markdown `{% docs ... %}` blocks, including YAML descriptions |
-| `var()` / `builtins.var()` | Root/package defaults, applicable `vars.yml`, explicit local overrides |
-| Jinja locals | Assignments, loop targets, macro/test/call parameters, `with` bindings, namespace attributes |
-| YAML properties | Resource source, `defined_in`, columns, groups, semantic fields and dependencies |
-| Generic tests | Custom test blocks, named arguments, relationship columns, builtin documentation |
-| Unit tests | Models, `ref`/`source`/`this` inputs, CSV/SQL fixtures, macro and variable override identities |
-| Configuration | Root/folder/property/inline declarations, hooks, custom materializations and snapshot strategies |
-| Profiles / environment | Local profile, selected output fields, `.env` keys, explicit local overrides |
-| Builtins / context | Current resource/project, named statement results, official documentation |
-| Semantic Layer | Models, entities, dimensions, legacy measures, metrics, aliases, saved queries and exports |
-| `function()` | UDF source, properties, argument declarations and supported overload bodies |
-| SQL | CTEs, relation aliases, select aliases and unambiguous declared/projected columns |
-| Selectors | Named selectors, resource methods, wildcards, tags and lineage operators |
-| dbt v2 checks | Check source, Information Schema views/columns and provable resource-name predicates |
+## Example project
 
-The editor context menu also provides **dbt Properties**, to navigate from resource code
-to its YAML properties, and **dbt Dependencies**, to inspect resolved parents, children
-and the call sites connecting them. Macro relationships and ambiguous candidates are labeled.
+These files form one example: a model uses another model, a source, a macro and a
+variable, while its YAML properties link to a documentation block.
 
-### Models, sources, versions and docs
+### Define the resources
 
-For example, create `models/orders.sql` and these properties in `models/schema.yml`:
+**`dbt_project.yml`** — project name and variable:
+
+```yaml
+name: navigation_demo
+version: '1.0'
+config-version: 2
+profile: demo
+vars:
+  start_date: '2026-01-01'
+```
+
+**`models/orders.sql`** — the model to navigate to:
+
+```sql
+select 1 as order_id
+```
+
+**`models/schema.yml`** — model properties and source declarations:
 
 ```yaml
 models:
@@ -63,310 +57,111 @@ sources:
   - name: raw
     tables:
       - name: events
-        identifier: warehouse_events
         columns:
-          - name: order_id
+          - name: event_id
 ```
 
-In `docs/catalog.md`:
-
-```jinja
-{% docs orders_description %}
-Orders prepared for reporting.
-{% enddocs %}
-```
-
-In another model:
-
-```sql
-select e.order_id
-from {{ ref('orders') }} o
-join {{ source('raw', 'events') }} e on o.order_id = e.order_id
-```
-
-`orders` opens the model. `raw` and `events` open their separate YAML declarations;
-`identifier` does not change the logical name. `e.order_id` opens the declared source column.
-The description's `orders_description` opens the Markdown docs block.
-
-Versioned models use `latest_version` and `versions[].defined_in`:
-
-```yaml
-models:
-  - name: orders
-    latest_version: 2
-    versions:
-      - v: 1
-        defined_in: orders_previous
-      - v: 2
-```
-
-```jinja
-{{ ref('orders') }}                  {# orders_v2.sql #}
-{{ ref('orders', v=1) }}             {# orders_previous.sql #}
-{{ ref('finance', 'orders', v=2) }}  {# visible package/project version #}
-```
-
-Cross-project `ref('finance', 'orders')` requires a declared `dependencies.yml` project
-and a public target. Installed package calls use the package's actual project namespace.
-Dependency declarations link to locally installed sources; version/revision declarations
-can link to their `package-lock.yml` entries. The plugin does not download packages.
-
-### Variables, macros and Jinja scope
-
-In `dbt_project.yml`:
-
-```yaml
-name: analytics
-vars:
-  region: us
-  start_date: '2026-01-01'
-  analytics:
-    start_date: '2026-02-01'
-  options:
-    include_archived: false
-```
-
-```jinja
-{{ var('start_date') }}   {# project-scoped declaration wins #}
-{{ var('region', 'eu') }} {# default is not a declaration #}
-{{ var('options')['include_archived'] }}
-{% set model_name = 'orders' %}
-{{ ref(model_name) }}
-{{ var('start_' ~ 'date') }}
-```
-
-Dictionary variables navigate to their dictionary key; dictionary members are not separate
-dbt variables. Root package-scoped defaults override root global defaults, which override
-installed package defaults. Variables inside a package macro use the calling node's project.
-`builtins.var/ref/source` bypass a same-named user macro override.
-
-Macro calls and named arguments navigate to separate declarations:
+**`macros/math.sql`** — a macro and its parameter:
 
 ```jinja
 {% macro double(value) %}
-  {% set result = value * 2 %}
-  {{ result }}
+  {{ value * 2 }}
 {% endmacro %}
 ```
 
-```sql
-select {{ double(value=2) }} as doubled
-```
-
-Local names retain lexical scope and shadow dbt context names. Simple wrapper macros can
-link a literal caller argument to a delegated `ref`, `source`, `var`, `doc` or `function`.
-Literal concatenation, constant assignments and finite branches are bounded static proofs;
-recursive or runtime-derived expressions remain unresolved.
-
-Jinja comments and raw blocks are ignored. Active Jinja inside SQL comments remains a usage.
-Complete calls in unfinished template blocks can still navigate. Template loader operations
-(`import`, `from`, `include`, `extends`) remain unresolved in the standard dbt context.
-
-### Tests, configuration and dispatch
-
-```yaml
-models:
-  - name: orders
-    columns:
-      - name: customer_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: "ref('customers')"
-                field: customer_id
-unit_tests:
-  - name: orders_example
-    model: orders
-    given:
-      - input: ref('customers')
-        format: csv
-        fixture: customers_input
-    expect:
-      format: csv
-      fixture: orders_expected
-```
-
-Test names navigate to custom `{% test ... %}` blocks or builtin documentation. The
-relationship target and field navigate separately. Fixtures link to files under the configured
-test paths' `fixtures/` directories. Inline rows are not treated as filenames.
-
-Calls inside supported YAML descriptions, configuration and hooks use decoded YAML offsets, including
-quoted and block scalars. Variable definition values do not render nested Jinja references.
-Profiles and `packages.yml` use their restricted `env_var` context and explicitly selected runtime variable keys.
-`dependencies.yml` does not render Jinja. Python models do not render Jinja either.
+**`docs/catalog.md`** — the documentation used by the model description:
 
 ```jinja
-{{ config(materialized='audit', schema='reporting') }}
-{{ config.get('materialized') }}
-{{ adapter.dispatch('format_amount', 'finance')(amount) }}
-{% materialization audit, adapter='default' %}...{% endmaterialization %}
+{% docs orders_description %}
+Order identifiers.
+{% enddocs %}
 ```
 
-Configuration keys link to inherited root/folder/property/inline declarations. Schema, alias
-and database keys also link to available `generate_*_name` overrides. Dispatch respects
-`macro_namespace`, `search_order`, an explicitly selected adapter/profile, default fallback
-and Redshift's Postgres inheritance. Unknown adapters preserve candidates.
+### Follow references from a model
 
-### Semantic Layer, UDFs, selectors and SQL
-
-Legacy `semantic_models` entities, dimensions and measures retain semantic-model scope.
-For the current model-embedded schema, column entity/dimension annotations and model metrics
-are indexed separately. Typed expressions such as `Dimension('customer__country')` navigate
-from the entity path and dimension name to their declarations. Metric inputs and derived
-expression aliases, saved-query metrics and export owners are linked. Time-spine
-`standard_granularity_column` links to the declared model column.
-
-```jinja
-{{ Dimension('customer__country') }}
-{{ Metric('revenue') }}
-{{ function('hash_customer') }}(customer_id)
-```
-
-UDF names link to configured function source files and properties. `overloads[].defined_in`
-links to additional bodies; properties navigation works for SQL, Python and JavaScript bodies.
-SQL bodies can link argument names to YAML argument declarations.
+**`models/events.sql`** — uses the resources above:
 
 ```sql
-with recent_orders as (
-  select order_id from {{ ref('orders') }}
-)
-select r.order_id as id from recent_orders r order by id
+select
+  {{ double(value=2) }} as doubled,
+  '{{ var("start_date") }}' as start_date
+from {{ ref('orders') }}
+join {{ source('raw', 'events') }} e on true
 ```
 
-CTE names, `r`, `id` and unambiguous columns navigate using JSqlParser's syntax tree. YAML
-columns and simple model projections supply cross-model evidence. Jinja is masked while
-preserving original source offsets. Unsupported dialect syntax, dynamic control flow,
-unknown schemas and ambiguous joins produce conservative results. `SELECT *` does not invent
-column declarations.
+Try **Ctrl+Click** on these names:
 
-```yaml
-selectors:
-  - name: nightly
-    definition: '+orders+'
-  - name: finance_sources
-    definition:
-      method: source
-      value: raw.*
-```
+- **orders** in `ref('orders')` opens `models/orders.sql`.
+- **raw** in `source('raw', 'events')` opens the source's `name: raw` in `schema.yml`.
+- **events** in the same call opens the table's `name: events` in `schema.yml`.
+- **double** opens the macro in `macros/math.sql`; **value** in `value=2` opens its parameter.
+- **start_date** opens the variable in `dbt_project.yml`.
+- **orders_description** in the YAML `doc()` call opens the docs block in `docs/catalog.md`.
 
-Selection terms navigate to matching resources; broad patterns offer multiple candidates.
-YAML `method: selector` inheritance works on the baseline; string `selector:nightly` terms require Core 1.12+.
-Named selectors, nested unions/intersections/exclusions and graph operators expose their
-individual references without executing a selection. Missing state information stays unknown.
-YAML selector aliases are not expanded into inherited selections.
-`select`, `exclude` and `selector` fields in explicitly configured local selection files
-can also navigate.
+### Find where a resource is used
 
-### Engine, version and optional local settings
+Open `models/orders.sql` and invoke **Find Usages**. The IDE lists references to
+that model and shows a preview of each selected usage.
 
-The plugin defaults to dbt Core 1.10. A scalar `require-dbt-version` supplies a version hint;
-for precise navigation behavior, select the engine/version in **`.dbt-navigation.yml`** at
-the dbt project root. This is plugin configuration, not a dbt project file.
+<img src="docs/screenshots/model-usages.png" alt="Find Usages results for orders, with a YAML model reference selected" width="640">
 
-| Schema / resource | Supported navigation |
-| --- | --- |
-| Core 1.10 baseline | SQL/Jinja/YAML resources, legacy Semantic Layer, packages, tests, selectors |
-| Core 1.11+ | Adds UDF resources |
-| Core 1.12+ | Adds UDF overloads, `vars.yml`, model-embedded semantics |
-| Explicit `engine: v2` | Enables checks and Information Schema v1 documentation |
-| Manifest JSON | Explicit local schema versions 9–12 |
-| Catalog JSON | Explicit local schema version 1; fresh column metadata |
-| Information Schema Parquet | Explicit local v2 `v1/` directory; resource metadata, fresh columns and DAG edges |
-| Python models | Native PSI from optional free Python Community Edition plugin |
+*The screenshot includes additional resources, so it shows
+more usages than the small example above.*
 
-Example settings (omit anything you do not use):
+The same action works on macro, variable, source and documentation definitions.
+For example, invoke **Find Usages** on `orders_description` in `docs/catalog.md`
+to find YAML descriptions that use it:
+
+<img src="docs/screenshots/doc-usages.png" alt="Find Usages for orders_description, showing YAML descriptions that call doc()" width="640">
+
+### Open properties and dependencies
+
+Right-click inside `models/orders.sql` and choose:
+
+- **dbt Properties** to open the model's YAML properties. If several files describe
+  the model, choose one from the popup.
+- **dbt Dependencies** to see what the model depends on and what depends on it.
+
+<img src="docs/screenshots/model-properties.png" alt="dbt Properties popup offering YAML files that describe the orders model" width="560">
+
+<img src="docs/screenshots/model-dependencies.png" alt="dbt Dependencies popup showing resource-type icons and indented file-and-line references" width="480">
+
+**Uses** lists resources that `orders` depends on; **Used by** lists resources that
+depend on `orders`. Each resource has an icon for its type, shared with Go to
+Declaration, Find Usages and dbt Properties. Click its name to open its definition.
+The indented entries below it open the references: `events.sql:4`, for example,
+opens line 4 where `events` calls `ref('orders')`. Multiple references to the same
+resource are grouped beneath its name.
+
+See the [icon legend](docs/icons.md) for each icon's meaning.
+
+*Screenshots show an expanded version of this example project in IntelliJ IDEA Community Edition.*
+
+## More navigation examples
+
+The [navigation guide](docs/navigation.md) and [configuration reference](docs/configuration.md) cover:
+
+- Versioned models and installed packages, such as `ref('orders', v=1)`.
+- Variable overrides, Jinja scope, configuration and macro dispatch.
+- Generic tests, unit-test fixtures and Python models.
+- SQL CTEs and columns, Semantic Layer names, UDFs and selectors.
+- Engine/version settings and explicitly selected local JSON or Parquet metadata.
+
+The plugin defaults to dbt Core 1.10 navigation. To select a different engine/version,
+create **`.dbt-navigation.yml`** at the dbt project root, for example:
 
 ```yaml
 engine: core
 dbt-version: '1.12'
-profiles-file: profiles.yml
-target: dev
-adapter: postgres
-env-files: [.env, .env.local]
-run-config: run/dev.yml
-selection-files: [run/selection.yml]
-manifest: target/manifest.json
-catalog: target/catalog.json
-state-manifest: state/manifest.json
 ```
 
-An explicitly selected local `run-config` is a YAML file containing declarations to navigate:
+Navigation updates after edits and file moves. Generated output, `.git`, `.idea`,
+`logs` and `.dbtignore` matches are excluded. See the guide for project scope and
+other [navigation limits](docs/troubleshooting.md).
 
-```yaml
-vars:
-  start_date: '2026-03-01'
-env:
-  DBT_ENV_SECRET_TOKEN: local-value
-target: dev
-select: orders
-```
-
-Its variable/environment keys override source defaults for navigation; the plugin never runs
-this file as a command. Environment navigation exposes key names, not secret values.
-Terminal variables, shell scripts, `dbt --vars` invocations and unselected IDE run configurations
-are not inferred. For Core 1.12+, `vars.yml` contains a top-level `vars` mapping; conflicting
-nonempty mappings in both `vars.yml` and `dbt_project.yml` remain unresolved.
-
-Explicit JSON artifacts supply metadata targets when local source is absent. Targets are
-labeled as metadata, including stale metadata; current source always takes precedence.
-Incompatible schemas are ignored. A state manifest provides evidence about available
-metadata, not proof of runtime warehouse existence or dbt deferral selection.
-For existing dbt v2 Information Schema files, select their versioned directory:
-
-```yaml
-# .dbt-navigation.yml
-engine: v2
-info-schema-dir: target/info_schema/v1
-```
-
-The plugin uses [Apache Parquet](https://github.com/apache/parquet-java) to read `dbt.models.parquet`, the other supported resource
-tables, `dbt.node_columns.parquet`, and `dbt.edges.parquet`. It never generates these files.
-For example, `ref('remote_orders')` can navigate to a model's metadata row when its source
-is unavailable. Local source and declared columns take precedence. Metadata-only targets
-open a read-only JSON representation of the selected Parquet data; they are not code files.
-`info_schema('models')` and known view columns can also navigate to that representation.
-
-Resource metadata with a missing/old `ingested_at` is marked stale. Stale columns and edges
-are ignored, including when a resource has unsaved edits. Unknown schemas, unsupported
-directory versions and unreadable files are ignored. Reads are cancellable and capped at
-100,000 rows, 64 MiB on disk and 128 MiB of row-group data per file. Runtime tables,
-variable values and arbitrary Parquet datasets are not indexed. Without explicit selection,
-Information Schema navigation continues to use the built-in schema documentation.
-See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
-and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
-
-For v2 checks, select `engine: v2` and configure dbt's `info_schema.version: 1`:
-
-```sql
-select name from {{ info_schema('models') }} where name = 'orders'
-```
-
-The view/columns open schema documentation. The literal `orders` links to the source only
-when the parsed predicate proves it names a resource in that known metadata view.
-
-### Python models and limits
-
-With the optional free Python plugin:
-
-```python
-def model(dbt, session):
-    orders = dbt.ref("orders", v=2)
-    events = dbt.source("raw", "events")
-    dbt.config(materialized="table")
-    return orders
-```
-
-The native Python resolver proves the `dbt` parameter or a local alias. Unrelated objects,
-shadowed names, interpolated strings and comments are not treated as dbt calls. Python
-navigation is unavailable without that plugin; SQL/Jinja/YAML navigation continues to work.
-
-This plugin provides source navigation and reference search. It does not run dbt, render
-macros, execute Python/SQL, fetch remote metadata, query a warehouse, provide SQL highlighting,
-completion, data previews or Rename refactoring. Arbitrary runtime expressions, all SQL
-dialects and complete warehouse schema inference are outside the static resolver's coverage.
-
-The [roadmap acceptance audit](docs/roadmap-completion.md) records ticket coverage, the rendering
-context and version matrix, explicit builtin-source settings, validation and supported limits.
+This plugin provides source navigation and Find Usages. It does not run dbt or
+query a warehouse, and does not provide SQL highlighting, completion, data previews
+or Rename refactoring.
 
 ## Development
 
@@ -376,14 +171,7 @@ To set up the development environment:
 2. Configure JDK 25
 3. Open the project in IntelliJ IDEA as an sbt project
 
-The plugin is built with [sbt](https://www.scala-sbt.org/) and
-[sbt-idea-plugin](https://github.com/JetBrains/sbt-idea-plugin), targeting IntelliJ IDEA Community 2026.2
-(build `262.9437.185`).
-
-The plugin uses IntelliJ YAML and JSON PSI, [HubSpot Jinjava](https://github.com/HubSpot/jinjava)
-for Jinja tokens, and [JSqlParser](https://github.com/JSQLParser/JSqlParser) for SQL syntax and
-source ranges, plus [Apache Parquet](https://github.com/apache/parquet-java) for selected
-Information Schema artifacts. It does not implement a SQL grammar. Tests run against the Community SDK.
+Development uses [sbt](https://www.scala-sbt.org/) and IntelliJ IDEA Community 2026.2.
 
 ```bash
 sbt compile        # downloads IntelliJ SDK (first run) and compiles the plugin
@@ -399,10 +187,7 @@ free Python Community Edition plugin in the development SDK, then run:
 python3 scripts/test-python.py
 ```
 
-The script accepts `--sdk /path/to/sdk`. It uses native Python PSI and never executes model code.
-
-See [navigation validation](docs/navigation-validation.md) for the automated and manual
-Community IDE checks, including the remaining artifact limitation.
+The script accepts `--sdk /path/to/sdk`.
 
 ## Contributing
 

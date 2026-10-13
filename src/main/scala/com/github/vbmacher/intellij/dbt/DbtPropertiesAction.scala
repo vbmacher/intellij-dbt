@@ -22,16 +22,15 @@ final class DbtPropertiesAction extends AnAction {
         own.flatMap(w.properties).distinct
       }
     }).inSmartMode(project).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (properties: Vector[DbtSymbol]) => {
-      val labels = properties.map { s =>
+      val choices = properties.map { s =>
         val document = s.file.getViewProvider.getDocument
         val line = Option(document).map(d => d.getLineNumber(math.min(s.range.getStartOffset, d.getTextLength)) + 1).getOrElse(1)
-        s"${s.namespace}.${s.name}${s.version.map(" v" + _).getOrElse("")} — ${s.file.getName}:$line"
+        DbtNavigationItem(s.element, s"${s.element.getPresentation.getPresentableText} — ${s.file.getName}:$line")
       }
-      if (labels.nonEmpty) JBPopupFactory.getInstance.createPopupChooserBuilder(labels.asJava).setTitle("dbt Properties")
-        .setItemChosenCallback((label: String) => labels.indexOf(label) match {
-          case i if i >= 0 => properties(i).element.navigate(true)
-          case _ => ()
-        }).createPopup().showInBestPositionFor(editor)
+      if (choices.nonEmpty) JBPopupFactory.getInstance.createPopupChooserBuilder(choices.asJava).setTitle("dbt Properties")
+        .setRenderer(new DbtNavigationItemRenderer).setNamerForFiltering((item: DbtNavigationItem) => item.text)
+        .setItemChosenCallback((item: DbtNavigationItem) => item.target.navigate(true))
+        .createPopup().showInBestPositionFor(editor)
     }).submit(AppExecutorUtil.getAppExecutorService)
   }
 }

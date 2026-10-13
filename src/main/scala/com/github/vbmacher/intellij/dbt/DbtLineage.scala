@@ -64,36 +64,54 @@ private[dbt] object DbtLineage {
   }
 }
 
-/** Shows both declarations and edge call sites, keeping resource and macro relationships labeled. */
+private[dbt] object DbtDependenciesAction {
+  def choices(edges: Vector[DbtDependency], selected: Set[String]): Vector[DbtNavigationItem] = {
+    Vector(true, false).flatMap { upstream =>
+      val related = edges.filter(e => if (upstream) selected(e.from.id) else selected(e.to.id))
+      val targets = related.map(e => if (upstream) e.to else e.from).distinctBy(_.id)
+      targets.zipWithIndex.flatMap { case (target, index) =>
+        val references = related.filter(e => (if (upstream) e.to else e.from).id == target.id)
+        val candidate = if (references.exists(_.ambiguous)) " (candidate)" else ""
+        val heading = if (index == 0) Some(if (upstream) "Uses" else "Used by") else None
+        Vector(DbtNavigationItem(target.element, target.element.getPresentation.getPresentableText + candidate, separator = heading)) ++
+          references.map { e =>
+            val file = e.reference.getElement
+            val range = e.reference.getRangeInElement
+            val document = file.getViewProvider.getDocument
+            val line = Option(document).map(d => d.getLineNumber(math.min(range.getStartOffset, d.getTextLength)) + 1).getOrElse(1)
+            DbtNavigationItem(DbtSymbol("call site", target.name, target.namespace, file, range).element,
+              s"${file.getName}:$line", reference = true)
+          }.distinctBy(_.target.symbol.id)
+      }
+    }
+  }
+}
+
+/** Shows resource icons with their references indented below them. */
 final class DbtDependenciesAction extends AnAction {
   override def getActionUpdateThread: com.intellij.openapi.actionSystem.ActionUpdateThread = com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
+
   override def actionPerformed(event: AnActionEvent): Unit = {
     val project = event.getProject
     val file = event.getData(CommonDataKeys.PSI_FILE)
     val editor = event.getData(CommonDataKeys.EDITOR)
     if (project == null || file == null || editor == null) return
     val offset = editor.getCaretModel.getOffset
-    com.intellij.openapi.application.ReadAction.nonBlocking(new java.util.concurrent.Callable[Vector[(String, DbtSymbolElement)]] {
-      override def call(): Vector[(String, DbtSymbolElement)] = {
+    com.intellij.openapi.application.ReadAction.nonBlocking(new java.util.concurrent.Callable[Vector[DbtNavigationItem]] {
+      override def call(): Vector[DbtNavigationItem] = {
         val w = DbtWorkspace.get(project)
         val at = DbtNavigation.at(file, offset).flatMap(_.candidates).collect { case e: DbtSymbolElement => e.symbol }
         val current = if (at.nonEmpty) at else w.symbolAt(file, offset) ++ w.symbols.filter(s => s.file == file && s.attributes.contains("code"))
         val selected = current.map(_.id).toSet
-        DbtLineage.edges(w).filter(e => selected(e.from.id) || selected(e.to.id)).flatMap { e =>
-          val parent = selected(e.from.id)
-          val target = if (parent) e.to else e.from
-          val document = e.reference.getElement.getViewProvider.getDocument
-          val line = Option(document).map(d => d.getLineNumber(math.min(e.reference.getRangeInElement.getStartOffset, d.getTextLength)) + 1).getOrElse(1)
-          Vector(s"${if (parent) "Parent" else "Child"} ${e.category}: ${target.namespace}.${target.name}${if (e.ambiguous) " (candidate)" else ""}" -> target.element,
-            s"Call site: ${e.reference.getElement.getName}:$line" ->
-              DbtSymbol("call site", target.name, target.namespace, e.reference.getElement, e.reference.getRangeInElement).element)
-        }
+        DbtDependenciesAction.choices(DbtLineage.edges(w), selected)
       }
     }).inSmartMode(project).expireWith(project).finishOnUiThread(com.intellij.openapi.application.ModalityState.defaultModalityState(),
-      (choices: Vector[(String, DbtSymbolElement)]) => {
+      (choices: Vector[DbtNavigationItem]) => {
         if (choices.isEmpty) Messages.showInfoMessage(project, "No statically resolved dependencies at this location.", "dbt Dependencies")
-        else JBPopupFactory.getInstance.createPopupChooserBuilder(choices.map(_._1).asJava)
-          .setTitle("dbt Dependencies").setItemChosenCallback((label: String) => choices.find(_._1 == label).foreach(_._2.navigate(true)))
+        else JBPopupFactory.getInstance.createPopupChooserBuilder(choices.asJava)
+          .setTitle("dbt Dependencies").setRenderer(new DbtNavigationItemRenderer)
+          .setNamerForFiltering((item: DbtNavigationItem) => item.text)
+          .setItemChosenCallback((item: DbtNavigationItem) => item.target.navigate(true))
           .createPopup().showInBestPositionFor(editor)
       }).submit(com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService)
   }
