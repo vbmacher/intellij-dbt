@@ -173,7 +173,7 @@ private[dbt] object DbtWorkspace {
     val extensions = Set("sql", "py", "yml", "yaml", "md", "csv", "json", "js")
     val result = mutable.ArrayBuffer.empty[VirtualFile]
     roots.foreach(r => VfsUtilCore.iterateChildrenRecursively(r.directory,
-      f => !r.excluded(f) && !(f.isDirectory && f != r.directory && f.findChild(ProjectFileName) != null), f => {
+      f => r.traversable(f) && !(f.isDirectory && f != r.directory && f.findChild(ProjectFileName) != null), f => {
         ProgressManager.checkCanceled()
         if (!f.isDirectory && extensions.contains(Option(f.getExtension).getOrElse(""))) result += f
         true

@@ -196,8 +196,8 @@ private object DbtSqlNavigation {
                   val relation = Option(column.getTable).filter(_.getName != null)
                     .flatMap(t => relations.get(t.getUnquotedName.toLowerCase)).orElse(if (relations.size == 1) relations.values.headOption else None)
                   val kinds = relation.flatMap(_.infoView).flatMap(InfoSchemaKinds.get)
-                  val targets = kinds.toVector.flatMap(k => w.symbols.filter(s => s.kind == k && s.name == value.getValue &&
-                    !s.isProperty && w.root(s.file).exists(r => w.namespaceVisible(root, r, qualified = false))).map(_.element))
+                  val targets = kinds.toVector.flatMap(k => w.declarations(Set(k), value.getValue, root)
+                    .filterNot(_.isProperty).map(_.element))
                   nodeTokens(value).lastOption.foreach { t =>
                     if (targets.nonEmpty) {
                       val rr = range(t)

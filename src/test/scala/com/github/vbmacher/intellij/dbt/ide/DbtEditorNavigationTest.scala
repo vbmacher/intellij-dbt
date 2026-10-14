@@ -203,6 +203,53 @@ final class DbtEditorNavigationTest extends DbtCodeInsightTestCase {
     assertNoTarget()
   }
 
+  def testExplicitlyReincludedModelInsideAnIgnoredDirectoryIsNavigable(): Unit = {
+    project()
+    val ignore = add(".dbtignore", "models/experimental/\n!models/experimental/keep.sql\n")
+    val keep = add("models/experimental/keep.sql", "select 1")
+    add("models/experimental/drop.sql", "select 2")
+    val caller = configure("models/report.sql", "{{ ref('ke<caret>ep') }} {{ ref('drop') }}")
+
+    assertTarget(keep)
+    myFixture.getEditor.getCaretModel.moveToOffset(caller.getText.indexOf("drop") + 2)
+    assertNoTarget()
+
+    edit(ignore, "models/experimental/\n")
+    myFixture.getEditor.getCaretModel.moveToOffset(caller.getText.indexOf("keep") + 2)
+    assertNoTarget()
+  }
+
+  def testWildcardReinclusionReachesFilesBelowIgnoredAncestors(): Unit = {
+    project()
+    add(".dbtignore", "models/experimental/\n!models/experimental/**/keep.sql\n")
+    val keep = add("models/experimental/nested/keep.sql", "select 1")
+    configure("models/report.sql", "{{ ref('ke<caret>ep') }}")
+
+    assertTarget(keep)
+  }
+
+  def testIgnoreNegationsCannotReincludeGeneratedOutput(): Unit = {
+    project("model-paths: [models, generated]\ntarget-path: generated\n")
+    add(".dbtignore", "models/experimental/\n!generated/**\n")
+    add("generated/orders.sql", "select 1")
+    configure("models/report.sql", "{{ ref('or<caret>ders') }}")
+
+    assertNoTarget()
+  }
+
+  def testInformationSchemaNamePredicateRespectsEnabledConfiguration(): Unit = {
+    project("models:\n  analytics:\n    +enabled: false\n")
+    add(".dbt-navigation.yml", "engine: v2\n")
+    val orders = add("models/orders.sql", "select 1")
+    configure("checks/exists.sql", "select name from {{ info_schema('models') }} where name = 'or<caret>ders'")
+
+    assertNoTarget()
+    edit(orders, "{{ config(enabled=true) }} select 1")
+    assertTarget(orders)
+    edit(orders, "{{ config(enabled=false) }} select 1")
+    assertNoTarget()
+  }
+
   def testAddingAMissingModelMakesTheExistingReferenceNavigable(): Unit = {
     project()
     configure("models/report.sql", "select * from {{ ref('or<caret>ders') }}")

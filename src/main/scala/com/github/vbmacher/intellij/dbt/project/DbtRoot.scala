@@ -112,6 +112,10 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     }
   }
 
+  /** Ignored directories may contain re-included descendants; generated paths stay pruned. */
+  def traversable(file: VirtualFile): Boolean = !excluded(file) || file.isDirectory && ignores.exists(_._1) &&
+    relative(file).exists(r => !exclusions.exists(pathContains(_, r)))
+
   def kind(file: VirtualFile): Option[String] = resourceFolders(file).map(_._1)
 
   def resource(file: PsiFile): Boolean = !excluded(file.getVirtualFile) && kind(file.getVirtualFile).nonEmpty
