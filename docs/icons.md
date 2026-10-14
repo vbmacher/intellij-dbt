@@ -18,6 +18,7 @@ separate Project-window entries.
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Editor gutter: resource/declaration lines with related targets, ambiguous references or metadata-only targets. Click for a chooser; tooltips explain ambiguity/staleness. One marker per line. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/model-dark.svg"><img src="icons/model.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/source-dark.svg"><img src="icons/source.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="table" width="20" height="20"></picture> | Source table, SQL CTE or Information Schema view | Navigation results: tables under `sources:`, SQL CTE definitions and views from selected Information Schema metadata. |

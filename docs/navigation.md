@@ -7,6 +7,16 @@ their references. See [features](../README.md#features),
 [local metadata and v2 checks](configuration.md#local-metadata), or
 [troubleshooting](troubleshooting.md) for missing or ambiguous targets.
 
+## Gutter markers
+
+Click the dbt icon beside a resource or declaration to open YAML properties, source
+definitions, or **Uses** / **Used by** and their reference locations. Macro, test and
+docs declarations show callers; unit tests link to their model and fixture files.
+
+Markers also identify references with multiple definitions or metadata-only targets;
+tooltips show ambiguity and staleness. Targets on the same line share one popup.
+Disable **dbt navigation** under **Settings → Editor → General → Gutter Icons**.
+
 ## Where references work
 
 | Location | References you can follow |

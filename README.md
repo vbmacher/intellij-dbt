@@ -26,7 +26,8 @@ See the [user guide](docs/README.md) for installation, navigation, settings and 
 - **IDE actions:** open definitions with Go to Declaration or Ctrl+Click, find
   references with Find Usages, open YAML properties with **dbt Properties**, and
   browse **Uses** / **Used by** with **dbt Dependencies**. Resource icons identify
-  target types; choosers let you select between matching definitions.
+  target types; choosers let you select between matching definitions. Gutter markers
+  offer properties, definitions, dependencies and callers beside relevant lines.
 - **dbt resources:** follow references to models, seeds, snapshots, sources and
   documentation blocks, including model versions, installed packages and public
   cross-project dependencies. Open UDF bodies, overloads and argument declarations

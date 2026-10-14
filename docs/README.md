@@ -22,6 +22,7 @@ Open a directory containing `dbt_project.yml`. Use **Ctrl+Click** or
 
 Right-click in a resource file for **dbt Properties** (YAML definitions) or
 **dbt Dependencies** (**Uses** / **Used by**, with reference locations).
+Click a [gutter marker](navigation.md#gutter-markers) for related definitions and references.
 
 The default is dbt Core 1.10. Use `.dbt-navigation.yml` to select another version
 or local metadata; most navigation needs no settings.

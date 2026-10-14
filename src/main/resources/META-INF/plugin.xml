@@ -13,6 +13,7 @@
       <ul>
         <li>Go to Declaration and Find Usages for models, sources, macros, variables, documentation and YAML properties.</li>
         <li>Browse resource properties and dependencies, including parents, children and their reference locations.</li>
+        <li>Use gutter markers to open related properties, definitions, dependencies and callers.</li>
         <li>Follow SQL CTEs, columns, macro parameters, selectors and Semantic Layer references.</li>
         <li>Use local source files and optionally selected JSON or Parquet metadata for navigation.</li>
       </ul>
@@ -29,6 +30,7 @@
       <ul>
         <li>1.0.0: Initial release with Go to Declaration and Find Usages for dbt resources, macros, variables, documentation and YAML properties.</li>
         <li>Resource properties and dependency browsing with navigation to reference locations.</li>
+        <li>Gutter navigation with ambiguity and metadata status tooltips.</li>
         <li>SQL symbol, selector and Semantic Layer navigation, with optional Python models and local JSON or Parquet metadata.</li>
       </ul>
     ]]>
@@ -64,6 +66,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
         <psi.implicitReferenceProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtImplicitReferenceProvider"/>
