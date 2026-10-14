@@ -6,7 +6,7 @@
       "include": "source.jinja"
     },
     {
-      "include": "source.yaml"
+      "include": "source.dbt-yaml"
     }
   ],
   "scopeName": "source.yaml.jinja",

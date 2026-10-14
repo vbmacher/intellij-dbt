@@ -38,6 +38,10 @@
         "path": "./syntaxes/yaml.tmLanguage.json"
       },
       {
+        "scopeName": "source.dbt-yaml",
+        "path": "./syntaxes/yaml-base.tmLanguage.json"
+      },
+      {
         "language": "dbt-markdown",
         "scopeName": "source.gfm.jinja",
         "path": "./syntaxes/markdown.tmLanguage.json"

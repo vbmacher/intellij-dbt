@@ -11,6 +11,7 @@ import com.intellij.psi.PsiFile
 import com.intellij.usages.UsageInfo2UsageAdapter
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateElementType
+import org.jetbrains.yaml.YAMLHighlighter
 import org.junit.Assert._
 
 import java.util.concurrent.{Callable, TimeUnit}
@@ -92,6 +93,46 @@ select 42 from {{ ref('orders') }} -- SQL comment
     val markdown = configure("docs/orders.md", "# Orders\n{% docs order_docs %}\n{{ var('title') }}\n{% enddocs %}<caret>")
     assertScope(markdown, "# Orders", "markup.heading")
     assertScope(markdown, "title", "string.quoted.single.jinja")
+  }
+
+  def testYamlMappingKeysAndBlockScalarsKeepYamlColors(): Unit = {
+    project()
+    val file = configure("macros/_macros.yml", """version: 2
+
+macros:
+  - name: bigquery_mirror_validate_target
+    description: >-
+      When DBT_PROJECT is bigquery_mirror, require a BigQuery adapter with target
+      dev_bq or prod_bq; otherwise raise a compiler error.
+      Reference models: {{ doc('order_docs') }}.
+
+  - name: bigquery_mirror_olap_is_int
+    description: >-
+      Return true when a value is a number with an integral value.
+    arguments:
+      - name: value
+        type: any
+        description: "Required value; {{ var('title') }}"
+        sql: |
+          select {{ var('query') }}
+        enabled: true
+<caret>""")
+    val editor = myFixture.getEditor.asInstanceOf[EditorEx]
+    val keyColor = editor.getColorsScheme.getAttributes(YAMLHighlighter.SCALAR_KEY).getForegroundColor
+    for (key <- Vector("version", "macros:", "name:", "description:", "arguments:", "type:", "sql:", "enabled:")) {
+      assertScope(file, key, "entity.name.tag.yaml")
+      val iterator = editor.getHighlighter.createIterator(file.getText.indexOf(key))
+      assertEquals(s"$key must use the YAML key color", keyColor, iterator.getTextAttributes.getForegroundColor)
+    }
+    assertScope(file, "2\n", "constant.numeric")
+    assertScope(file, "When DBT_PROJECT", "string.unquoted.block.yaml")
+    assertScope(file, "Return true", "string.unquoted.block.yaml")
+    assertScope(file, "Reference models:", "string.unquoted.block.yaml")
+    assertScope(file, "order_docs", "string.quoted.single.jinja")
+    assertScope(file, "title", "string.quoted.single.jinja")
+    assertScope(file, "select", "string.unquoted.block.yaml")
+    assertScope(file, "query')", "string.quoted.single.jinja")
+    assertScope(file, "true\n", "constant.language.yaml")
   }
 
   def testOnlyDbtResourcesAndConfigurationReceiveTheGrammar(): Unit = {

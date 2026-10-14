@@ -19,6 +19,12 @@ b62c7085304caec4ec9a36975b1e691fc33d4272:
 https://github.com/atom/language-sql
 Its MIT and original TextMate permission notices are retained in SQL-LICENSE.
 
+The YAML host grammar derives from atom/language-yaml, commit
+b0f7f6598a5be8e07f05e124dabd7869749eccc4:
+https://github.com/atom/language-yaml/blob/b0f7f6598a5be8e07f05e124dabd7869749eccc4/grammars/yaml.cson
+It was mechanically converted from CSON to JSON with cson-parser 4.0.9.
+Its MIT license is retained in YAML-LICENSE.
+
 Local adaptations:
 
 - Private dbt grammar extensions avoid global .sql/.yml/.md associations.
@@ -26,7 +32,10 @@ Local adaptations:
 - SQL strings and comments permit embedded Jinja; string fast paths exclude
   template openings.
 - YAML/Markdown templates include Jinja injections inside host-language scopes.
+- YAML uses a private host grammar scope without file associations. The bundled
+  IntelliJ YAML grammar uses variable-length lookbehind unsupported by its Joni
+  regex engine, which causes mapping keys to fall through to string scopes.
 - Markdown references IntelliJ's bundled text.html.markdown scope.
 
-Host YAML/Markdown grammars and TextMate's engine come from IntelliJ's bundled
+The Markdown host grammar and TextMate's engine come from IntelliJ's bundled
 TextMate plugin and are not redistributed here.
