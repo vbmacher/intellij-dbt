@@ -1,0 +1,106 @@
+# Lineage, documentation and dbt Runner
+
+[User guide](README.md) · [Settings](configuration.md#workspace-and-runner-settings)
+
+Open **View → Tool Windows → dbt**. The bottom tool window contains **Lineage**,
+**Runner**, and **Status** tabs. Browsing and navigation work from source files and
+existing artifacts without running dbt. Execution starts only from a command button.
+
+## Lineage and documentation sidebar
+
+The graph follows the active model. Cards represent models, sources, seeds,
+snapshots and exposures, with upstream → downstream arrows. Tests appear in docs.
+
+- Single click selects documentation and dims unrelated resources.
+- Double click focuses that resource and opens its definition. Drag a card to rearrange it.
+- Drag empty space to pan; use the wheel or **+ / −** to zoom, and **Fit** to recenter.
+- Search by resource/package name; **Clear search** restores the selected resource's neighborhood.
+- **+ N more** expands another five levels in that direction, keeping the same focus.
+- **Docs** shows the sidebar; **×** hides it. Drag its divider to resize.
+- **Regenerate Docs** uses the same command lifecycle as Runner → **Generate Docs**.
+
+The sidebar has **Columns**, **Tests**, **SQL**, and **Metadata** tabs. Descriptions
+scroll independently and can expand. SQL preserves whitespace and scrolls horizontally.
+Source/YAML descriptions and columns take precedence; compatible manifest/catalog
+metadata fills gaps. Compiled SQL is shown only when available. Keys, constraints
+and tests are labeled as declarations, never as verified warehouse constraints or
+passing results. Resources without SQL/columns show explicit empty states.
+
+Settings control depth, direction, connectors, exposures and automatic opening.
+Theme, source and artifact updates refresh the view; the same graph focus preserves
+zoom/pan. Ambiguous declarations remain distinct candidates. The graph uses bundled
+Cytoscape.js/dagre assets; it makes no CDN requests. If JCEF is unavailable, use the
+bundled JetBrains Runtime with JCEF. Runner and **dbt Dependencies** remain usable.
+
+## Native hover and warnings
+
+Hover a `ref()` model argument, `source()` table argument, or macro name, or invoke
+**Quick Documentation**. Native hover can be enabled under **Editor → Code Editing →
+Show quick documentation on hover**. Existing Ctrl+hover still navigates the exact
+reference name. Popups show at most 15 columns and eight entries in each dependency
+direction, with counts; the sidebar has the full lists.
+
+Unresolved static `ref()` / `source()` calls have warning ranges on their arguments.
+Unknown sources and unknown tables are distinguished. Dynamic names, incomplete
+calls, comments, ordinary SQL strings, ambiguous candidates and unavailable configured
+metadata do not produce missing-resource claims. Warnings update after edits and file
+changes. Source-only resolution cannot prove runtime macro behavior or warehouse state.
+
+## Runner
+
+Toolbar order: **Target | Run | Build | Full Refresh | Test | Compile | Preview |
+Generate Docs | Clear | Stop**. Current model and target appear below it.
+
+| Button | Command |
+| --- | --- |
+| Run / Build / Test / Compile | `dbt <command> --select fqn:<package>.[<folders>.]<model>[.v<version>]` |
+| Preview | `dbt show --select <model> --limit N --output json` |
+| Preview with nonblank SQL selection | `dbt show --inline <selection> --limit N --output json` |
+| Generate Docs | `dbt docs generate` |
+
+Selected SQL takes precedence, including when the file has no resolved model.
+**Full Refresh** appears only for incremental models and affects Run/Build. It resets
+when the current model changes. Commands save documents and use argument vectors,
+so multiline SQL and paths with spaces remain single arguments.
+
+The log streams stdout/stderr, renders ANSI colors, and records completion/exit codes.
+**Clear** clears the log and preview; **Stop** cancels the active process. Only one
+command can run at a time, including graph regeneration. Preview results appear as
+an aligned table beneath the log; nulls and empty results are explicit. Ordinary log
+text can soft-wrap using the console's normal soft-wrap control; preview tables stay
+unwrapped. Success/failure produces IDE notifications and, when enabled and supported
+by the OS, native notifications. Cancellation is reported separately.
+
+Successful Run/Build/Compile/Generate Docs refreshes artifacts. **Status** shows the
+executable, available manifest CLI version, target/adapter, model, resource count,
+artifact errors and timestamps. It never executes a version probe merely to open a tab.
+
+The command surface follows dbt Core 1.5+ (`dbt show`/JSON preview) and installed
+adapter support; navigation artifact schemas remain manifest v9–v12/catalog v1.
+The upstream [`dbt show` command](https://docs.getdbt.com/reference/commands/show) does not support Python models.
+Earlier CLIs, unsupported Fusion command/flag combinations and adapter-specific failures
+are reported through CLI output. The plugin does not install dbt, profiles or adapters.
+A fake executable validates argument/process behavior without warehouse access. Native
+OS delivery and actual warehouse/adapter execution need checks on the user's platform.
+
+## SQL clipboard conversion
+
+**Copy for Target DB**: Ctrl+Shift+C (Cmd+Shift+C on macOS), also in Edit and the
+editor context menu. Copies a selection or the whole document without changing it.
+Static `ref()`, `source()` and `this` use the manifest's physical `relation_name`,
+including aliases, source identifiers and adapter quoting. Remaining Jinja is wrapped
+in marked SQL block comments. This is reference conversion, not full compilation.
+
+**Paste as dbt Refs**: Ctrl+Shift+V (Cmd+Shift+V on macOS). Replaces the selection
+or inserts at the caret as one undoable command. Parsed table references with two or
+three parts become refs/sources only when they uniquely match physical metadata.
+Packages and explicit versions are retained. Strings, comments, alias-column
+qualifiers and unknown/ambiguous relations stay unchanged. Deliberately marked Jinja
+comments from Copy are restored; ordinary SQL comments are preserved. SQL dialects
+that the bundled parser cannot read are left unchanged.
+
+Run **Generate Docs** for the selected project/target before clipboard conversion.
+The Runner records provenance for the exact manifest bytes in `.dbt-workspace-context`
+beside the manifest. Changed targets or externally replaced manifests require regeneration;
+conversion warns before modifying clipboard/document when provenance is unavailable.
+Shortcuts can conflict with IDE keymaps; remap the named actions under **Settings → Keymap**.

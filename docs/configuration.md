@@ -6,7 +6,7 @@ Most navigation needs no settings. Create **`.dbt-navigation.yml`** at the dbt
 project root to select a version, profile, overrides or metadata. Paths are relative
 to that root. This file configures the plugin and is not passed to dbt.
 
-Install packages and generate artifacts with your dbt tools; the plugin only reads them.
+Install packages with your dbt tools. Existing artifacts load locally; the Runner can regenerate them.
 
 ## Settings reference
 
@@ -203,3 +203,32 @@ Runtime tables, variable values and arbitrary Parquet are not navigation sources
 
 See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
 and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
+
+## Workspace and runner settings
+
+Open **Settings → dbt Workspace** to configure each owning dbt root independently:
+
+| Setting | Default |
+| --- | --- |
+| Executable | `dbt`; discover `.venv` / `venv` first |
+| Project root override | Owning directory containing `dbt_project.yml` |
+| Profiles directory | `DBT_PROFILES_DIR`, project-local `profiles.yml`, then `~/.dbt` |
+| Artifact directory | `target` |
+| Active target | Selected profile's default target |
+| Preview rows | 10 (1–1000) |
+| Colored output / native notifications | Enabled |
+| Upstream / downstream graph depth | 5 / 5 (each 1–20) |
+| Layout / edges | Left-to-right / `round-taxi` |
+| Exposures / automatic tool-window opening | Shown / disabled |
+
+Graph directions are `LR`, `TB`, `RL`, `BT`; edge options are `bezier`, `taxi`,
+`round-taxi`, `segments`, `straight`, `unbundled-bezier`, `haystack`. Settings persist
+in the IDE project. The Runner target selector lists outputs of the profile named
+in that root's `dbt_project.yml`. A blank target uses the profile default. Jinja in
+profiles is not evaluated by the plugin; the CLI evaluates it when executing.
+
+Existing `manifest.json` and `catalog.json` in the artifact directory load automatically.
+Explicit `.dbt-navigation.yml` artifact paths still select additional metadata. Keep
+the selected manifest and Runner artifact directory consistent when using both.
+The Runner passes `DBT_TARGET_PATH` and `DBT_PROFILES_DIR` to the child process and
+adds the active `--target` to every command.

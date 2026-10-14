@@ -1,0 +1,103 @@
+package com.github.vbmacher.intellij.dbt.ide
+
+import com.intellij.execution.impl.ConsoleViewImpl
+import com.intellij.openapi.util.Disposer
+import com.intellij.testFramework.PlatformTestUtil
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.google.gson.JsonParser
+import org.junit.Assert._
+import java.nio.file.{Files, Path}
+import scala.collection.mutable.ArrayBuffer
+import scala.jdk.CollectionConverters._
+
+final class DbtRunnerProcessTest extends BasePlatformTestCase {
+  private def fake(directory: Path): Path = {
+    val executable = directory.resolve("fake dbt")
+    Files.writeString(executable, """#!/usr/bin/python3
+import json,os,sys,time
+with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'cwd':os.getcwd(),'target':os.environ.get('DBT_TARGET_PATH'),'profiles':os.environ.get('DBT_PROFILES_DIR'),'pid':os.getpid()},f)
+print('\x1b[31mstreamed output\x1b[0m',flush=True)
+if '--hold' in sys.argv:
+ while not os.path.exists('release'): time.sleep(.02)
+if 'show' in sys.argv: print(json.dumps({'preview':json.dumps([{'id':1,'name':None}])}),flush=True)
+sys.exit(7 if '--fail' in sys.argv else 0)
+""")
+    executable.toFile.setExecutable(true); executable
+  }
+  private def await(message: String)(condition: => Boolean): Unit = PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
+  private def setup(): (DbtRunner, Path, Path, ArrayBuffer[DbtRunnerEvent]) = {
+    val directory = Files.createTempDirectory("dbt runner with spaces ")
+    val runner = new DbtRunner(getProject)
+    Disposer.register(getTestRootDisposable, runner)
+    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(directory.toFile))
+    runner.console.getComponent
+    val events = ArrayBuffer.empty[DbtRunnerEvent]
+    runner.listen(getTestRootDisposable, e => events += e)
+    (runner, directory, fake(directory), events)
+  }
+  private def command(directory: Path, executable: Path, args: Vector[String]): DbtCommand =
+    DbtCommand(executable.toString +: args, directory.toString, Map("DBT_TARGET_PATH" -> directory.resolve("artifacts with spaces").toString,
+      "DBT_PROFILES_DIR" -> directory.resolve("profiles with spaces").toString), if (args.contains("show")) "Preview" else "Run", "dev", notifySystem = false, directory.resolve("target").toString)
+
+  def testProcessStreamsAnsiBeforeExitAndKeepsArgumentVectorCwdAndEnvironment(): Unit = {
+    val (runner, directory, executable, events) = setup()
+    val sql = "select 'path with spaces'\nfrom db.schema.orders"
+    assertTrue(runner.start(command(directory, executable, Vector("show", "--inline", sql, "--target", "dev", "--hold"))))
+    assertFalse("A second toolbar/regeneration command must not start", runner.start(command(directory, executable, Vector("run"))))
+    await("Output streams before completion") { runner.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText.contains("streamed output") }
+    assertTrue(runner.isRunning)
+    val text = runner.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText
+    assertFalse(text.contains("\u001b[31m"))
+    val invocation = JsonParser.parseString(Files.readString(directory.resolve("invocation.json"))).getAsJsonObject
+    assertEquals(Vector("show", "--inline", sql, "--target", "dev", "--hold"), invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector)
+    assertEquals(directory.toString, invocation.get("cwd").getAsString)
+    assertTrue(invocation.get("profiles").getAsString.endsWith("profiles with spaces"))
+    assertTrue(invocation.get("target").getAsString.endsWith("artifacts with spaces"))
+    Files.writeString(directory.resolve("release"), "")
+    await("Command completes") { !runner.isRunning }
+    assertTrue(events.last.message.contains("exit 0")); assertTrue(events.last.preview.exists(_.contains("null")))
+  }
+
+  def testFailureAndLaunchErrorReturnToIdleWithUsefulMessages(): Unit = {
+    val (runner, directory, executable, events) = setup()
+    assertTrue(runner.start(command(directory, executable, Vector("run", "--fail"))))
+    await("Failed command returns idle") { !runner.isRunning }
+    assertTrue(events.last.message.contains("exit 7")); assertFalse(events.last.refresh)
+    assertTrue(runner.start(command(directory, directory.resolve("missing-dbt"), Vector("run"))))
+    await("Launch failure returns idle") { !runner.isRunning }
+    assertTrue(events.last.message.contains("Cannot launch dbt"))
+  }
+
+  def testStopAndDisposalTerminateProcessAndNeverReportSuccess(): Unit = {
+    val (runner, directory, executable, events) = setup()
+    assertTrue(runner.start(command(directory, executable, Vector("run", "--hold"))))
+    await("Fake dbt started") { Files.exists(directory.resolve("invocation.json")) }
+    runner.stop()
+    await("Cancellation restores idle controls") { !runner.isRunning }
+    assertEquals("Run cancelled", events.last.message); assertFalse(events.last.refresh)
+    Files.delete(directory.resolve("invocation.json"))
+    assertTrue(runner.start(command(directory, executable, Vector("run", "--hold"))))
+    await("Second fake dbt started") { Files.exists(directory.resolve("invocation.json")) }
+    val pid = JsonParser.parseString(Files.readString(directory.resolve("invocation.json"))).getAsJsonObject.get("pid").getAsLong
+    Disposer.dispose(runner)
+    await("Disposal terminates the process") { !ProcessHandle.of(pid).map[java.lang.Boolean](p => Boolean.box(p.isAlive)).orElse(false).booleanValue() }
+  }
+  def testNativeNotificationPreferenceAndCancellationUsePlatformApi(): Unit = {
+    val delivered = ArrayBuffer.empty[String]
+    val system = new com.intellij.ui.SystemNotifications {
+      override def notify(name: String, title: String, text: String): Unit = { delivered += text; () }
+    }
+    val (_, directory, executable, _) = setup()
+    val enabled = command(directory, executable, Vector("run")).copy(notifySystem = true)
+    DbtNotifications.publish(getProject, enabled, "Run finished (exit 0)", success = true, wasCancelled = false, system)
+    assertTrue(delivered.last.contains("exit 0"))
+    DbtNotifications.publish(getProject, enabled, "Run finished (exit 7)", success = false, wasCancelled = false, system)
+    assertTrue(delivered.last.contains("exit 7"))
+    DbtNotifications.publish(getProject, enabled, "Run cancelled", success = false, wasCancelled = true, system)
+    assertEquals("Run cancelled", delivered.last)
+    val count = delivered.size
+    DbtNotifications.publish(getProject, enabled.copy(notifySystem = false), "Run finished (exit 0)", success = true, wasCancelled = false, system)
+    assertEquals(count, delivered.size)
+  }
+
+}

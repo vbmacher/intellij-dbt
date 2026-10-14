@@ -56,7 +56,7 @@ Template `import`, `from`, `include` and `extends` have no target in standard db
 
 ## Feature boundaries
 
-The plugin navigates local source and selected metadata. It does not execute code,
-download packages or remote metadata, query warehouses, or provide
-completion, data previews or Rename refactoring. Use your dbt tools for execution,
-dependencies and artifacts.
+Navigation and documentation browse local source and metadata. The [Runner](workspace.md#runner)
+executes the configured local dbt CLI when a command button is clicked. Install dbt,
+adapters and dependencies with your environment tools. Autocompletion and Rename
+refactoring are outside the plugin's scope.

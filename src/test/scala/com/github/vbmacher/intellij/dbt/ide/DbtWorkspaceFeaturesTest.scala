@@ -121,6 +121,34 @@ sources:
     assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20, exposures = true).targets.size)
   }
 
+  def testRunnerCommandsKeepVersionTargetCwdAndInlineSqlIntact(): Unit = {
+    documentedProject()
+    val w = workspace; val root = w.roots.head
+    val model = resource("orders").copy(version = Some("2"))
+    DbtCommand.Actions.foreach { action =>
+      val command = DbtCommand.create(root, Some(model), action, "", fullRefresh = true).toOption.get
+      assertEquals(root.directory.getPath, command.directory)
+      assertTrue(command.environment("DBT_PROFILES_DIR").endsWith(root.directory.getPath))
+      assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "dev")))
+      assertEquals(Set("Run", "Build")(action), command.arguments.contains("--full-refresh"))
+      if (action != "Generate Docs") assertTrue(command.arguments.contains("fqn:analytics.orders.v2"))
+    }
+    val sql = "select 'path with spaces';\nselect 2"
+    val inline = DbtCommand.create(root, None, "Preview", sql, fullRefresh = true).toOption.get
+    assertTrue(inline.arguments.sliding(2).exists(_ == Vector("--inline", sql)))
+    assertFalse(inline.arguments.contains("--select")); assertFalse(inline.arguments.contains("--full-refresh"))
+    assertTrue(DbtCommand.create(root, None, "Run", sql, fullRefresh = false).isLeft)
+  }
+
+  def testPreviewFormatsColumnsNullAndNoData(): Unit = {
+    assertEquals("No data returned.", DbtPreview.format("log\n{\"preview\":\"[]\"}\n"))
+    val table = DbtPreview.format("log\n{\"preview\":\"[{\\\"id\\\":1,\\\"name\\\":null},{\\\"id\\\":2,\\\"name\\\":\\\"Alice\\\"}]\"}\n")
+    assertTrue(table.contains("id | name")); assertTrue(table.contains("null")); assertTrue(table.contains("Alice"))
+    val actualDbtOutput = "12:00:00 Running with dbt=1.10.0\n{\n  \"node\": \"orders\",\n  \"show\": [\n    {\"ID\": 1, \"NAME\": null}\n  ]\n}\n"
+    assertTrue(DbtPreview.format(actualDbtOutput).contains("NAME"))
+    assertEquals("No data returned.", DbtPreview.format("logs\n{\n \"show\": []\n}\n"))
+  }
+
   def testWarningsUseExactRangesAndIgnoreCommentStringDynamicAndPartialCalls(): Unit = {
     project()
     add("models/sources.yml", "sources: [{name: raw, tables: [{name: events}]}]\n")
@@ -229,6 +257,22 @@ select * from {{ source('raw', 'missing_table') }}
     }
   }
 
+  def testRunnerUsesFullNestedFqnAndConsumingProjectForPackageModels(): Unit = {
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: duckdb}}}\n")
+    add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    val modelFile = add("dbt_packages/util/models/staging/orders.sql", "select 1")
+    val w = workspace
+    val owner = w.root(modelFile).get
+    val consuming = w.executionRoot(owner)
+    assertEquals("analytics", consuming.name)
+    val model = w.codeSymbols(modelFile).head
+    val command = DbtCommand.create(consuming, Some(model), "Run", "", fullRefresh = false).toOption.get
+    assertTrue(command.arguments.contains("fqn:util.staging.orders"))
+    assertEquals(consuming.directory.getPath, command.directory)
+    assertEquals("dev", command.target)
+  }
+
   def testUnresolvedInspectionUsesConfiguredSeverity(): Unit = {
     project()
     configure("models/report.sql", "{{ ref('mis<caret>sing') }}")
@@ -243,6 +287,35 @@ select * from {{ source('raw', 'missing_table') }}
       assertEquals(1, warnings.size)
       assertEquals(com.intellij.lang.annotation.HighlightSeverity.ERROR, warnings.head.getSeverity)
     } finally profile.setErrorLevel(key, previous, getProject)
+  }
+
+  def testChangingRunnerTargetRefreshesExistingNavigationReferences(): Unit = {
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {schema: development}\n    prod: {schema: production}\n")
+    val file = configure("models/report.sql", "select {{ target.sch<caret>ema }}")
+    def current = DbtNavigation.at(file, myFixture.getCaretOffset).flatMap(_.candidates).map(_.getText).mkString
+    assertTrue(current.contains("development"))
+    val settings = DbtProjectSettings.get(getProject)
+    settings.options(workspace.roots.head.directory.getPath).target = "prod"
+    settings.changed()
+    assertTrue(current.contains("production"))
+  }
+
+  def testRunnerResolvesTheClickedFileRatherThanAnOlderToolbarContext(): Unit = {
+    project()
+    val oldFile = add("models/orders.sql", "{{ config(materialized='incremental') }} select 1")
+    add("other/dbt_project.yml", "name: marketing\nconfig-version: 2\nprofile: marketing\n")
+    add("other/profiles.yml", "marketing: {target: prod, outputs: {prod: {type: duckdb}}}\n")
+    val current = add("other/models/orders.sql", "{{ config(materialized='incremental') }} select 2")
+    val w = workspace
+    val oldModel = w.codeSymbols(oldFile).head
+    val command = DbtCommand.forFile(w, current, "Run", "", Some(oldModel.id)).toOption.get
+    assertTrue(command.arguments.contains("fqn:marketing.orders"))
+    assertEquals("prod", command.target)
+    assertTrue(command.directory.endsWith("/other"))
+    assertFalse(command.arguments.contains("--full-refresh"))
+    val scratch = add("scratch.sql", "select 3")
+    assertTrue(DbtCommand.forFile(DbtWorkspace.get(getProject), scratch, "Preview", "select 3", None).isRight)
   }
 
   def testConfiguredArtifactDirectoryRemainsExcludedFromSourceResources(): Unit = {

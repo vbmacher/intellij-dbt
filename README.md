@@ -2,7 +2,7 @@
 
 [![Build](https://img.shields.io/github/actions/workflow/status/vbmacher/intellij-dbt/build.yml?branch=main&style=flat-square)](https://github.com/vbmacher/intellij-dbt/actions?query=branch%3Amain) [![License](https://img.shields.io/github/license/vbmacher/intellij-dbt?style=flat-square)](LICENSE)
 
-An IntelliJ IDEA plugin for [dbt](https://www.getdbt.com/) declaration navigation and Find Usages.
+An IntelliJ IDEA plugin for [dbt](https://www.getdbt.com/) navigation, documentation, lineage and local dbt execution.
 
 Works in **IntelliJ IDEA Community Edition**, including SQL files opened as plain text.
 The bundled YAML plugin is required. SQL navigation does not require Ultimate or
@@ -41,9 +41,10 @@ See the [navigation guide](docs/navigation.md),
 [configuration reference](docs/configuration.md) and [icon legend](docs/icons.md)
 for details and version requirements. The default is dbt Core 1.10.
 
-This plugin provides source navigation and Find Usages. It does not run dbt or
-query a warehouse, and does not provide completion, data previews
-or Rename refactoring.
+Open the bottom **dbt** tool window for interactive lineage, a documentation sidebar,
+model commands and SQL previews. Native hover, missing-reference warnings and
+Copy for Target DB / Paste as dbt Refs are described in the [workspace guide](docs/workspace.md).
+Autocompletion and Rename refactoring are outside this plugin.
 
 ## Development
 
@@ -89,6 +90,17 @@ sbt 'set pluginVerifierOptions := pluginVerifierOptions.value.copy(overrideIDEs 
 ```
 
 Check that the output includes a completed verification and a report for each IDE.
+
+The lineage renderer's browser interaction tests use an installed Playwright/Chromium:
+
+```bash
+node --test src/test/js/lineage.test.cjs
+# Set DBT_CHROMIUM to an existing Chromium executable if Playwright has no browser installed.
+```
+
+Bundled graph-library versions and licenses are in
+[`src/main/resources/lineage/vendor`](src/main/resources/lineage/vendor/NOTICE.md).
+
 
 ### Architecture
 

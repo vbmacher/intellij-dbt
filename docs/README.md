@@ -13,7 +13,7 @@ To install a locally built distribution:
 
 1. Build the ZIP with JDK 25 and `sbt packageArtifactZip` from the repository root.
 2. Open **Settings → Plugins**, select the gear menu, then **Install Plugin from Disk**.
-3. Choose `target/intellij-dbt-1.0.0.zip` and restart the IDE if prompted.
+3. Choose `target/intellij-dbt-1.1.0.zip` and restart the IDE if prompted.
 
 ## First navigation
 
@@ -32,9 +32,11 @@ or local metadata; most navigation needs no settings.
 
 - [Features](../README.md#features)
 - [Navigation](navigation.md): supported references and examples
+- [Lineage, documentation and Runner](workspace.md): controls, previews and SQL clipboard conversion
 - [Configuration](configuration.md): project scope, versions, overrides and metadata
 - [Icon legend](icons.md): resource icons in the editor and Project window
 - [Troubleshooting and limits](troubleshooting.md)
 
-Use your dbt tools to install packages, run projects and generate artifacts.
-The plugin reads local files; it does not run dbt or query a warehouse.
+Install dbt, its adapters and packages using your environment tools. Use the **dbt**
+tool window to run commands and generate docs; navigation and documentation browsing
+remain available without CLI execution.

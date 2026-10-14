@@ -22,7 +22,8 @@
       SQL navigation works with plain-text files and does not require Database Tools.
       Enable the bundled TextMate Bundles plugin for syntax highlighting.
       Python model navigation additionally requires the free Python Community Edition plugin.</p>
-      <p>The plugin provides highlighting, navigation and Find Usages; it does not execute dbt or query a warehouse.</p>
+      <p>Browse interactive lineage and documentation in the dbt tool window, run model commands and SQL previews,
+      inspect native hover documentation and unresolved-reference warnings, and convert SQL relations with Copy for Target DB / Paste as dbt Refs.</p>
       <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/README.md">User guide</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt">Source code</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt/issues">Issue tracker</a></p>
@@ -30,6 +31,7 @@
 
     <change-notes><![CDATA[
       <ul>
+        <li>1.1.0: Interactive lineage, documentation sidebar and native hover, dbt Runner and previews, unresolved-reference warnings, SQL clipboard conversion.</li>
         <li>1.0.0: Initial release with Go to Declaration and Find Usages for dbt resources, macros, variables, documentation and YAML properties.</li>
         <li>Resource properties and dependency browsing with navigation to reference locations.</li>
         <li>Gutter navigation with ambiguity and metadata status tooltips.</li>
@@ -74,7 +76,9 @@
         <platform.backend.documentation.targetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtDocumentationTargetProvider"/>
         <externalAnnotator language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedAnnotator"/>
         <localInspection language="" shortName="DbtUnresolvedReference" displayName="Unresolved dbt reference" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedReferenceInspection"/>
+        <notificationGroup id="dbt Workspace" displayType="BALLOON" isLogByDefault="true"/>
         <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
+        <toolWindow id="dbt" anchor="bottom" factoryClass="com.github.vbmacher.intellij.dbt.ide.DbtToolWindowFactory" icon="/icons/dbt/table.svg"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
