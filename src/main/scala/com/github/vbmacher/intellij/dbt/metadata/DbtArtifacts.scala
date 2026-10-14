@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.metadata
 
 import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtDependencySource}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigationReference
-import com.github.vbmacher.intellij.dbt.project.{DbtDeclarationSource, DbtSymbol, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtColumnData, DbtDeclarationSource, DbtResourceData, DbtRoot, DbtSymbol, DbtTestData, DbtWorkspace}
 import com.intellij.json.psi._
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.search.{PsiSearchScopeUtil, SearchScope}
@@ -17,10 +17,33 @@ private[metadata] final class DbtArtifactSource extends DbtDeclarationSource wit
 
   override def dependencies(workspace: DbtWorkspace, scope: Option[SearchScope]): Vector[DbtDependency] =
     DbtArtifacts.dependencies(workspace, scope)
+
+  override def inputs(workspace: DbtWorkspace): Vector[com.intellij.openapi.vfs.VirtualFile] = workspace.roots.flatMap(r =>
+    Vector("manifest", "state-manifest", "catalog").flatMap(r.setting).flatMap(r.psiFile).map(_.getVirtualFile))
+
+  override def documentation(workspace: DbtWorkspace, symbol: DbtSymbol): Option[DbtResourceData] =
+    DbtArtifacts.documentation(workspace, symbol)
+
+  override def canReportMissing(workspace: DbtWorkspace, root: DbtRoot): Boolean = DbtArtifacts.canReportMissing(root)
+
+  override def artifactStatus(root: DbtRoot): Vector[String] = DbtArtifacts.status(root)
 }
 
 /** Only user-selected local artifacts are read; editor source remains authoritative. */
 private object DbtArtifacts {
+  def status(root: DbtRoot): Vector[String] = Vector("manifest", "catalog").map { kind =>
+    val file = root.setting(kind).flatMap(root.psiFile)
+    if (file.isEmpty) s"$kind unavailable. Generate Docs or check the artifact directory."
+    else top(root, kind).fold(s"$kind malformed or unsupported schema. Regenerate Docs or select a supported artifact.") { obj =>
+      val metadata = property(obj, "metadata").collect { case m: JsonObject => m }
+      s"$kind loaded: ${file.get.getVirtualFile.getPath}; generated: ${metadata.flatMap(text(_, "generated_at")).getOrElse("unknown")}" +
+        s"; dbt: ${metadata.flatMap(text(_, "dbt_version")).getOrElse("unknown")}; adapter: ${metadata.flatMap(text(_, "adapter_type")).getOrElse("unknown")}"
+    }
+  }
+  def canReportMissing(root: DbtRoot): Boolean = {
+    val explicit = root.settings.flatMap(com.github.vbmacher.intellij.dbt.syntax.DbtYaml.string(_, "manifest")).nonEmpty
+    (!explicit && root.setting("manifest").flatMap(root.psiFile).isEmpty) || top(root, "manifest").nonEmpty
+  }
   private def property(obj: JsonObject, name: String): Option[JsonValue] = Option(obj.findProperty(name)).flatMap(p => Option(p.getValue))
 
   private def text(obj: JsonObject, name: String): Option[String] = property(obj, name).collect {
@@ -37,6 +60,51 @@ private object DbtArtifacts {
     case xs: JsonArray => xs.getValueList.asScala.toVector.collect { case s: JsonStringLiteral => s.getValue }
   }.getOrElse(Vector.empty)
 
+  private def top(root: DbtRoot, setting: String): Option[JsonObject] = root.setting(setting).flatMap(root.psiFile).collect {
+    case json: JsonFile => json
+  }.filterNot(com.intellij.psi.util.PsiTreeUtil.hasErrorElements).flatMap(f => Option(f.getTopLevelValue)).collect { case o: JsonObject => o }.filter { o =>
+    val schema = property(o, "metadata").collect { case m: JsonObject => m }.flatMap(text(_, "dbt_schema_version"))
+    schema.exists(s => if (setting == "catalog") s == "https://schemas.getdbt.com/dbt/catalog/v1.json"
+      else s.matches("https://schemas\\.getdbt\\.com/dbt/manifest/v(9|10|11|12)\\.json"))
+  }
+
+  def documentation(w: DbtWorkspace, s: DbtSymbol): Option[DbtResourceData] = w.owner(s).map { owner =>
+    val root = w.packageOwner(owner).getOrElse(owner)
+    Vector("manifest", "catalog").foldLeft(DbtResourceData()) { (data, setting) =>
+      val artifact = top(root, setting)
+      val entries = artifact.toVector.flatMap(o => Vector("nodes", "sources", "macros", "exposures").flatMap(objects(o, _)))
+      entries.find(e => text(e, "unique_id").contains(s.uniqueId)).fold(data) { entry =>
+        val config = property(entry, "config").collect { case c: JsonObject => c }
+        val catalogMetadata = property(entry, "metadata").collect { case c: JsonObject => c }
+        val attrs = Vector("database", "schema", "alias", "identifier", "relation_name", "original_file_path", "patch_path", "package_name", "version")
+          .flatMap(k => text(entry, k).orElse(catalogMetadata.flatMap(text(_, k))).map(k -> _)).toMap ++
+          config.toVector.flatMap(_.getPropertyList.asScala).flatMap(p => Option(p.getValue).map(v => p.getName -> (v match {
+            case str: JsonStringLiteral => str.getValue
+            case _ => v.getText
+          }))) ++ property(entry, "fqn").map(v => "fqn" -> v.getText) ++
+          artifact.flatMap(property(_, "metadata")).collect { case m: JsonObject => m }.toVector.flatMap(m =>
+            Vector("generated_at", "adapter_type", "dbt_version").flatMap(k => text(m, k).map(k -> _)))
+        val deps = property(entry, "depends_on").collect { case d: JsonObject => strings(d, "nodes") }.getOrElse(Vector.empty)
+        val tests = artifact.toVector.flatMap(objects(_, "nodes")).filter(e => text(e, "resource_type").contains("test") &&
+          property(e, "depends_on").collect { case d: JsonObject => strings(d, "nodes").contains(s.uniqueId) }.contains(true))
+          .map { t =>
+            val generic = property(t, "test_metadata").collect { case m: JsonObject => m }
+            val name = generic.flatMap(text(_, "name")).map(n => generic.flatMap(text(_, "namespace")).filter(_.nonEmpty).map(_ + ".").getOrElse("") + n)
+              .orElse(text(t, "name")).getOrElse("test")
+            DbtTestData(name, text(t, "column_name").getOrElse(""))
+          }
+        data.enrich(DbtResourceData(text(entry, "description").orElse(catalogMetadata.flatMap(text(_, "comment"))).getOrElse(""), objects(entry, "columns").flatMap { c =>
+          text(c, "name").map(n => DbtColumnData(n, text(c, "data_type").orElse(text(c, "type")).getOrElse(""),
+            text(c, "description").orElse(text(c, "comment")).getOrElse(""), objects(c, "constraints").flatMap(text(_, "type"))))
+        }, tests, strings(entry, "tags"), attrs ++ Map("artifact-project" -> root.directory.getPath,
+          "artifact-target" -> root.runtimeSetting("target").getOrElse("")),
+          text(entry, "raw_code").orElse(text(entry, "raw_sql")), text(entry, "compiled_code").orElse(text(entry, "compiled_sql")),
+          objects(entry, "arguments").flatMap(a => text(a, "name").map(n => DbtColumnData(n,
+            text(a, "type").getOrElse(""), text(a, "description").getOrElse("")))), deps))
+      }
+    }
+  }
+
   def symbols(workspace: DbtWorkspace): Vector[DbtSymbol] = workspace.roots.flatMap { root =>
     Vector("manifest", "state-manifest", "catalog").flatMap { setting =>
       root.setting(setting).toVector.flatMap { path =>
@@ -46,7 +114,7 @@ private object DbtArtifacts {
             val schema = metadata.flatMap(text(_, "dbt_schema_version"))
             val valid = schema.exists(s => if (setting == "catalog") s == "https://schemas.getdbt.com/dbt/catalog/v1.json"
             else s.matches("https://schemas\\.getdbt\\.com/dbt/manifest/v(9|10|11|12)\\.json"))
-            if (!valid) Vector.empty else {
+            if (!valid || com.intellij.psi.util.PsiTreeUtil.hasErrorElements(file)) Vector.empty else {
               val generated = metadata.flatMap(text(_, "generated_at")).flatMap(s => Try(Instant.parse(s).toEpochMilli).toOption)
               val stale = workspace.outdated(root, generated)
               val entries = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks")
@@ -97,8 +165,10 @@ private object DbtArtifacts {
 
   /** Dependencies recorded by artifact nodes, resolved to the declarations visible from their project. */
   def dependencies(w: DbtWorkspace, scope: Option[SearchScope]): Vector[DbtDependency] =
-    w.symbols.filter(s => s.metadata && scope.forall(PsiSearchScopeUtil.isInScope(_, s.file))).flatMap { from =>
-      from.attributes.get("dependencies").toVector.flatMap(_.split(",")).filter(_.nonEmpty).flatMap { id =>
+    w.symbols.filter(s => (s.metadata || DbtResourceData.GraphKinds(s.kind)) && !s.isProperty && scope.forall(PsiSearchScopeUtil.isInScope(_, s.file))).flatMap { from =>
+      val recorded = from.attributes.get("dependencies").toVector.flatMap(_.split(","))
+      val ids = if (from.metadata) recorded else DbtResourceData.get(w, from).dependencies
+      ids.filter(_.nonEmpty).flatMap { id =>
         val targets = w.owner(from).toVector.flatMap(r => w.symbols.filter(s => s.uniqueId == id && s.kind != "column" &&
           w.declarations(Set(s.kind), s.name, r, Some(s.namespace)).contains(s)))
         val selected = targets.filterNot(s => s.isProperty && targets.exists(_.isCode))

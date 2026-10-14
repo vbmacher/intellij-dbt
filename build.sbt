@@ -18,7 +18,7 @@ lazy val root = (project in file("."))
   .settings(inConfig(PackagedTest)(Defaults.testTasks))
   .settings(
     name := "intellij-dbt",
-    version := "1.0.0",
+    version := "1.1.0",
     scalaVersion := "2.13.18",
     ThisBuild / intellijPluginName := "intellij-dbt",
     ThisBuild / intellijBuild := intellijVersion,
@@ -31,7 +31,8 @@ lazy val root = (project in file("."))
       // YAML's dependencies live in separate plugins/modules in IntelliJ 2026.2.
       "com.intellij.modules.json".toPlugin,
       "intellij.libraries.misc.plugin".toPlugin,
-      "intellij.structureView.plugin".toPlugin
+      "intellij.structureView.plugin".toPlugin,
+      "com.intellij.modules.jcef".toPlugin
     ),
     resolvers += "IntelliJ releases" at intellijRepository,
     libraryDependencies ++= Seq(

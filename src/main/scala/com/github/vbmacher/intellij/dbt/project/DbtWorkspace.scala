@@ -15,7 +15,10 @@ import scala.jdk.CollectionConverters._
 
 /** All dbt projects of an IDE project with their files and declarations; cached until PSI or VFS changes. */
 private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[DbtRoot], val files: Vector[PsiFile],
-  val symbols: Vector[DbtSymbol]) {
+  val symbols: Vector[DbtSymbol]) extends com.intellij.openapi.util.UserDataHolderBase {
+  private val documentation = new java.util.concurrent.ConcurrentHashMap[String, DbtResourceData]()
+  def resourceData(symbol: DbtSymbol)(read: => DbtResourceData): DbtResourceData =
+    documentation.computeIfAbsent(symbol.id, _ => read)
   private lazy val byKindAndName = symbols.groupBy(s => (s.kind, s.name))
 
   private def rootOf(file: VirtualFile): Option[DbtRoot] =
@@ -35,6 +38,9 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
   /** The project which installed a package. */
   def packageOwner(r: DbtRoot): Option[DbtRoot] = roots.filter(p => p != r &&
     p.relative(r.directory).exists(p.pathContains(p.packagePath, _))).sortBy(_.directory.getPath.length).lastOption
+
+  /** Installed package models execute in the consuming project's target/profile context. */
+  def executionRoot(r: DbtRoot): DbtRoot = packageOwner(r).map(executionRoot).getOrElse(r)
 
   private def samePackageTree(from: DbtRoot, target: DbtRoot): Boolean =
     packageOwner(target).contains(packageOwner(from).getOrElse(from))
@@ -126,7 +132,7 @@ private[dbt] object DbtWorkspace {
     val workspace = build(project)
     val inputs = DbtDeclarationSource.EP.getExtensionList.asScala.toVector.flatMap(_.inputs(workspace)).flatMap(DbtYaml.psiFile(project, _))
     CachedValueProvider.Result.create(workspace, (Vector[AnyRef](PsiModificationTracker.MODIFICATION_COUNT,
-      VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++ inputs): _*)
+      VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)) ++ inputs): _*)
   })
 
   private def configFile(project: Project, directory: VirtualFile): Option[PsiFile] =
@@ -170,7 +176,7 @@ private[dbt] object DbtWorkspace {
   }
 
   private def projectFiles(project: Project, roots: Vector[DbtRoot]): Vector[PsiFile] = {
-    val extensions = Set("sql", "py", "yml", "yaml", "md", "csv", "json", "js")
+    val extensions = Set("sql", "jinja", "jinja2", "py", "yml", "yaml", "md", "csv", "json", "js")
     val result = mutable.ArrayBuffer.empty[VirtualFile]
     roots.foreach(r => VfsUtilCore.iterateChildrenRecursively(r.directory,
       f => r.traversable(f) && !(f.isDirectory && f != r.directory && f.findChild(ProjectFileName) != null), f => {

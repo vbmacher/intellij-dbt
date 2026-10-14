@@ -12,6 +12,14 @@ private[dbt] trait DbtDeclarationSource {
 
   /** Files read outside of PSI whose changes invalidate the workspace. */
   def inputs(workspace: DbtWorkspace): Vector[VirtualFile] = Vector.empty
+
+  /** Optional documentation/physical metadata; source properties remain authoritative. */
+  def documentation(workspace: DbtWorkspace, symbol: DbtSymbol): Option[DbtResourceData] = None
+
+  /** Missing references are not conclusive while configured metadata is unavailable or malformed. */
+  def canReportMissing(workspace: DbtWorkspace, root: DbtRoot): Boolean = true
+
+  def artifactStatus(root: DbtRoot): Vector[String] = Vector.empty
 }
 
 private[dbt] object DbtDeclarationSource {

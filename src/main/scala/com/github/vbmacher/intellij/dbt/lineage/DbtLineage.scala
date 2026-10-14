@@ -28,12 +28,19 @@ private[dbt] object DbtDependencySource {
 
 /** Dependencies between dbt declarations, statically resolved from sources and recorded by dependency sources. */
 private[dbt] object DbtLineage {
+  private val EdgeCache = com.intellij.openapi.util.Key.create[Vector[DbtDependency]]("dbt.lineage.edges")
   private val EndTags = Map("macro" -> "endmacro", "generic_test" -> "endtest", "materialization" -> "endmaterialization", "snapshot" -> "endsnapshot")
   private val Untracked = Set("documentation", "local", "parameter", "sql_alias", "sql_projection", "cte")
 
-  def edges(w: DbtWorkspace, scope: Option[SearchScope] = None): Vector[DbtDependency] =
-    w.files.filter(file => scope.forall(PsiSearchScopeUtil.isInScope(_, file))).flatMap(sourceEdges(w, _)).distinct ++
-      DbtDependencySource.EP.getExtensionList.asScala.toVector.flatMap(_.dependencies(w, scope))
+  def edges(w: DbtWorkspace, scope: Option[SearchScope] = None): Vector[DbtDependency] = {
+    val cached = if (scope.isEmpty) Option(w.getUserData(EdgeCache)) else None
+    cached.getOrElse {
+      val result = w.files.filter(file => scope.forall(PsiSearchScopeUtil.isInScope(_, file))).flatMap(sourceEdges(w, _)).distinct ++
+        DbtDependencySource.EP.getExtensionList.asScala.toVector.flatMap(_.dependencies(w, scope))
+      if (scope.isEmpty) w.putUserData(EdgeCache, result)
+      result
+    }
+  }
 
   /** Edges from the innermost declaration enclosing each reference of a file. */
   private def sourceEdges(w: DbtWorkspace, file: PsiFile): Vector[DbtDependency] = {

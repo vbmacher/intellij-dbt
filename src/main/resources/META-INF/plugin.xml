@@ -4,7 +4,7 @@
     <id>com.github.vbmacher.intellij-dbt</id>
     <name>dbt Workspace</name>
     <category>Languages</category>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <idea-version since-build="262.8665" until-build="262.*"/>
     <vendor email="pjakubco@gmail.com" url="https://github.com/vbmacher">Peter Jakubčo</vendor>
 
@@ -42,6 +42,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.intellij.modules.json</depends>
+    <depends>com.intellij.modules.jcef</depends>
     <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
@@ -70,6 +71,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>

@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
-import com.intellij.openapi.vfs.{VfsUtilCore, VirtualFile}
+import com.intellij.openapi.vfs.{LocalFileSystem, VfsUtilCore, VirtualFile}
 import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping, YAMLScalar}
 
@@ -12,18 +12,40 @@ import scala.util.Try
 private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping, settings: Option[YAMLMapping]) {
   val name: String = DbtYaml.string(config, "name").getOrElse(directory.getName)
 
-  def psiFile(path: String): Option[PsiFile] =
-    Option(directory.findFileByRelativePath(path)).flatMap(DbtYaml.psiFile(config.getProject, _))
+  def psiFile(path: String): Option[PsiFile] = {
+    val requested = Paths.get(path).normalize()
+    val base = Paths.get(directory.getPath)
+    val relative = if (requested.isAbsolute && requested.startsWith(base)) base.relativize(requested).toString else path
+    Option(directory.findFileByRelativePath(relative)).orElse(
+      if (requested.isAbsolute) Option(LocalFileSystem.getInstance.findFileByPath(path)) else None).flatMap(DbtYaml.psiFile(config.getProject, _))
+  }
 
   def yaml(path: String): Option[YAMLMapping] = psiFile(path).flatMap(DbtYaml.mapping)
 
-  def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key))
+  def runOptions: DbtRunOptions = DbtProjectSettings.get(config.getProject).options(directory.getPath)
+
+  def executionDirectory: java.nio.file.Path = {
+    val overridePath = Option(runOptions.projectRoot).filter(_.nonEmpty).map(Paths.get(_))
+    overridePath.map(p => if (p.isAbsolute) p else Paths.get(directory.getPath).resolve(p)).getOrElse(Paths.get(directory.getPath)).normalize()
+  }
+
+  def artifactDirectory: java.nio.file.Path = {
+    val path = Paths.get(runOptions.artifactDirectory)
+    (if (path.isAbsolute) path else executionDirectory.resolve(path)).normalize()
+  }
+
+  def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key)).orElse(key match {
+    case "manifest" => Some(artifactDirectory.resolve("manifest.json").toString)
+    case "catalog" => Some(artifactDirectory.resolve("catalog.json").toString)
+    case "target" => Option(runOptions.target).filter(_.nonEmpty)
+    case _ => None
+  })
 
   def runConfiguration: Option[YAMLMapping] = setting("run-config").flatMap(yaml)
 
   def runtimeSetting(key: String): Option[String] = setting(key).orElse(runConfiguration.flatMap(DbtYaml.string(_, key)))
 
-  def profilesFile: String = runtimeSetting("profiles-file").getOrElse("profiles.yml")
+  def profilesFile: String = runtimeSetting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
     settings.map(DbtYaml.strings(_, "env-files", Vector(".env"))).getOrElse(Vector(".env")).flatMap(psiFile)
@@ -36,9 +58,12 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   /** Declarations of a key of the selected profile target; `name` resolves to the target selection itself. */
   def target(key: String): Vector[YAMLKeyValue] = profile.toVector.flatMap { p =>
-    if (key == "name") settings.flatMap(DbtYaml.keyValue(_, "target")).orElse(runConfiguration.flatMap(DbtYaml.keyValue(_, "target")))
-      .orElse(DbtYaml.keyValue(p, "target")).toVector
-    else runtimeSetting("target").orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
+    if (key == "name") {
+      if (runOptions.target.nonEmpty) DbtYaml.map(p, "outputs").flatMap(DbtYaml.keyValue(_, runOptions.target)).toVector
+      else settings.flatMap(DbtYaml.keyValue(_, "target")).orElse(runConfiguration.flatMap(DbtYaml.keyValue(_, "target")))
+        .orElse(DbtYaml.keyValue(p, "target")).toVector
+    }
+    else Option(runOptions.target).filter(_.nonEmpty).orElse(runtimeSetting("target")).orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
       .flatMap(t => DbtYaml.map(p, "outputs").flatMap(DbtYaml.map(_, t)).flatMap(DbtYaml.keyValue(_, key)))
   }
 
@@ -84,11 +109,18 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
       (negated, raw.endsWith("/"), patterns.flatMap(p => Try(FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
     }.toVector
 
-  val exclusions: Vector[String] = Vector(".git", ".idea", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target"))
+  private val configuredOutput = {
+    val base = Paths.get(directory.getPath)
+    if (artifactDirectory.startsWith(base) && artifactDirectory != base) Vector(base.relativize(artifactDirectory).toString.replace('\\', '/'))
+    else Vector.empty
+  }
+  val exclusions: Vector[String] = Vector(".git", ".idea", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
 
   def relative(file: VirtualFile): Option[String] = Option(VfsUtilCore.getRelativePath(file, directory, '/'))
 
-  def isFile(file: PsiFile, path: String): Boolean = relative(file.getVirtualFile).contains(path)
+  def isFile(file: PsiFile, path: String): Boolean =
+    if (Paths.get(path).isAbsolute) Paths.get(file.getVirtualFile.getPath).normalize() == Paths.get(path).normalize()
+    else relative(file.getVirtualFile).contains(path)
 
   def pathContains(path: String, relative: String): Boolean =
     path == "." || relative == path || relative.startsWith(path.stripSuffix("/") + "/")

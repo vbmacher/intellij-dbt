@@ -41,7 +41,7 @@ final class DbtArchitectureTest {
     .whereLayer("lineage").mayOnlyBeAccessedByLayers("metadata", "ide")
     .whereLayer("navigation").mayOnlyBeAccessedByLayers("languages", "lineage", "metadata", "ide")
     .whereLayer("project").mayOnlyBeAccessedByLayers("navigation", "languages", "lineage", "metadata", "ide")
-    .whereLayer("syntax").mayOnlyBeAccessedByLayers("project", "navigation", "languages", "lineage", "metadata")
+    .whereLayer("syntax").mayOnlyBeAccessedByLayers("project", "navigation", "languages", "lineage", "metadata", "ide")
     .check(classes)
 
   @Test def featuresAreFreeOfCycles(): Unit = slices().matching(s"$Root.(**)").should().beFreeOfCycles().check(classes)

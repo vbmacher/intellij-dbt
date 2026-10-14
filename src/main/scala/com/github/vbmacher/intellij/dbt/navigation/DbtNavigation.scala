@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.navigation
 
-import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRoot, DbtWorkspace}
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFileManager
@@ -34,7 +34,7 @@ private[dbt] object DbtNavigation {
     else if (!includeSelections) compute(file, includeSelections = false)
     else CachedValuesManager.getManager(file.getProject).getCachedValue(file, ReferenceCache,
       () => CachedValueProvider.Result.create(compute(file, includeSelections = true),
-        PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS), false)
+        PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(file.getProject)), false)
 
   /** The innermost references at an offset. */
   def at(file: PsiFile, offset: Int): Vector[DbtNavigationReference] = {
