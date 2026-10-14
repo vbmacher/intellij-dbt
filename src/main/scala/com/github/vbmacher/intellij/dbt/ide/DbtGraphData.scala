@@ -96,10 +96,9 @@ private[ide] object DbtGraphData {
     val tests = new JsonArray
     data.tests.foreach { t => val test = new JsonObject; test.addProperty("name", t.name); test.addProperty("column", t.column); tests.add(test) }
     doc.add("tests", tests)
-    val edges = DbtLineage.edges(w)
-    val identity = key(w, s)
-    doc.add("upstream", gson.toJsonTree(edges.filter(e => key(w, e.from) == identity).map(_.to.presentableText).distinct.asJava))
-    doc.add("downstream", gson.toJsonTree(edges.filter(e => key(w, e.to) == identity).map(_.from.presentableText).distinct.asJava))
+    val (upstream, downstream) = DbtDocumentation.dependencies(w, s)
+    doc.add("upstream", gson.toJsonTree(upstream.asJava))
+    doc.add("downstream", gson.toJsonTree(downstream.asJava))
     doc
   }
 }
