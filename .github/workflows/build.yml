@@ -22,5 +22,5 @@ jobs:
 
       - uses: sbt/setup-sbt@v1
 
-      - name: Compile & Test
-        run: sbt --batch test
+      - name: Test and package
+        run: sbt --batch test testPackaged packageArtifactZip

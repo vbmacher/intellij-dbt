@@ -59,6 +59,7 @@ Development uses [sbt](https://www.scala-sbt.org/) and IntelliJ IDEA Community 2
 sbt compile        # downloads IntelliJ SDK (first run) and compiles the plugin
 sbt test           # runs tests
 sbt packageArtifactZip  # builds the plugin distribution zip
+sbt testPackaged   # tests the minimized runtime, including all supported Parquet codecs
 sbt runPluginVerifier  # checks binary compatibility and reports API warnings
 sbt runIDE         # runs IntelliJ IDEA with the plugin installed
 ```

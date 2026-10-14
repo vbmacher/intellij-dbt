@@ -2,7 +2,7 @@
 
 <idea-plugin require-restart="false">
     <id>com.github.vbmacher.intellij-dbt</id>
-    <name>dbt</name>
+    <name>dbt Workspace</name>
     <category>Languages</category>
     <version>1.0.0</version>
     <idea-version since-build="262.8665" until-build="262.*"/>
