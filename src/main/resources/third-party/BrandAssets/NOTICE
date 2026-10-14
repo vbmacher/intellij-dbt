@@ -1,4 +1,8 @@
 This plugin's combined logo uses the dbt standalone mark and IntelliJ IDEA icon.
+Resource icons also use the dbt standalone mark behind monochrome foregrounds.
+Some foreground shapes are derived from IntelliJ icons: Copyright 2000-2025
+JetBrains s.r.o. and contributors, licensed under Apache License, Version 2.0.
+Other foreground symbols are original artwork drawn for this plugin.
 
 dbt mark: dbt Labs. dbt and the dbt logo are trademarks of dbt Labs.
 Source artwork: https://github.com/dbt-labs/docs.getdbt.com/blob/current/website/static/img/dbt-logo.svg

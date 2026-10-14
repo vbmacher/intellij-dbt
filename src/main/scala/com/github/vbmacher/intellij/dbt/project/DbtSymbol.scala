@@ -1,7 +1,6 @@
 package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
-import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.lang.Language
 import com.intellij.navigation.ItemPresentation
@@ -125,30 +124,31 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
 private[dbt] object DbtSymbolElement {
   /** Shared by every presentation of a dbt declaration. */
   def icon(kind: String): Icon = kind match {
-    case "model" | "source" | "source_table" | "information_schema_view" | "cte" => AllIcons.Nodes.DataSchema
-    case "seed" => AllIcons.FileTypes.Csv
-    case "snapshot" => AllIcons.General.History
-    case "analysis" | "saved_query" => AllIcons.FileTypes.Sql
-    case "macro" | "builtin" => AllIcons.Nodes.Method
-    case "function" => AllIcons.Nodes.Function
-    case "test" | "generic_test" | "unit_test" | "fixture" => AllIcons.Nodes.Test
-    case "check" => AllIcons.General.InspectionsOK
-    case "doc" | "documentation" => AllIcons.FileTypes.Markdown
-    case "semantic_model" => AllIcons.Nodes.Models
-    case "metric" | "measure" => AllIcons.Nodes.Field
-    case "metric_alias" | "sql_alias" => AllIcons.Nodes.Alias
-    case "dimension" => AllIcons.Nodes.Type
-    case "entity" => AllIcons.Nodes.Class
-    case "column" | "sql_projection" | "information_schema_column" => AllIcons.Nodes.DataColumn
-    case "exposure" | "export" => AllIcons.Nodes.Deploy
-    case "group" => AllIcons.Nodes.ModuleGroup
-    case "package" | "project" => AllIcons.Nodes.Package
-    case "var" | "variable" | "local" | "environment" => AllIcons.Nodes.Variable
-    case "parameter" | "argument" => AllIcons.Nodes.Parameter
-    case "config" | "configuration" | "profile" | "target" | "env" => AllIcons.FileTypes.Config
-    case "result" => AllIcons.Nodes.Record
-    case "selector" => AllIcons.General.Filter
-    case "materialization" => AllIcons.Nodes.Artifact
-    case _ => AllIcons.Nodes.Property
+    case "model" | "source" | "source_table" | "information_schema_view" | "cte" => DbtIcons.Table
+    case "seed" => DbtIcons.Seed
+    case "snapshot" => DbtIcons.Snapshot
+    case "analysis" | "saved_query" => DbtIcons.Query
+    case "macro" => DbtIcons.Macro
+    case "builtin" => DbtIcons.Jinja
+    case "function" => DbtIcons.Function
+    case "test" | "generic_test" | "unit_test" | "fixture" => DbtIcons.Test
+    case "check" => DbtIcons.Check
+    case "doc" | "documentation" => DbtIcons.Doc
+    case "semantic_model" => DbtIcons.SemanticModel
+    case "metric" | "measure" => DbtIcons.Metric
+    case "metric_alias" | "sql_alias" => DbtIcons.Alias
+    case "dimension" => DbtIcons.Dimension
+    case "entity" => DbtIcons.Entity
+    case "column" | "sql_projection" | "information_schema_column" => DbtIcons.Column
+    case "exposure" | "export" => DbtIcons.Export
+    case "group" => DbtIcons.Group
+    case "package" | "project" => DbtIcons.Package
+    case "var" | "variable" | "local" | "environment" => DbtIcons.Variable
+    case "parameter" | "argument" => DbtIcons.Parameter
+    case "config" | "configuration" | "profile" | "target" | "env" => DbtIcons.Config
+    case "result" => DbtIcons.Result
+    case "selector" => DbtIcons.Selector
+    case "materialization" => DbtIcons.Materialization
+    case _ => DbtIcons.Property
   }
 }
