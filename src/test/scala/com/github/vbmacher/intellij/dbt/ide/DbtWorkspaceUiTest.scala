@@ -2,6 +2,8 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettingsState}
 import com.google.gson.JsonParser
+import com.intellij.codeHighlighting.Pass
+import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
 import com.intellij.mock.Mock
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ApplicationManager, ModalityState}
@@ -82,4 +84,23 @@ print('started from the Run button',flush=True)
     } finally manager.unregisterToolWindow("dbt-ui-test")
   }
 
+  def testAddingAReferencedDefinitionInvalidatesOpenEditorHighlighting(): Unit = {
+    setupEditor()
+    myFixture.enableInspections(new DbtUnresolvedReferenceInspection)
+    assertTrue(myFixture.doHighlighting().asScala.exists(h => Option(h.getDescription).contains("Unresolved ref: 'missing'")))
+    val document = myFixture.getEditor.getDocument
+    val stamp = document.getModificationStamp
+    val daemon = com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(getProject).asInstanceOf[DaemonCodeAnalyzerImpl]
+    val status = daemon.getFileStatusMap
+    // Pending setup changes must settle before testing a new change in another file.
+    val quiet = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500)
+    PlatformTestUtil.waitWithEventsDispatching("Initial refresh settles", () => System.nanoTime() >= quiet, 2)
+    status.markFileUpToDate(document, Pass.EXTERNAL_TOOLS)
+    assertNull(status.getFileDirtyScope(document, myFixture.getFile, Pass.EXTERNAL_TOOLS))
+    add("models/missing.sql", "select 1")
+    await("Adding a definition invalidates the unchanged referencing editor")(
+      status.getFileDirtyScope(document, myFixture.getFile, Pass.EXTERNAL_TOOLS) != null)
+    assertEquals(stamp, document.getModificationStamp)
+    assertFalse(myFixture.doHighlighting().asScala.exists(h => Option(h.getDescription).contains("Unresolved ref: 'missing'")))
+  }
 }
