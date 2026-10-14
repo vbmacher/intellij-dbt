@@ -1,0 +1,22 @@
+{
+  "fileTypes": [],
+  "name": "YAML (Jinja Templates)",
+  "patterns": [
+    {
+      "include": "source.jinja"
+    },
+    {
+      "include": "source.yaml"
+    }
+  ],
+  "scopeName": "source.yaml.jinja",
+  "injections": {
+    "L:source.yaml.jinja - meta.scope.jinja - comment.block.jinja": {
+      "patterns": [
+        {
+          "include": "source.jinja"
+        }
+      ]
+    }
+  }
+}

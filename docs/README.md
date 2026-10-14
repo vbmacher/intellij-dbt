@@ -7,6 +7,7 @@ Community Edition, including SQL files opened as plain text.
 
 Requires **IntelliJ IDEA 2026.2** (build `262.8665`–`262.*`) and the bundled YAML
 plugin. Python navigation also requires the free Python Community Edition plugin.
+Enable the bundled **TextMate Bundles** plugin for [dbt syntax highlighting](highlighting.md).
 
 To install a locally built distribution:
 

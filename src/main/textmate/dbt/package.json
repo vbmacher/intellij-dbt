@@ -1,0 +1,47 @@
+{
+  "name": "intellij-dbt-textmate",
+  "version": "1.0.0",
+  "contributes": {
+    "languages": [
+      {
+        "id": "dbt-sql",
+        "extensions": [
+          ".dbt-sql"
+        ]
+      },
+      {
+        "id": "dbt-yaml",
+        "extensions": [
+          ".dbt-yaml"
+        ]
+      },
+      {
+        "id": "dbt-markdown",
+        "extensions": [
+          ".dbt-markdown"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "source.jinja",
+        "path": "./syntaxes/jinja.tmLanguage.json"
+      },
+      {
+        "language": "dbt-sql",
+        "scopeName": "source.sql.jinja",
+        "path": "./syntaxes/sql.tmLanguage.json"
+      },
+      {
+        "language": "dbt-yaml",
+        "scopeName": "source.yaml.jinja",
+        "path": "./syntaxes/yaml.tmLanguage.json"
+      },
+      {
+        "language": "dbt-markdown",
+        "scopeName": "source.gfm.jinja",
+        "path": "./syntaxes/markdown.tmLanguage.json"
+      }
+    ]
+  }
+}

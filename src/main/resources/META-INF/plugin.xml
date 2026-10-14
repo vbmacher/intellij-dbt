@@ -11,6 +11,7 @@
     <description><![CDATA[
       <p>Navigate <a href="https://www.getdbt.com/">dbt</a> projects in IntelliJ IDEA, including Community Edition.</p>
       <ul>
+        <li>TextMate syntax highlighting for dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja templates.</li>
         <li>Go to Declaration and Find Usages for models, sources, macros, variables, documentation and YAML properties.</li>
         <li>Browse resource properties and dependencies, including parents, children and their reference locations.</li>
         <li>Use gutter markers to open related properties, definitions, dependencies and callers.</li>
@@ -19,8 +20,9 @@
       </ul>
       <p>Open a directory containing <code>dbt_project.yml</code> to get started. Enable the bundled YAML plugin.
       SQL navigation works with plain-text files and does not require Database Tools.
+      Enable the bundled TextMate Bundles plugin for syntax highlighting.
       Python model navigation additionally requires the free Python Community Edition plugin.</p>
-      <p>The plugin provides navigation and Find Usages; it does not execute dbt or query a warehouse.</p>
+      <p>The plugin provides highlighting, navigation and Find Usages; it does not execute dbt or query a warehouse.</p>
       <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/README.md">User guide</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt">Source code</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt/issues">Issue tracker</a></p>
@@ -31,6 +33,7 @@
         <li>1.0.0: Initial release with Go to Declaration and Find Usages for dbt resources, macros, variables, documentation and YAML properties.</li>
         <li>Resource properties and dependency browsing with navigation to reference locations.</li>
         <li>Gutter navigation with ambiguity and metadata status tooltips.</li>
+        <li>Optional bundled TextMate integration with SQL/Jinja, YAML/Jinja and Markdown/Jinja highlighting.</li>
         <li>SQL symbol, selector and Semantic Layer navigation, with optional Python models and local JSON or Parquet metadata.</li>
       </ul>
     ]]>
@@ -39,6 +42,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.intellij.modules.json</depends>
+    <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
     <extensionPoints>

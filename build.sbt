@@ -1,10 +1,10 @@
 val intellijVersion = "262.9437.185"
 val intellijRepository = "https://cache-redirector.jetbrains.com/intellij-repository/releases"
-val rebuildPluginJar = taskKey[Unit]("Rebuild plugin libraries so incremental packages include current classes and dependencies")
+val rebuildPluginJar = taskKey[Unit]("Rebuild plugin libraries and grammars so incremental packages include only current files")
 val testPython = taskKey[Unit]("Run navigation tests with an installed Python Community plugin")
 val pythonTestSdk = settingKey[File]("IntelliJ SDK containing the Python Community plugin")
 val pythonTestPlugins = settingKey[Seq[File]]("Installed Python test plugins and their dependencies")
-val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin"
+val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin"
 lazy val PythonTest = config("python") extend Test
 
 lazy val root = (project in file("."))
@@ -22,6 +22,7 @@ lazy val root = (project in file("."))
     ThisBuild / autoRemoveOldCachedDownloads := true,
     intellijPlugins ++= Seq(
       "org.jetbrains.plugins.yaml".toPlugin,
+      "org.jetbrains.plugins.textmate".toPlugin,
       // YAML's dependencies live in separate plugins/modules in IntelliJ 2026.2.
       "com.intellij.modules.json".toPlugin,
       "intellij.libraries.misc.plugin".toPlugin,
@@ -73,8 +74,15 @@ lazy val root = (project in file("."))
     Compile / javacOptions ++= "--release" :: "21" :: Nil,
     fork := true,
     packageMethod := PackagingMethod.Standalone(),
+    packageFileMappings ++= {
+      val bundle = baseDirectory.value / "src/main/textmate/dbt"
+      (bundle ** "*").get.filter(_.isFile).map(f => f -> s"textmate/dbt/${IO.relativize(bundle, f).get}")
+    },
     // Rebuild libraries: updating an existing jar can omit classes, and removed dependencies can remain in the ZIP.
-    rebuildPluginJar := IO.delete(packageOutputDir.value / "lib"),
+    rebuildPluginJar := {
+      IO.delete(packageOutputDir.value / "lib")
+      IO.delete(packageOutputDir.value / "textmate")
+    },
     packageArtifact := (packageArtifact dependsOn rebuildPluginJar).value,
     patchPluginXml := pluginXmlOptions { xml =>
       xml.version = version.value

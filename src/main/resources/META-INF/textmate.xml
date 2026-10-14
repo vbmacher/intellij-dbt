@@ -1,0 +1,13 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <textmate.bundleProvider implementation="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateBundleProvider"/>
+        <targetElementEvaluator language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateTargetElementEvaluator"/>
+        <syntaxHighlighter factoryClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateHighlighterProvider" order="first"/>
+        <fileTypeOverrider implementation="com.github.vbmacher.intellij.dbt.ide.textmate.DbtSqlFileTypeOverrider"/>
+        <editorHighlighterProvider filetype="DBT_SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateEditorHighlighterProvider"/>
+        <editorHighlighterProvider filetype="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateEditorHighlighterProvider" order="first"/>
+        <editorHighlighterProvider filetype="PLAIN_TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateEditorHighlighterProvider" order="first"/>
+        <editorHighlighterProvider filetype="YAML" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateEditorHighlighterProvider" order="first"/>
+        <editorHighlighterProvider filetype="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.ide.textmate.DbtTextMateEditorHighlighterProvider" order="first"/>
+    </extensions>
+</idea-plugin>

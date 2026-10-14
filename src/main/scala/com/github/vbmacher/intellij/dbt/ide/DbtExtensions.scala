@@ -33,12 +33,15 @@ final class DbtImplicitReferenceProvider extends ImplicitReferenceProvider {
   }
 }
 
-/** Plain SQL files in Community expose references on the file rather than on individual tokens. */
+/** Plain SQL and TextMate hosts expose dbt references on the file rather than on individual tokens. */
 final class DbtReferenceContributor extends PsiReferenceContributor {
   override def registerReferenceProviders(registrar: PsiReferenceRegistrar): Unit =
-    registrar.registerReferenceProvider(PlatformPatterns.psiElement(classOf[PsiPlainTextFile]), new PsiReferenceProvider {
-      override def getReferencesByElement(element: PsiElement, context: ProcessingContext): Array[PsiReference] =
-        DbtNavigation.inFile(element.asInstanceOf[PsiPlainTextFile]).toArray
+    registrar.registerReferenceProvider(PlatformPatterns.psiElement(classOf[PsiFile]), new PsiReferenceProvider {
+      override def getReferencesByElement(element: PsiElement, context: ProcessingContext): Array[PsiReference] = {
+        val file = element.asInstanceOf[PsiFile]
+        if (file.isInstanceOf[PsiPlainTextFile] || file.getLanguage.getID == "textmate") DbtNavigation.inFile(file).toArray
+        else Array.empty
+      }
     })
 }
 

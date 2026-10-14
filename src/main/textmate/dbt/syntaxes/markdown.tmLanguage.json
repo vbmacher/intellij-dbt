@@ -1,0 +1,22 @@
+{
+  "fileTypes": [],
+  "name": "Markdown (Jinja Templates)",
+  "patterns": [
+    {
+      "include": "source.jinja"
+    },
+    {
+      "include": "text.html.markdown"
+    }
+  ],
+  "scopeName": "source.gfm.jinja",
+  "injections": {
+    "L:source.gfm.jinja - meta.scope.jinja - comment.block.jinja": {
+      "patterns": [
+        {
+          "include": "source.jinja"
+        }
+      ]
+    }
+  }
+}

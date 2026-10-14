@@ -8,6 +8,7 @@ Works in **IntelliJ IDEA Community Edition**, including SQL files opened as plai
 The bundled YAML plugin is required. SQL navigation does not require Ultimate or
 Database Tools. Python model navigation optionally uses the free Python
 Community Edition plugin.
+Enable the bundled **TextMate Bundles** plugin for [dbt syntax highlighting](docs/highlighting.md).
 
 ## Getting started
 
@@ -28,6 +29,8 @@ See the [user guide](docs/README.md) for installation, navigation, settings and 
   browse **Uses** / **Used by** with **dbt Dependencies**. Resource icons identify
   target types; choosers let you select between matching definitions. Gutter markers
   offer properties, definitions, dependencies and callers beside relevant lines.
+- **Syntax highlighting:** reuse the dbt TextMate grammars for SQL, YAML and Markdown
+  templates, including Jinja comments, expressions, tags and whitespace control.
 - **dbt resources:** follow references to models, seeds, snapshots, sources and
   documentation blocks, including model versions, installed packages and public
   cross-project dependencies. Open UDF bodies, overloads and argument declarations
@@ -62,7 +65,7 @@ See the [navigation guide](docs/navigation.md),
 for details and version requirements. The default is dbt Core 1.10.
 
 This plugin provides source navigation and Find Usages. It does not run dbt or
-query a warehouse, and does not provide SQL highlighting, completion, data previews
+query a warehouse, and does not provide completion, data previews
 or Rename refactoring.
 
 ## Development
