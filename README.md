@@ -185,10 +185,14 @@ The default suite runs without a Python plugin. To also test Python navigation, 
 free Python Community Edition plugin in the development SDK, then run:
 
 ```bash
-python3 scripts/test-python.py
+sbt testPython
 ```
 
-The script accepts `--sdk /path/to/sdk`.
+To use another SDK containing the Python plugin:
+
+```bash
+sbt 'set pythonTestSdk := file("/path/to/sdk")' testPython
+```
 
 Plugin Verifier reports are written to `target/verifier/reports`. The task treats
 API warnings as failures. Native Ctrl-hover currently uses IntelliJ's experimental

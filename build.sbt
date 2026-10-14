@@ -1,9 +1,16 @@
 val intellijVersion = "262.9437.185"
 val intellijRepository = "https://cache-redirector.jetbrains.com/intellij-repository/releases"
 val rebuildPluginJar = taskKey[Unit]("Rebuild plugin libraries so incremental packages include current classes and dependencies")
+val testPython = taskKey[Unit]("Run navigation tests with an installed Python Community plugin")
+val pythonTestSdk = settingKey[File]("IntelliJ SDK containing the Python Community plugin")
+val pythonTestPlugins = settingKey[Seq[File]]("Installed Python test plugins and their dependencies")
+val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin"
+lazy val PythonTest = config("python") extend Test
 
 lazy val root = (project in file("."))
   .enablePlugins(SbtIdeaPlugin)
+  .configs(PythonTest)
+  .settings(inConfig(PythonTest)(Defaults.testTasks))
   .settings(
     name := "intellij-dbt",
     version := "1.0.0",
@@ -42,7 +49,27 @@ lazy val root = (project in file("."))
     Test / parallelExecution := false,
     // Optional Python integration has a separate suite; the default suite proves it is not required.
     Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"),
-    Test / javaOptions += "-Didea.load.plugins.id=com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin",
+    Test / javaOptions += "-Didea.load.plugins.id=" + testPluginIds,
+    pythonTestSdk := intellijBaseDirectory.value,
+    pythonTestPlugins := Seq("custom-plugins/python-ce", "plugins/toml", "plugins/jcef-plugin", "plugins/platform-testRunner-plugin")
+      .map(pythonTestSdk.value / _),
+    PythonTest / fullClasspath := {
+      val plugins = pythonTestPlugins.value
+      val missing = plugins.filterNot(_.isDirectory)
+      if (missing.nonEmpty) throw new MessageOnlyException(
+        s"Missing Python test plugins: ${missing.mkString(", ")}. Install Python Community Edition in the development IDE, or set pythonTestSdk.")
+      (Test / fullClasspath).value ++ plugins.flatMap(p => (p / "lib" ** "*.jar").get).map(Attributed.blank)
+    },
+    PythonTest / testOptions := Seq(Tests.Filter(_ == "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest")),
+    PythonTest / parallelExecution := false,
+    PythonTest / javaOptions := {
+      val pluginPaths = (packageOutputDir.value +: pythonTestPlugins.value).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+      (Test / javaOptions).value.filterNot(opt => opt.startsWith("-Didea.load.plugins.id=") || opt.startsWith("-Dplugin.path=")) ++ Seq(
+        "-Didea.load.plugins.id=" + testPluginIds + ",PythonCore,org.toml.lang,com.intellij.modules.jcef,com.intellij.platform.testRunner",
+        "-Dplugin.path=" + pluginPaths)
+    },
+    PythonTest / forkOptions := (Test / forkOptions).value.withRunJVMOptions((PythonTest / javaOptions).value.toVector),
+    testPython := (PythonTest / test).value,
     Compile / javacOptions ++= "--release" :: "21" :: Nil,
     fork := true,
     packageMethod := PackagingMethod.Standalone(),
