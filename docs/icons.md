@@ -55,6 +55,17 @@ separate Project-window entries.
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/materialization-dark.svg"><img src="icons/materialization.svg" alt="materialization" width="20" height="20"></picture> | Materialization | Project window and navigation results: `{% materialization %}` blocks in resource `.sql` files. |
 | Declared resource's icon | YAML resource properties | Project window and navigation results: named entries such as `models:`, `sources:`, `macros:` and `unit_tests:` in configured resource paths. Use the declared resource's icon, except test-only files above. |
 
-Every icon uses the original orange dbt mark at 80% opacity behind a small black-and-white symbol.
-Foreground symbols have white fill within their own silhouettes and black details with thin white
-outlines. The surrounding area stays transparent in both themes; only the dbt mark keeps its color.
+Every icon uses the original orange dbt mark at 80% opacity behind a small symbol. Each symbol has a
+colored outline and accents, a pale tint within its silhouette and a thin halo (white in light themes,
+dark in dark themes). The surrounding area stays transparent. Symbols sit on a 10 px grid in the
+bottom-right corner with 1 px strokes so they stay crisp at 16 px, and each uses a distinct silhouette.
+
+Symbol colors group related resources:
+
+| Color | Resources |
+| --- | --- |
+| Blue | Data relations: model, source, table, column, snapshot, analysis/saved query, alias, gutter navigation |
+| Green | Data quality and seeds: tests, unit tests, fixtures, checks, seeds |
+| Purple | Jinja and code: macros, builtin Jinja, UDFs, variables, parameters, statement results, materializations |
+| Teal | Semantic layer and consumers: semantic models, metrics, dimensions, entities, exposures/exports |
+| Gray | Project metadata: configuration, properties, selectors, packages, docs, groups |

@@ -4,7 +4,7 @@ import com.intellij.openapi.util.IconLoader
 
 import javax.swing.Icon
 
-/** Shared dbt mark with transparent monochrome resource symbols; IntelliJ selects the dark SVG variant. */
+/** Shared dbt mark with color-coded resource symbols; IntelliJ selects the dark SVG variant. */
 private[dbt] object DbtIcons {
   private def load(name: String): Icon = IconLoader.getIcon(s"/icons/dbt/$name.svg", getClass)
 

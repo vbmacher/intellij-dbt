@@ -23,8 +23,13 @@ final class DbtIconProviderTest extends DbtCodeInsightTestCase {
       DbtIcons.Metric, DbtIcons.Alias, DbtIcons.Dimension, DbtIcons.Entity, DbtIcons.Column, DbtIcons.Export,
       DbtIcons.Group, DbtIcons.Package, DbtIcons.Variable, DbtIcons.Parameter, DbtIcons.Config,
       DbtIcons.Property, DbtIcons.Result, DbtIcons.Selector, DbtIcons.Materialization, DbtIcons.Gutter)
+    def orange(pixel: Int): Boolean = {
+      val red = (pixel >>> 16) & 255
+      val green = (pixel >>> 8) & 255
+      red > green && green > (pixel & 255)
+    }
     icons.foreach { icon =>
-      Vector(false, true).foreach { dark =>
+      val rendered = Vector(false, true).map { dark =>
         val themed = IconLoader.getDarkIcon(icon, dark)
         assertEquals(16, themed.getIconWidth)
         assertEquals(16, themed.getIconHeight)
@@ -34,25 +39,19 @@ final class DbtIconProviderTest extends DbtCodeInsightTestCase {
         val pixels = for (y <- 0 until 16; x <- 0 until 16) yield image.getRGB(x, y)
         assertTrue("The translucent orange dbt mark must render", pixels.exists { pixel =>
           val alpha = pixel >>> 24
-          val red = (pixel >>> 16) & 255
-          val green = (pixel >>> 8) & 255
-          val blue = pixel & 255
-          alpha > 0 && alpha < 255 && red > green && green > blue
+          alpha > 0 && alpha < 255 && orange(pixel)
         })
         val foreground = for (y <- 7 until 16; x <- 7 until 16) yield image.getRGB(x, y)
-        val monochrome = foreground.filter { pixel =>
-          val red = (pixel >>> 16) & 255
-          val green = (pixel >>> 8) & 255
-          val blue = pixel & 255
-          (pixel >>> 24) > 0 && red == green && green == blue
-        }
-        assertTrue(s"The black foreground must render: $themed", monochrome.exists(pixel => (pixel & 255) < 192))
-        assertTrue(s"The white outline must render: $themed", monochrome.exists(pixel => (pixel & 255) > 192))
+        assertTrue(s"The opaque symbol must contrast with the orange mark: $themed",
+          foreground.exists(pixel => (pixel >>> 24) == 255 && !orange(pixel)))
         if (icon == DbtIcons.Snapshot) {
-          assertEquals("The clock silhouette must have a white interior", 0xffffffff, image.getRGB(12, 9))
-          assertEquals("The area outside the clock must remain transparent", 0, image.getRGB(15, 15) >>> 24)
+          assertEquals("The camera silhouette must have a tinted interior",
+            if (dark) 0xff25324d else 0xffe7effd, image.getRGB(8, 12))
+          assertEquals("The area outside the camera must remain transparent", 0, image.getRGB(15, 7) >>> 24)
         }
+        pixels
       }
+      assertNotEquals(s"Light and dark symbols must use theme colors: $icon", rendered(0), rendered(1))
     }
   }
 
