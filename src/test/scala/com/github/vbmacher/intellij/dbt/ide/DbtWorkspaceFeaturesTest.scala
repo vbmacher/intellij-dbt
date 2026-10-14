@@ -44,6 +44,54 @@ sources:
       },"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","name":"events","source_name":"raw","resource_type":"source","package_name":"analytics","database":"warehouse","schema":"landing","identifier":"actual_events","relation_name":"warehouse.landing.actual_events"}}}""")
   }
 
+  def testDocumentedModelSharesSourceAndCompiledMetadataWithSidebar(): Unit = {
+    documentedProject()
+    val s = resource("orders")
+    val data = DbtResourceData.get(workspace, s)
+    assertEquals("Orders <strong> & details", data.description)
+    assertEquals(Vector("finance"), data.tags)
+    assertEquals("bigint", data.columns.head.dataType)
+    assertTrue(data.tests.exists(t => t.name == "unique" && t.column == "id"))
+    assertEquals("A test declared in YAML and its manifest must be counted once", 2, data.tests.size)
+    assertTrue(data.compiledSql.exists(_.startsWith("select")))
+    val doc = DbtGraphData.documentation(workspace, s)
+    assertTrue(doc.getAsJsonArray("upstream").toString.contains("events"))
+    assertTrue(doc.getAsJsonArray("downstream").toString.contains("report"))
+    val html = DbtDocumentation.render(workspace, s)
+    assertTrue(html.contains("Orders &lt;strong&gt; &amp; details"))
+    assertFalse(html.contains("Orders <strong>"))
+  }
+
+  def testNativeDocumentationProviderUsesExactReferenceRangesAndRefreshesAfterEdit(): Unit = {
+    documentedProject()
+    val file = configure("models/hover.sql", "select * from {{ ref('or<caret>ders') }}")
+    val provider = new DbtDocumentationTargetProvider
+    val target = provider.documentationTargets(file, myFixture.getCaretOffset).asScala
+    assertEquals(1, target.size)
+    assertEquals("analytics.orders", target.head.computePresentation().getPresentableText)
+    assertTrue(provider.documentationTargets(file, 2).isEmpty)
+    val pointer = target.head.createPointer()
+    edit(file, "select * from {{ ref('missing') }}")
+    assertNull(pointer.dereference())
+  }
+
+  def testUnknownVersionAndAmbiguousPackageReferencesDoNotProduceDocumentation(): Unit = {
+    project()
+    add("models/orders_v1.sql", "select 1")
+    add("models/schema.yml", "models: [{name: orders, latest_version: 1, versions: [{v: 1}]}]\n")
+    val file = configure("models/report.sql", "select * from {{ ref('or<caret>ders', v=99) }}")
+    assertTrue(new DbtDocumentationTargetProvider().documentationTargets(file, myFixture.getCaretOffset).isEmpty)
+  }
+
+  def testLargeHoverIsBoundedAndSidebarKeepsAllColumns(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n" + (1 to 19).map(n => s"  - {name: column_$n, data_type: int}\n").mkString)
+    val html = DbtDocumentation.render(workspace, resource("orders"))
+    assertTrue(html.contains("Columns (19)")); assertTrue(html.contains("4 more columns")); assertFalse(html.contains("<b>column_19</b>"))
+    assertEquals(19, DbtGraphData.documentation(workspace, resource("orders")).getAsJsonArray("columns").size())
+  }
+
   def testGraphIncludesOnlyResourceCardsWithUpstreamToDownstreamEdges(): Unit = {
     documentedProject()
     add("seeds/countries.csv", "id\n1\n")
@@ -71,6 +119,32 @@ sources:
     assertEquals(9, expanded.getAsJsonArray("nodes").size())
     edit(resource("m0").file, "select * from {{ ref('m8') }}")
     assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20, exposures = true).targets.size)
+  }
+
+  def testArtifactOnlyDocumentationAndSourcePhysicalIdentifier(): Unit = {
+    documentedProject()
+    val source = workspace.symbols.find(s => s.kind == "source_table" && s.name == "events").get
+    val data = DbtResourceData.get(workspace, source)
+    assertEquals("Raw events", data.description)
+    assertEquals("actual_events", data.attributes("identifier"))
+    assertEquals("warehouse.landing.actual_events", data.attributes("relation_name"))
+  }
+  def testDocsBlocksAndMacroArgumentsRefreshInNativeDocumentation(): Unit = {
+    project()
+    add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
+    add("macros/schema.yml", "macros: [{name: double, description: 'Doubles a value', arguments: [{name: value, type: integer, description: Input}]}]\n")
+    val docs = add("docs/orders.md", "{% docs orders_description %}Documented orders{% enddocs %}")
+    add("models/orders.sql", "select 1")
+    add("models/schema.yml", "models: [{name: orders, description: \"{{ doc('orders_description') }}\"}]\n")
+    assertEquals("Documented orders", DbtResourceData.get(workspace, resource("orders")).description)
+    edit(docs, "{% docs orders_description %}Updated orders{% enddocs %}")
+    assertEquals("Updated orders", DbtResourceData.get(workspace, resource("orders")).description)
+    val file = configure("models/report.sql", "select {{ dou<caret>ble(2) }}")
+    val targets = new DbtDocumentationTargetProvider().documentationTargets(file, myFixture.getCaretOffset)
+    assertEquals(1, targets.size())
+    val macroSymbol = workspace.symbols.find(s => s.kind == "macro" && !s.isProperty).get
+    val html = DbtDocumentation.render(workspace, macroSymbol)
+    assertTrue(html.contains("double(value)")); assertTrue(html.contains("Doubles a value")); assertTrue(html.contains("integer"))
   }
 
   def testSettingsSerializeEveryGraphOptionAndKeepRootsIndependent(): Unit = {

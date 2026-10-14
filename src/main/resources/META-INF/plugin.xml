@@ -71,6 +71,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <platform.backend.documentation.targetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtDocumentationTargetProvider"/>
         <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
