@@ -26,13 +26,22 @@ object PluginMinimizer {
     val merged = work / "input.jar"
     merge(inputs, merged)
     val libraries = compileClasspath.filter(f => f.isFile && !jars.exists(_.getName == f.getName)).distinct
-    val modules = (javaHome / "jmods" * "*.jmod").get
+    // Temurin 25 omits jmods; every supported JDK still supplies its runtime image.
+    val moduleDirectory = work / "jdk-modules"
+    IO.delete(moduleDirectory)
+    val extraction = Fork.java(ForkOptions().withJavaHome(Some(javaHome)).withOutputStrategy(Some(StdoutOutput)),
+      Vector("-m", "jdk.jlink/jdk.tools.jimage.Main", "extract", "--dir", moduleDirectory.getAbsolutePath,
+        (javaHome / "lib" / "modules").getAbsolutePath))
+    if (extraction != 0) sys.error("JDK runtime image extraction failed")
+    val modules = IO.listFiles(moduleDirectory).filter(_.isDirectory).sortBy(_.getName)
+    if (!(moduleDirectory / "java.base" / "java" / "lang" / "Object.class").isFile)
+      sys.error("JDK runtime image is missing java.lang.Object")
     val output = work / "intellij-dbt.jar"
     def path(file: File): String = "'" + file.getAbsolutePath + "'"
     val config = work / "plugin.pro"
     IO.writeLines(config, Seq(s"-injars ${path(merged)}", s"-outjars ${path(output)}") ++
       libraries.map(f => s"-libraryjars ${path(f)}(!META-INF/versions/**)") ++
-      modules.map(f => s"-libraryjars ${path(f)}(!**.jar;!module-info.class)") ++
+      modules.map(f => s"-libraryjars ${path(f)}(!module-info.class)") ++
       Seq(s"-include ${path(rules)}", s"-printusage ${path(work / "removed.txt")}"))
     val arguments = Vector("-Xmx3g", "-cp", toolClasspath.mkString(java.io.File.pathSeparator), "proguard.ProGuard", "@" + config.getAbsolutePath)
     val result = Fork.java(ForkOptions().withJavaHome(Some(javaHome)).withOutputStrategy(Some(StdoutOutput)), arguments)
