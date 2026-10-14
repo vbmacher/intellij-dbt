@@ -2,12 +2,13 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtIcons, DbtWorkspace}
 import com.intellij.ide.IconProvider
-import com.intellij.openapi.util.IconLoader
+import com.intellij.openapi.util.{Disposer, IconLoader}
 import com.intellij.psi.PsiFile
 import com.intellij.ui.icons.CompositeIcon
 import com.intellij.util.IconUtil
 import org.junit.Assert._
 
+import java.awt.GraphicsEnvironment
 import java.awt.image.BufferedImage
 import javax.swing.Icon
 import scala.jdk.CollectionConverters._
@@ -18,6 +19,11 @@ final class DbtIconProviderTest extends DbtCodeInsightTestCase {
     .getOrElse(throw new AssertionError("dbt file icon provider is not registered"))
 
   def testBrandedIconsRenderInLightAndDarkThemes(): Unit = {
+    // Headless IntelliJ returns placeholder icons until rendering is explicitly enabled.
+    if (GraphicsEnvironment.isHeadless) {
+      IconLoader.activate()
+      Disposer.register(getTestRootDisposable, () => IconLoader.deactivate())
+    }
     val icons = Vector(DbtIcons.Table, DbtIcons.Seed, DbtIcons.Snapshot, DbtIcons.Query, DbtIcons.Macro,
       DbtIcons.Jinja, DbtIcons.Function, DbtIcons.Test, DbtIcons.Check, DbtIcons.Doc, DbtIcons.SemanticModel,
       DbtIcons.Metric, DbtIcons.Alias, DbtIcons.Dimension, DbtIcons.Entity, DbtIcons.Column, DbtIcons.Export,
