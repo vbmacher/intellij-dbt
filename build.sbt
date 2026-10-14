@@ -6,7 +6,7 @@ lazy val root = (project in file("."))
   .enablePlugins(SbtIdeaPlugin)
   .settings(
     name := "intellij-dbt",
-    version := "2026.2",
+    version := "1.0.0",
     scalaVersion := "2.13.18",
     ThisBuild / intellijPluginName := "intellij-dbt",
     ThisBuild / intellijBuild := intellijVersion,

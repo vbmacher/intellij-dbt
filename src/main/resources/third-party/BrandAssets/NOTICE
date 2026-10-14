@@ -1,0 +1,22 @@
+This plugin's combined logo uses the dbt standalone mark and IntelliJ IDEA icon.
+
+dbt mark: dbt Labs. dbt and the dbt logo are trademarks of dbt Labs.
+Source artwork: https://github.com/dbt-labs/docs.getdbt.com/blob/current/website/static/img/dbt-logo.svg
+Brand guidelines: https://www.getdbt.com/brand-guidelines
+Trademark guidelines: https://www.getdbt.com/dbt-assets/dbt-trademark-guidelines
+
+IntelliJ IDEA artwork: Copyright 2000-2024 JetBrains s.r.o. and contributors.
+The source SVG is distributed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+Source artwork: bin/idea.svg in the IntelliJ IDEA Community 262.9437.185 SDK.
+Only the black square, white IJ lettering and underline are used.
+Visual reference: https://cdn.freebiesupply.com/logos/large/2x/intellij-idea-1-logo-black-and-white.png
+Copyright © 2026 JetBrains s.r.o. IntelliJ IDEA and the IntelliJ IDEA logo are
+trademarks of JetBrains s.r.o. https://www.jetbrains.com/
+Brand guidelines: https://www.jetbrains.com/company/brand/
+
+Trademark rights are separate from the source code licenses. The combined logo
+is a local design concept; permission for the combined use is not established.
+Marketplace approval criteria prohibit plugin logos resembling JetBrains product
+logos. Obtain permission from the trademark owners before publishing this artwork.
+https://plugins.jetbrains.com/docs/marketplace/jetbrains-marketplace-approval-guidelines.html

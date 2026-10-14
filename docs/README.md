@@ -15,7 +15,7 @@ To install a locally built distribution:
 
 1. Build the ZIP with JDK 25 and `sbt packageArtifactZip` from the repository root.
 2. Open **Settings → Plugins**, select the gear menu, then **Install Plugin from Disk**.
-3. Choose `target/intellij-dbt-2026.2.zip` and restart the IDE if prompted.
+3. Choose `target/intellij-dbt-1.0.0.zip` and restart the IDE if prompted.
 
 ## First navigation
 

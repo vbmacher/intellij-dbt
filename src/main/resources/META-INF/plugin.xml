@@ -4,19 +4,32 @@
     <id>com.github.vbmacher.intellij-dbt</id>
     <name>dbt</name>
     <category>Languages</category>
-    <version>2026.2</version>
+    <version>1.0.0</version>
     <idea-version since-build="262.8665" until-build="262.*"/>
     <vendor email="pjakubco@gmail.com" url="https://github.com/vbmacher">Peter Jakubčo</vendor>
 
     <description><![CDATA[
-      Support for <a href="https://www.getdbt.com/">dbt</a> projects.
-
-      Issue tracking at <a href="https://github.com/vbmacher/intellij-dbt/issues">GitHub</a>.
+      <p>Navigate <a href="https://www.getdbt.com/">dbt</a> projects in IntelliJ IDEA, including Community Edition.</p>
+      <ul>
+        <li>Go to Declaration and Find Usages for models, sources, macros, variables, documentation and YAML properties.</li>
+        <li>Browse resource properties and dependencies, including parents, children and their reference locations.</li>
+        <li>Follow SQL CTEs, columns, macro parameters, selectors and Semantic Layer references.</li>
+        <li>Use local source files and optionally selected JSON or Parquet metadata for navigation.</li>
+      </ul>
+      <p>Open a directory containing <code>dbt_project.yml</code> to get started. Enable the bundled YAML plugin.
+      SQL navigation works with plain-text files and does not require Database Tools.
+      Python model navigation additionally requires the free Python Community Edition plugin.</p>
+      <p>The plugin provides navigation and Find Usages; it does not execute dbt or query a warehouse.</p>
+      <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/README.md">User guide</a> ·
+      <a href="https://github.com/vbmacher/intellij-dbt">Source code</a> ·
+      <a href="https://github.com/vbmacher/intellij-dbt/issues">Issue tracker</a></p>
     ]]></description>
 
     <change-notes><![CDATA[
       <ul>
-      <li>2026.2: Community navigation for dbt resources, macros, variables, YAML properties, SQL symbols, selectors and optional local metadata.</li>
+        <li>1.0.0: Initial release with Go to Declaration and Find Usages for dbt resources, macros, variables, documentation and YAML properties.</li>
+        <li>Resource properties and dependency browsing with navigation to reference locations.</li>
+        <li>SQL symbol, selector and Semantic Layer navigation, with optional Python models and local JSON or Parquet metadata.</li>
       </ul>
     ]]>
     </change-notes>
