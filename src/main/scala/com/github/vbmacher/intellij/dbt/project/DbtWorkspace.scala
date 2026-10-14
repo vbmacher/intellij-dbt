@@ -190,12 +190,12 @@ private[dbt] object DbtWorkspace {
     val files = projectFiles(project, roots)
     val initial = new DbtWorkspace(project, roots, files, Vector.empty)
     val symbols = files.flatMap(file => initial.root(file).toVector.flatMap(r => fileSymbols(project, file, r.directory)))
+    val properties = symbols.filter(_.isProperty).groupBy(p => (p.kind, p.namespace, initial.root(p.file),
+      p.attributes.getOrElse("defined_in", p.name + p.version.map("_v" + _).getOrElse(""))))
     // Versioned model properties identify the physical file using defined_in, independently of aliases.
     val remapped = symbols.map { s =>
       if (s.isCode) {
-        val matches = symbols.filter(p => p.isProperty && p.kind == s.kind && p.namespace == s.namespace &&
-          initial.root(p.file) == initial.root(s.file) &&
-          p.attributes.getOrElse("defined_in", p.name + p.version.map("_v" + _).getOrElse("")) == s.name)
+        val matches = properties.getOrElse((s.kind, s.namespace, initial.root(s.file), s.name), Vector.empty)
         val resolved = if (matches.size != 1) s else s.copy(name = matches.head.name, version = matches.head.version,
           attributes = (matches.head.attributes - "property") ++ s.attributes, mapping = matches.head.mapping)
         resolved.copy(attributes = DbtConfiguration.inherited(initial, resolved.file, resolved.name) ++ resolved.attributes)

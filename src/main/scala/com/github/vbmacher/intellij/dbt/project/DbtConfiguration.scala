@@ -65,8 +65,9 @@ private[dbt] object DbtConfiguration {
 
   private def levels(w: DbtWorkspace, resource: DbtRoot, file: PsiFile, name: String): Vector[YAMLMapping] =
     resource.resourceFolders(file.getVirtualFile).toVector.flatMap { case (kind, folders) =>
-      val section = if (kind == "analysis") "analyses" else kind + "s"
-      configurationRoots(w, resource).flatMap(config => walk(config, Vector(section), resource.name, folders :+ name))
+      val sectionNames = if (kind == "test") Vector("tests", "data_tests")
+        else Vector(if (kind == "analysis") "analyses" else kind + "s")
+      configurationRoots(w, resource).flatMap(config => walk(config, sectionNames, resource.name, folders :+ name))
     }
 
   /** Configuration mappings from the sections down a project path, outermost first. */

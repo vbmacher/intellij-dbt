@@ -4,8 +4,9 @@ import com.github.vbmacher.intellij.dbt.navigation.{DbtInfoSchema, DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.{DbtDeclarationSource, DbtRoot, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtSyntax
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.psi.{PsiElement, PsiFile}
+import com.intellij.psi.util.{CachedValue, CachedValueProvider, CachedValuesManager}
 import net.sf.jsqlparser.JSQLParserException
 import net.sf.jsqlparser.parser.{ASTNodeAccess, CCJSqlParserUtil, CCJSqlParserTokenManager, SimpleCharStream, StringProvider, Token}
 import net.sf.jsqlparser.schema.{Column, Table}
@@ -28,13 +29,15 @@ private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
 private[sql] final class DbtSqlProjections extends DbtDeclarationSource {
   override def declarations(w: DbtWorkspace): Vector[DbtSymbol] = {
     val resources = w.symbols.filter(s => s.kind == "model" && s.isCode)
-    resources.flatMap(DbtSqlNavigation.projections).filterNot(c => w.symbols.exists(s => s.kind == "column" && s.namespace == c.namespace &&
-      w.root(s.file) == w.root(c.file) && s.owner == c.owner && s.name == c.name && s.version == c.version))
+    val declared = w.symbols.filter(_.kind == "column").map(s => (s.namespace, w.root(s.file), s.owner, s.name, s.version)).toSet
+    resources.flatMap(DbtSqlNavigation.projections).filterNot(c =>
+      declared((c.namespace, w.root(c.file), c.owner, c.name, c.version)))
   }
 }
 
 /** SQL syntax comes exclusively from JSqlParser; templates are masked without changing offsets. */
 private object DbtSqlNavigation {
+  private val ProjectionCache = Key.create[CachedValue[Vector[(String, TextRange)]]]("dbt.sql.projections")
   /** Templates whose control flow would make the masked SQL meaningless. */
   private val ControlTags = Set("for", "if", "macro", "test", "snapshot", "materialization")
   private val InfoSchemaKinds = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "functions" -> "function",
@@ -81,6 +84,15 @@ private object DbtSqlNavigation {
   def projections(resource: DbtSymbol): Vector[DbtSymbol] = {
     val file = resource.file
     if (!sqlFile(file)) return Vector.empty
+    val ranges = CachedValuesManager.getManager(file.getProject).getCachedValue(file, ProjectionCache,
+      () => CachedValueProvider.Result.create(projectionRanges(file), file), false)
+    ranges.map { case (name, range) =>
+      DbtSymbol("column", name, resource.namespace, file, range, resource.name, resource.version, Map("projection" -> "true"))
+    }
+  }
+
+  /** Parsing depends only on this file; resource identity and declared columns are applied by the caller. */
+  private def projectionRanges(file: PsiFile): Vector[(String, TextRange)] = {
     val source = file.getText
     masked(source, DbtSyntax.blocks(source)).flatMap(parse) match {
       case Some(select: PlainSelect) => Option(select.getSelectItems).toVector.flatMap(_.asScala).flatMap { item =>
@@ -92,8 +104,7 @@ private object DbtSqlNavigation {
         for (n <- name.toVector; t <- token.toVector if !n.startsWith("_dbt")) yield {
           val start = offset(source, t)
           val end = offset(source, t, end = true)
-          DbtSymbol("column", n, resource.namespace, file, new TextRange(start, end), resource.name, resource.version,
-            Map("projection" -> "true"))
+          n -> new TextRange(start, end)
         }
       }
       case _ => Vector.empty
@@ -166,7 +177,7 @@ private object DbtSqlNavigation {
           }
 
           from(p.getFromItem)
-          Option(p.getJoins).toVector.flatMap(_.asScala).foreach(j => from(j.getRightItem))
+          Option(p.getJoins).toVector.flatMap(_.asScala).foreach(j => from(j.getFromItem))
           val projections = mutable.Map.empty[String, Vector[PsiElement]]
 
           def columnTargets(c: Column): Vector[PsiElement] = {

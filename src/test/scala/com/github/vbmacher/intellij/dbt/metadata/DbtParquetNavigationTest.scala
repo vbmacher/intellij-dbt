@@ -9,6 +9,7 @@ import com.intellij.psi.{PsiFile, PsiDocumentManager}
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.apache.parquet.conf.PlainParquetConfiguration
+import org.apache.parquet.column.ParquetProperties.WriterVersion
 import org.apache.parquet.example.data.simple.SimpleGroupFactory
 import org.apache.parquet.hadoop.example.ExampleParquetWriter
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
@@ -40,13 +41,13 @@ final class DbtParquetNavigationTest extends BasePlatformTestCase {
   }
   private def parquet(table: String, columns: String, rows: Vector[Map[String, String]],
     codec: CompressionCodecName = CompressionCodecName.SNAPPY,
-    directory: String = "target/info_schema/v1"): VirtualFile = {
+    directory: String = "target/info_schema/v1", version: WriterVersion = WriterVersion.PARQUET_1_0): VirtualFile = {
     val schema = MessageTypeParser.parseMessageType("message dbt { " + columns + " }")
     val temporary = Files.createTempFile("dbt-info-schema-", ".parquet")
     Files.delete(temporary)
     try {
       val writer = ExampleParquetWriter.builder(new LocalOutputFile(temporary)).withConf(new PlainParquetConfiguration())
-        .withType(schema).withCompressionCodec(codec).build()
+        .withType(schema).withCompressionCodec(codec).withWriterVersion(version).build()
       try rows.foreach { row =>
         val group = new SimpleGroupFactory(schema).newGroup()
         row.foreach { case (key, value) =>
@@ -196,11 +197,31 @@ final class DbtParquetNavigationTest extends BasePlatformTestCase {
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
   }
 
+  def testFreshColumnsAndEdgesDoNotReviveStaleResources(): Unit = {
+    root()
+    parquet("models", modelSchema, Vector(model("remote", Map("ingested_at" -> "2000-01-01T00:00:00Z"))))
+    parquet("node_columns", "optional binary node_unique_id (UTF8); optional binary column_name (UTF8); optional binary ingested_at (UTF8);",
+      Vector(Map("node_unique_id" -> "model.analytics.remote", "column_name" -> "id", "ingested_at" -> future)))
+    parquet("edges", "optional binary parent_unique_id (UTF8); optional binary child_unique_id (UTF8); optional binary ingested_at (UTF8);",
+      Vector(Map("parent_unique_id" -> "model.analytics.remote", "child_unique_id" -> "model.analytics.use", "ingested_at" -> future),
+        Map("parent_unique_id" -> "model.analytics.use", "child_unique_id" -> "model.analytics.remote", "ingested_at" -> future)))
+    val usage = add("models/use.sql", "select r.id from {{ ref('remote') }} r")
+    assertTrue(target(usage, "remote").symbol.isStale)
+    assertTrue(references(usage, "id").forall(_.candidates.isEmpty))
+    assertTrue(DbtLineage.edges(DbtWorkspace.get(getProject)).forall(_.reference.label != "Information Schema dependency"))
+
+    parquet("models", modelSchema, Vector(model("remote")))
+    assertFalse(target(usage, "remote").symbol.isStale)
+    assertEquals("column", target(usage, "id").symbol.kind)
+    assertEquals(2, DbtLineage.edges(DbtWorkspace.get(getProject)).count(_.reference.label == "Information Schema dependency"))
+  }
+
   def testCompressionAndTimestampLogicalTypes(): Unit = {
     root()
     val schema = "optional binary unique_id (UTF8); optional binary name (UTF8); optional int64 ingested_at (TIMESTAMP(MICROS,true));"
     val micros = java.time.Instant.parse(future).getEpochSecond * 1000000L
-    for (codec <- Vector(CompressionCodecName.UNCOMPRESSED, CompressionCodecName.GZIP, CompressionCodecName.ZSTD)) {
+    for (codec <- Vector(CompressionCodecName.UNCOMPRESSED, CompressionCodecName.SNAPPY, CompressionCodecName.GZIP,
+      CompressionCodecName.ZSTD, CompressionCodecName.LZ4_RAW)) {
       parquet("models", schema, Vector(Map("unique_id" -> "model.analytics.remote", "name" -> "remote", "ingested_at" -> micros.toString)), codec)
       val usage = add(s"models/use_${codec.toString.toLowerCase}.sql", "{{ ref('remote') }}")
       assertEquals(codec.toString, "false", target(usage, "remote").symbol.attributes("stale"))
@@ -217,6 +238,17 @@ final class DbtParquetNavigationTest extends BasePlatformTestCase {
       settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)) })
     parquet("models", modelSchema, Vector.fill(100001)(model("remote")))
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
+  }
+
+  def testCompressedV2PagesSupplyMetadata(): Unit = {
+    root()
+    for (codec <- Vector(CompressionCodecName.SNAPPY, CompressionCodecName.GZIP,
+      CompressionCodecName.ZSTD, CompressionCodecName.LZ4_RAW)) {
+      parquet("models", modelSchema, (1 to 20).map(i => model(s"remote_$i")).toVector,
+        codec, version = WriterVersion.PARQUET_2_0)
+      val usage = add(s"models/use_${codec.toString.toLowerCase}.sql", "{{ ref('remote_20') }}")
+      assertFalse(codec.toString, target(usage, "remote_20").symbol.isStale)
+    }
   }
 }
 

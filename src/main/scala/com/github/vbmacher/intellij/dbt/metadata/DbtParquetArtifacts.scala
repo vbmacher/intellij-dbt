@@ -84,7 +84,7 @@ private object DbtParquetArtifacts {
     val artifact = binary.getVirtualFile
     if (!artifact.isInLocalFileSystem || artifact.getLength > maxBytes) return None
     ProgressManager.checkCanceled()
-    val options = ParquetReadOptions.builder(new PlainParquetConfiguration()).build()
+    val options = ParquetReadOptions.builder(new PlainParquetConfiguration()).withCodecFactory(DbtParquetCodecs).build()
     try {
       val reader = ParquetFileReader.open(new LocalInputFile(artifact.toNioPath), options)
       try {
@@ -197,7 +197,7 @@ private object DbtParquetArtifacts {
         val name = row.values.getOrElse("column_name", "")
         val owners = (workspace.symbols ++ resources).filter(s => s.kind != "column" && s.uniqueId == id &&
           workspace.owner(s).exists(r => workspace.namespaceVisible(root, r, qualified = true)))
-        owners.headOption.toVector.filter(_ => name.nonEmpty && !stale(workspace, root, row)).flatMap { owner =>
+        owners.headOption.toVector.filter(owner => !owner.isStale && name.nonEmpty && !stale(workspace, root, row)).flatMap { owner =>
           val ownerName = owner.relationName
           if (workspace.symbols.exists(s => s.kind == "column" && workspace.owner(s) == workspace.owner(owner) && s.namespace == owner.namespace &&
             s.owner == ownerName && s.name == name && s.version == owner.version)) Vector.empty
@@ -219,7 +219,7 @@ private object DbtParquetArtifacts {
     tables(workspace, root).filter(_.name == "edges").flatMap { table =>
       table.rows.filterNot(stale(workspace, root, _)).flatMap { row =>
         def targets(key: String): Vector[DbtSymbol] = {
-          val all = workspace.symbols.filter(s => s.kind != "column" && row.values.get(key).contains(s.uniqueId) &&
+          val all = workspace.symbols.filter(s => !s.isStale && s.kind != "column" && row.values.get(key).contains(s.uniqueId) &&
             workspace.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
           val code = all.filter(_.isCode)
           if (code.nonEmpty) code else all

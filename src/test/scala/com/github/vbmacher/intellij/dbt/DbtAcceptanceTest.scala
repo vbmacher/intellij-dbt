@@ -27,6 +27,42 @@ final class DbtAcceptanceTest extends BasePlatformTestCase {
     }
   })
 
+  def testSingularTestsInheritDataTestsConfiguration(): Unit = {
+    val config = root("data_tests:\n  analytics:\n    +enabled: false\n")
+    add("tests/check.sql", "select 1")
+    val enabled = add("tests/keep.sql", "{{ config(enabled=true) }} select 1")
+    var w = DbtWorkspace.get(getProject)
+    assertTrue(w.declarations(Set("test"), "check", w.roots.head).isEmpty)
+    assertTrue(DbtSelectors.select(w, w.roots.head, "test:check", includeGraph = false).isEmpty)
+    assertEquals(Vector(enabled), w.declarations(Set("test"), "keep", w.roots.head).map(_.file))
+
+    edit(config, "name: analytics\ntests:\n  analytics:\n    +enabled: false\n")
+    w = DbtWorkspace.get(getProject)
+    assertTrue(w.declarations(Set("test"), "check", w.roots.head).isEmpty)
+    assertEquals(Vector(enabled), w.declarations(Set("test"), "keep", w.roots.head).map(_.file))
+  }
+
+  def testSqlProjectionsFollowSourceAndPropertyChanges(): Unit = {
+    val config = root()
+    val orders = add("models/orders.sql", "select 1 as old_id")
+    val use = add("models/use.sql", "select o.old_id from {{ ref('orders') }} o")
+    assertEquals(Vector(orders), targets(use, "old_id").map(_.getContainingFile))
+
+    edit(orders, "select 1 as new_id")
+    assertTrue(targets(use, "old_id").isEmpty)
+    edit(use, "select o.new_id from {{ ref('orders') }} o")
+    assertEquals(Vector(orders), targets(use, "new_id").map(_.getContainingFile))
+
+    val properties = add("models/schema.yml", "models:\n- name: orders\n  columns: [{name: new_id}]\n")
+    assertEquals(Vector(properties), targets(use, "new_id").map(_.getContainingFile))
+    edit(config, "name: renamed\n")
+    assertEquals(Vector(properties), targets(use, "new_id").map(_.getContainingFile))
+    edit(properties, "models:\n- name: orders\n")
+    val projected = targets(use, "new_id").head.asInstanceOf[DbtSymbolElement]
+    assertEquals(orders, projected.getContainingFile)
+    assertEquals("renamed", projected.symbol.namespace)
+  }
+
   def testDuplicateRootNamesKeepModelsPropertiesAndColumnsSeparate(): Unit = {
     root(path = "a/")
     root(path = "b/")

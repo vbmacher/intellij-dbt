@@ -64,11 +64,13 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def presentableText: String = s"$namespace.$name${version.map(" v" + _).getOrElse("")}$metadataSuffix"
 }
 
-private[project] object DbtSymbolLanguage extends Language("dbt-symbol")
+private[project] object DbtSymbolLanguage {
+  val Instance: Language = new Language("dbt-symbol") {}
+}
 
 /** A source declaration with a stable identity, including declarations in plain-text Community files. */
 final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
-  extends LightElement(symbol.file.getManager, DbtSymbolLanguage) with PsiNamedElement {
+  extends LightElement(symbol.file.getManager, DbtSymbolLanguage.Instance) with PsiNamedElement {
   private val pointer = SmartPointerManager.getInstance(symbol.file.getProject)
     .createSmartPsiFileRangePointer(symbol.file, symbol.range)
 

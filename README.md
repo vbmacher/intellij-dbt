@@ -122,9 +122,9 @@ Right-click inside `models/orders.sql` and choose:
   the model, choose one from the popup.
 - **dbt Dependencies** to see what the model depends on and what depends on it.
 
-<img src="docs/screenshots/model-properties.png" alt="dbt Properties popup offering YAML files that describe the orders model" width="560">
+<img src="docs/screenshots/model-properties.png" alt="dbt Properties popup offering YAML files that describe the orders model" width="373">
 
-<img src="docs/screenshots/model-dependencies.png" alt="dbt Dependencies popup showing resource-type icons and indented file-and-line references" width="480">
+<img src="docs/screenshots/model-dependencies.png" alt="dbt Dependencies popup showing resource-type icons and indented file-and-line references" width="320">
 
 **Uses** lists resources that `orders` depends on; **Used by** lists resources that
 depend on `orders`. Each resource has an icon for its type, shared with Go to
@@ -177,6 +177,7 @@ Development uses [sbt](https://www.scala-sbt.org/) and IntelliJ IDEA Community 2
 sbt compile        # downloads IntelliJ SDK (first run) and compiles the plugin
 sbt test           # runs tests
 sbt packageArtifactZip  # builds the plugin distribution zip
+sbt runPluginVerifier  # checks binary compatibility and reports API warnings
 sbt runIDE         # runs IntelliJ IDEA with the plugin installed
 ```
 
@@ -188,6 +189,19 @@ python3 scripts/test-python.py
 ```
 
 The script accepts `--sdk /path/to/sdk`.
+
+Plugin Verifier reports are written to `target/verifier/reports`. The task treats
+API warnings as failures. Native Ctrl-hover currently uses IntelliJ's experimental
+symbol API and its internal `PsiSymbolService` adapter; review those warnings
+separately from the binary compatibility verdict.
+
+To verify another installed IDE, pass its directory:
+
+```bash
+sbt 'set pluginVerifierOptions := pluginVerifierOptions.value.copy(overrideIDEs = Seq("/path/to/idea"))' runPluginVerifier
+```
+
+Check that the output includes a completed verification and a report for each IDE.
 
 ### Architecture
 

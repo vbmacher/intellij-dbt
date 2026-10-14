@@ -197,6 +197,8 @@ The directory can contain resource files such as `dbt.models.parquet`, column
 metadata in `dbt.node_columns.parquet` and dependencies in `dbt.edges.parquet`.
 Selected files are limited to 100,000 rows and 64 MiB each. For example,
 `ref('remote_orders')` can open a metadata entry when no local source exists.
+Uncompressed, Snappy, Gzip, Zstd and LZ4 raw pages are supported; other compression
+formats supply no targets.
 
 Resources with a missing or old `ingested_at` are marked stale. Columns and
 dependencies of stale resources, or of resources with unsaved source edits, are

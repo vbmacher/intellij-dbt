@@ -1,6 +1,6 @@
 val intellijVersion = "262.9437.185"
 val intellijRepository = "https://cache-redirector.jetbrains.com/intellij-repository/releases"
-val rebuildPluginJar = taskKey[Unit]("Rebuild the plugin jar so new classes are included in incremental builds")
+val rebuildPluginJar = taskKey[Unit]("Rebuild plugin libraries so incremental packages include current classes and dependencies")
 
 lazy val root = (project in file("."))
   .enablePlugins(SbtIdeaPlugin)
@@ -25,9 +25,9 @@ lazy val root = (project in file("."))
       "com.hubspot.jinjava" % "jinjava" % "2.8.4",
       "com.github.jsqlparser" % "jsqlparser" % "5.4",
       "org.apache.parquet" % "parquet-hadoop" % "1.18.1",
-      // Parquet's codecs use Hadoop APIs; shaded client dependencies avoid IDE library conflicts.
+      // Parquet still links Hadoop API types. Its configuration/codec runtime is only needed to write test fixtures.
       "org.apache.hadoop" % "hadoop-client-api" % "3.5.0",
-      "org.apache.hadoop" % "hadoop-client-runtime" % "3.5.0",
+      "org.apache.hadoop" % "hadoop-client-runtime" % "3.5.0" % Test,
       "junit" % "junit" % "4.13.2" % Test,
       "com.tngtech.archunit" % "archunit" % "1.5.1" % Test,
       "com.github.sbt" % "junit-interface" % "0.13.3" % Test,
@@ -46,8 +46,8 @@ lazy val root = (project in file("."))
     Compile / javacOptions ++= "--release" :: "21" :: Nil,
     fork := true,
     packageMethod := PackagingMethod.Standalone(),
-    // The packager can omit newly generated classes when updating an existing jar.
-    rebuildPluginJar := IO.delete(packageOutputDir.value / "lib" / "intellij-dbt.jar"),
+    // Rebuild libraries: updating an existing jar can omit classes, and removed dependencies can remain in the ZIP.
+    rebuildPluginJar := IO.delete(packageOutputDir.value / "lib"),
     packageArtifact := (packageArtifact dependsOn rebuildPluginJar).value,
     patchPluginXml := pluginXmlOptions { xml =>
       xml.version = version.value
