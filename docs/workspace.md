@@ -29,8 +29,18 @@ passing results. Resources without SQL/columns show explicit empty states.
 Settings control depth, direction, connectors, exposures and automatic opening.
 Theme, source and artifact updates refresh the view; the same graph focus preserves
 zoom/pan. Ambiguous declarations remain distinct candidates. The graph uses bundled
-Cytoscape.js/dagre assets; it makes no CDN requests. If JCEF is unavailable, use the
-bundled JetBrains Runtime with JCEF. Runner and **dbt Dependencies** remain usable.
+Cytoscape.js/dagre assets; it makes no CDN requests.
+
+### JCEF setup
+
+Use a full IntelliJ IDEA installation with its bundled JetBrains Runtime and Web Browser (JCEF) plugin.
+The [SDK archive](https://plugins.jetbrains.com/docs/intellij/embedded-browser-jcef.html#plugin-dependency)
+downloaded for `sbt runIDE` omits the native JCEF bundle, which can leave Lineage blank
+and log `Startup JCEF test is failed (because CefApp wasn't initialized)`.
+Copy or symlink `plugins/jcef-plugin/jcef` from a full IDEA installation into the same location in
+the development SDK. Match the operating system, architecture, and SDK `dependencies.txt` entry
+`jcefBuild` against the bundle's `jcef.version`, then restart the development IDE.
+Runner and **dbt Dependencies** remain usable without JCEF.
 
 ## Native hover and warnings
 

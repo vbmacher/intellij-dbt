@@ -65,6 +65,9 @@ sbt runPluginVerifier  # checks binary compatibility and reports API warnings
 sbt runIDE         # runs IntelliJ IDEA with the plugin installed
 ```
 
+For Lineage in the development IDE, install the SDK's matching native JCEF bundle;
+see [JCEF setup](docs/workspace.md#jcef-setup).
+
 The default suite runs without a Python plugin. To also test Python navigation, install the
 free Python Community Edition plugin in the development SDK, then run:
 
