@@ -97,7 +97,8 @@ private[navigation] object DbtStaticCalls {
   }
 
   def wrapperTargets(w: DbtWorkspace, root: DbtRoot, macroSymbol: DbtSymbol, call: DbtSyntax.Call,
-    constants: Map[String, Vector[String]], visited: Set[String] = Set.empty): Vector[(DbtSyntax.Argument, Vector[PsiElement])] = {
+    constants: Map[String, Vector[String]], visited: Set[String] = Set.empty,
+    onMissing: (DbtSyntax.Argument, String) => Unit = (_, _) => ()): Vector[(DbtSyntax.Argument, Vector[PsiElement])] = {
     if (visited(macroSymbol.id) || visited.size >= 8) return Vector.empty
     ProgressManager.checkCanceled()
     val blocks = DbtSyntax.inFile(macroSymbol.file)
@@ -114,18 +115,46 @@ private[navigation] object DbtStaticCalls {
       val reassigned = this.constants(body, delegated.block.range.getStartOffset).keySet
       val local = constantsForBody(body, delegated, env)
       val targets = this.targets(w, root, delegated, local)
+      if (targets.isEmpty) missing(w, root, delegated, local).foreach { case (argument, message) =>
+        argument.tokens.filterNot(_.string).flatMap(t => bindings.get(t.image)).foreach { case (original, _) => onMissing(original, message) }
+      }
       delegated.arguments.foreach { a =>
         a.tokens.filter(t => !t.string && !reassigned(t.image)).flatMap(t => bindings.get(t.image)).foreach { case (argument, _) =>
           if (targets.nonEmpty) result += argument -> targets
         }
       }
       if (targets.isEmpty) w.macros(delegated, root).foreach { next =>
-        wrapperTargets(w, root, next, delegated, local, visited + macroSymbol.id).foreach { case (arg, candidates) =>
+        wrapperTargets(w, root, next, delegated, local, visited + macroSymbol.id, (arg, message) =>
+          arg.tokens.flatMap(t => bindings.get(t.image)).foreach { case (original, _) => onMissing(original, message) }).foreach { case (arg, candidates) =>
           arg.tokens.flatMap(t => bindings.get(t.image)).foreach { case (original, _) => result += original -> candidates }
         }
       }
     }
     result.toVector
+  }
+
+  /** A proof of a single static missing target, using exactly the same bounded evaluator as navigation. */
+  def missing(w: DbtWorkspace, root: DbtRoot, call: DbtSyntax.Call,
+    constants: Map[String, Vector[String]]): Option[(DbtSyntax.Argument, String)] = {
+    val args = call.positional.map(a => value(a.tokens, constants))
+    val base = call.name.stripPrefix("builtins.")
+    val literal = args.forall(_.size == 1)
+    val qualified = args.size == 2
+    val namespaceKnown = !qualified || base == "source" || args.headOption.flatMap(_.headOption).exists(ns =>
+      w.roots.exists(_.name == ns) || w.symbols.exists(_.namespace == ns))
+    if (!call.closed || !literal || !namespaceKnown || call.version.contains(None) ||
+      !call.name.startsWith("builtins.") && w.macros(call, root).nonEmpty || targets(w, root, call, constants).nonEmpty) None
+    else base match {
+      case "ref" if args.size == 1 || args.size == 2 =>
+        val index = if (qualified) 1 else 0
+        call.positional.lift(index).map(_ -> (s"Unresolved ref: '${args(index).head}'" +
+          call.version.flatten.map(" (version " + _ + ")").getOrElse("")))
+      case "source" if args.size == 2 =>
+        val source = args(0).head; val table = args(1).head
+        if (w.declarations(Set("source"), source, root).isEmpty) call.positional.headOption.map(_ -> s"Unresolved source: '$source'")
+        else call.positional.lift(1).map(_ -> s"Unresolved source table: '$source.$table'")
+      case _ => None
+    }
   }
   private def constantsForBody(body: Vector[DbtSyntax.Block], call: DbtSyntax.Call, parameters: Map[String, Vector[String]]): Map[String, Vector[String]] = {
     // An assignment before the delegated call overrides a parameter, including unknown runtime values.

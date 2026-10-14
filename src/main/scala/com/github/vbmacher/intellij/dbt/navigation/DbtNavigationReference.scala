@@ -6,7 +6,7 @@ import com.intellij.psi._
 
 /** Every resolver produces candidates; ambiguity is preserved for the IDE's declaration chooser. */
 final class DbtNavigationReference private[dbt] (file: PsiFile, range: TextRange, val candidates: Vector[PsiElement], val label: String,
-  val evidence: Vector[String] = Vector.empty)
+  val evidence: Vector[String] = Vector.empty, val unresolvedMessage: Option[String] = None)
   extends PsiPolyVariantReferenceBase[PsiFile](file, range, true) {
   override def multiResolve(incompleteCode: Boolean): Array[ResolveResult] = candidates.distinct.map(new PsiElementResolveResult(_)).toArray
   override def getCanonicalText: String = label

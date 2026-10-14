@@ -121,6 +121,40 @@ sources:
     assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20, exposures = true).targets.size)
   }
 
+  def testWarningsUseExactRangesAndIgnoreCommentStringDynamicAndPartialCalls(): Unit = {
+    project()
+    add("models/sources.yml", "sources: [{name: raw, tables: [{name: events}]}]\n")
+    val file = configure("models/report.sql", """select * from {{ ref('mis<caret>sing') }}
+-- {{ ref('commented') }}
+select '{{ ref("literal") }}'
+{# {{ ref('jinja_comment') }} #}
+select * from {{ ref(runtime_name) }}
+select * from {{ source('unknown', 'table') }}
+select * from {{ source('raw', 'missing_table') }}
+{{ ref('partial'
+""")
+    val annotator = new DbtUnresolvedAnnotator
+    val input = annotator.collectInformation(file)
+    val result = AppExecutorUtil.getAppExecutorService.submit(new Callable[DbtAnnotationResult] {
+      override def call(): DbtAnnotationResult = annotator.doAnnotate(input)
+    }).get(10, TimeUnit.SECONDS)
+    assertEquals(Vector("Unresolved ref: 'missing'", "Unresolved source: 'unknown'", "Unresolved source table: 'raw.missing_table'"), result.diagnostics.map(_.message))
+    assertEquals("missing", result.diagnostics.head.range.substring(file.getText))
+    // Native highlighting must expose warning severity, not merely an internal diagnostic list.
+    myFixture.enableInspections(new DbtUnresolvedReferenceInspection)
+    val highlights = myFixture.doHighlighting().asScala.filter(h => Option(h.getDescription).exists(_.startsWith("Unresolved")))
+    assertEquals(3, highlights.size)
+    assertTrue(highlights.forall(_.getSeverity == com.intellij.lang.annotation.HighlightSeverity.WARNING))
+  }
+
+  def testAddingDefinitionRemovesMissingWarningAndJinjaHostsParticipate(): Unit = {
+    project()
+    val file = configure("models/query.jinja2", "{{ ref('mis<caret>sing') }}")
+    assertTrue(DbtNavigation.inFile(file).exists(_.unresolvedMessage.nonEmpty))
+    add("models/missing.sql", "select 1")
+    assertFalse(DbtNavigation.inFile(file).exists(_.unresolvedMessage.nonEmpty))
+  }
+
   def testArtifactOnlyDocumentationAndSourcePhysicalIdentifier(): Unit = {
     documentedProject()
     val source = workspace.symbols.find(s => s.kind == "source_table" && s.name == "events").get
@@ -147,6 +181,39 @@ sources:
     assertTrue(html.contains("double(value)")); assertTrue(html.contains("Doubles a value")); assertTrue(html.contains("integer"))
   }
 
+  def testStaticExpressionsBuiltinsAndWrappersUseTheNavigationMissingProof(): Unit = {
+    project()
+    add("macros/lookup.sql", "{% macro lookup(name) %}{{ builtins.ref(name) }}{% endmacro %}")
+    val file = configure("models/report.sql", """{% set prefix = 'missing_' %}
+{{ ref(prefix ~ 'model') }}
+{{ builtins.ref('missing_builtin', v=99) }}
+{{ lookup('missing_wrapper') }}
+{{ ref('absent_package', 'runtime_unknown') }}
+{{ ref('partial', var('nested') }}<caret>""")
+    val messages = DbtNavigation.inFile(file).flatMap(_.unresolvedMessage)
+    assertTrue(messages.contains("Unresolved ref: 'missing_model'"))
+    assertTrue(messages.contains("Unresolved ref: 'missing_builtin' (version 99)"))
+    assertTrue(messages.contains("Unresolved ref: 'missing_wrapper'"))
+    assertFalse(messages.exists(_.contains("runtime_unknown")))
+    assertFalse(messages.exists(_.contains("partial")))
+  }
+
+  def testMissingConfiguredOrMalformedArtifactsSuppressMissingResourceClaims(): Unit = {
+    project()
+    add(".dbt-navigation.yml", "manifest: unavailable/manifest.json\n")
+    val file = configure("models/report.sql", "{{ ref('mis<caret>sing') }}")
+    val annotator = new DbtUnresolvedAnnotator
+    def diagnosticCount(): Int = {
+      val input = annotator.collectInformation(file)
+      AppExecutorUtil.getAppExecutorService.submit(new Callable[DbtAnnotationResult] {
+        override def call(): DbtAnnotationResult = annotator.doAnnotate(input)
+      }).get(10, TimeUnit.SECONDS).diagnostics.size
+    }
+    assertEquals(0, diagnosticCount())
+    add("unavailable/manifest.json", "{bad json")
+    assertEquals(0, diagnosticCount())
+  }
+
   def testSettingsSerializeEveryGraphOptionAndKeepRootsIndependent(): Unit = {
     project()
     val settings = DbtProjectSettings.get(getProject)
@@ -160,6 +227,22 @@ sources:
       assertEquals(direction, restored.direction); assertEquals(edge, restored.edgeStyle)
       assertEquals("dev", restored.projects.get(root).target); assertEquals("prod", restored.projects.get(root + "/another").target)
     }
+  }
+
+  def testUnresolvedInspectionUsesConfiguredSeverity(): Unit = {
+    project()
+    configure("models/report.sql", "{{ ref('mis<caret>sing') }}")
+    myFixture.enableInspections(new DbtUnresolvedReferenceInspection)
+    val key = com.intellij.codeInsight.daemon.HighlightDisplayKey.find("DbtUnresolvedReference")
+    val profile = com.intellij.profile.codeInspection.InspectionProjectProfileManager.getInstance(getProject).getCurrentProfile
+      .asInstanceOf[com.intellij.codeInspection.ex.InspectionProfileImpl]
+    val previous = profile.getErrorLevel(key, myFixture.getFile)
+    try {
+      profile.setErrorLevel(key, com.intellij.codeHighlighting.HighlightDisplayLevel.ERROR, getProject)
+      val warnings = myFixture.doHighlighting().asScala.filter(h => Option(h.getDescription).exists(_.startsWith("Unresolved ref:")))
+      assertEquals(1, warnings.size)
+      assertEquals(com.intellij.lang.annotation.HighlightSeverity.ERROR, warnings.head.getSeverity)
+    } finally profile.setErrorLevel(key, previous, getProject)
   }
 
   def testConfiguredArtifactDirectoryRemainsExcludedFromSourceResources(): Unit = {

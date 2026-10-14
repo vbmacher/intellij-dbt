@@ -49,10 +49,16 @@ private object DbtJinjaNavigation {
       refs.toVector
     }
 
-    private def add(range: TextRange, targets: Iterable[PsiElement], name: String, evidence: Vector[String] = Vector.empty): Unit =
+    private def add(range: TextRange, targets: Iterable[PsiElement], name: String, evidence: Vector[String] = Vector.empty,
+      missing: Option[String] = None): Unit =
       if (range.getStartOffset >= 0 && range.getEndOffset <= file.getTextLength && range.getLength > 0)
         refs += new DbtNavigationReference(file, range, targets.toVector.distinct, name,
-          if (name == StaticReference) Vector("Expression: " + range.substring(file.getText)) else evidence)
+          if (name == StaticReference) Vector("Expression: " + range.substring(file.getText)) else evidence, missing)
+
+    private def complete(call: DbtSyntax.Call): Boolean = {
+      val text = call.block.range.substring(file.getText)
+      (text.endsWith("}}") || text.endsWith("%}")) && call.closed
+    }
 
     private def localAt(range: TextRange): Boolean = locals.exists(_.getRangeInElement.intersects(range))
 
@@ -69,7 +75,9 @@ private object DbtJinjaNavigation {
     private def static(call: DbtSyntax.Call, constants: Map[String, Vector[String]], arguments: Vector[DbtSyntax.Argument]): Unit =
       if (arguments.nonEmpty) {
         val targets = DbtStaticCalls.targets(workspace, r, call, constants)
-        arguments.flatMap(_.range).foreach(add(_, targets, StaticReference))
+        val missing = if (complete(call)) DbtStaticCalls.missing(workspace, r, call, constants) else None
+        arguments.flatMap(_.range).foreach(range => add(range, targets, StaticReference,
+          missing = missing.filter(_._1.range.contains(range)).map(_._2)))
       }
 
     /** All positional arguments are dynamic when any of them is. */
@@ -91,7 +99,8 @@ private object DbtJinjaNavigation {
 
     private def macroCall(call: DbtSyntax.Call, macros: Vector[DbtSymbol], constants: Map[String, Vector[String]]): Unit = {
       add(call.range, macros.map(_.element), call.name)
-      macros.foreach(m => DbtStaticCalls.wrapperTargets(workspace, r, m, call, constants).foreach { case (a, targets) =>
+      macros.foreach(m => DbtStaticCalls.wrapperTargets(workspace, r, m, call, constants, onMissing = (a, message) =>
+        if (complete(call) && macros.size == 1) a.range.foreach(add(_, Vector.empty, "delegated reference", missing = Some(message)))).foreach { case (a, targets) =>
         a.range.foreach(x => add(x, targets, "delegated reference", Vector(s"Wrapper: ${m.namespace}.${m.name}", "Argument: " + x.substring(file.getText))))
       })
       call.keywords.foreach { case (key, a) =>
@@ -107,14 +116,25 @@ private object DbtJinjaNavigation {
           case Some(None) => Vector.empty
           case requested => DbtResolution.versioned(workspace.definitions(call, if (base == "ref") Resources else Set("function"), r), requested.flatten)
         }
-        nameArgument(call).foreach(add(_, targets.map(_.element), base))
+        val missing = if (base == "ref" && complete(call) && call.positional.forall(_.literal.nonEmpty))
+          DbtStaticCalls.missing(workspace, r, call, constants).map(_._2) else None
+        nameArgument(call).foreach(add(_, targets.map(_.element), base, missing = missing))
         if (call.literal(1).nonEmpty) call.argumentRange(0).foreach(add(_, workspace.roots.filter(p => call.literal(0).contains(p.name))
           .map(_.config.getContainingFile), "package"))
       case "source" =>
         static(call, constants, dynamic(call))
-        first(call)((source, range) => add(range, lookup(Set("source"), source), source))
+        first(call) { (source, range) =>
+          val sources = lookup(Set("source"), source)
+          add(range, sources, source, missing = if (complete(call) && call.literal(1).nonEmpty && sources.isEmpty)
+            Some(s"Unresolved source: '$source'") else None)
+        }
         for (table <- call.literal(1); range <- call.argumentRange(1))
-          add(range, call.literal(0).toVector.flatMap(DbtResolution.sourceTables(workspace, r, _, table)).map(_.element), table)
+          {
+            val targets = call.literal(0).toVector.flatMap(DbtResolution.sourceTables(workspace, r, _, table)).map(_.element)
+            val knownSource = call.literal(0).exists(s => lookup(Set("source"), s).nonEmpty)
+            add(range, targets, table, missing = if (complete(call) && knownSource && targets.isEmpty)
+              Some(s"Unresolved source table: '${call.literal(0).getOrElse("")}.$table'") else None)
+          }
       case "var" =>
         val offset = call.range.getStartOffset
         call.positional.take(1).filter(_.literal.isEmpty).foreach(a => a.range.foreach(add(_,
