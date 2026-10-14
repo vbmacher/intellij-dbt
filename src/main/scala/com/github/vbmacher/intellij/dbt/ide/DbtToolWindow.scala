@@ -4,7 +4,7 @@ import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{Gson, JsonObject, JsonParser}
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction}
+import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -214,7 +214,7 @@ private[ide] final class DbtToolWindowPanel(project: Project, toolWindow: ToolWi
     stop.setEnabled(runner.isRunning); target.setEnabled(!runner.isRunning); fullRefresh.setEnabled(!runner.isRunning)
   }
 
-  private def start(action: String): Unit = {
+  private def start(action: String): Unit = WriteIntentReadAction.run(() => {
     FileDocumentManager.getInstance().saveAllDocuments()
     val editor = Option(FileEditorManager.getInstance(project).getSelectedTextEditor)
     val selectedSql = editor.flatMap(e => Option(e.getSelectionModel.getSelectedText)).getOrElse("")
@@ -229,11 +229,14 @@ private[ide] final class DbtToolWindowPanel(project: Project, toolWindow: ToolWi
           DbtCommand.forFile(w, file, action, selectedSql, refreshModel)
         }
       }
-    }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.any(), (result: Either[String, DbtCommand]) => result match {
-      case Right(command) => FileDocumentManager.getInstance().saveAllDocuments(); runner.start(command)
+    }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
+      case Right(command) => WriteIntentReadAction.run(() => {
+        FileDocumentManager.getInstance().saveAllDocuments()
+        runner.start(command)
+      })
       case Left(message) => contextLabel.setText(message)
     }).submit(AppExecutorUtil.getAppExecutorService)
-  }
+  })
 
   private def handleMessage(raw: String): Unit = {
     if (disposed) return
