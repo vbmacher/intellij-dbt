@@ -4,72 +4,59 @@
 
 ## A reference has no target
 
-Check that:
+Check:
 
-- The file belongs to a directory containing `dbt_project.yml` and lies in a
-  configured resource path.
-- The resource is enabled and is not excluded by `.dbtignore` or a generated-output path.
-- The logical name, project/package namespace and model version match the declaration.
-- Any referenced package is installed locally. A cross-project dependency is declared
-  and its target is public.
-- The [selected engine and version](configuration.md#engine-and-version) support the feature.
-- The call is in a [supported location](navigation.md#where-references-work).
+- The file is inside a project containing `dbt_project.yml` and a configured resource path.
+- The resource is enabled, outside generated output and not excluded by `.dbtignore`.
+- The logical name, namespace and model version match the declaration.
+- Packages are installed locally; cross-project dependencies are declared and targets public.
+- The [engine/version](configuration.md#engine-and-version) supports the feature.
+- The call appears in a [supported location](navigation.md#where-references-work).
 
-Simple literal values, constant assignments and some wrapper calls can navigate.
-Names that depend on query results, environment values, recursion or arbitrary macro
-execution may remain unresolved.
+Literals, constant assignments and simple wrappers can navigate. Names requiring
+query results, environment values, recursion or macro execution may remain unresolved.
 
 ## Navigation offers several choices
 
-Several declarations can match the same name, version, SQL column or semantic path.
-Choose the intended target, or make the reference more specific by naming its
-project/package, version or table alias. A dependency marked **candidate** is ambiguous.
+Choose a target, or qualify the reference with its project/package, version or
+table alias. Names, versions, columns and semantic paths can match several declarations;
+dependencies marked **candidate** are ambiguous.
 
-Resources from separate dbt projects retain their own identities, even when their
-project names match.
+Separate dbt projects remain distinct even when their names match.
 
 ## Python navigation is unavailable
 
-Install and enable the free Python Community Edition plugin. Supported model calls
-must use the model's `dbt` parameter or a local alias. Unrelated objects and interpolated
-strings do not create dbt references.
+Enable the free Python Community Edition plugin. Calls must use the model's `dbt`
+parameter or a local alias; unrelated objects and interpolated strings do not navigate.
 
-Python files do not support Jinja navigation. SQL, Jinja and YAML navigation work
-without the Python plugin.
+Python files have no Jinja navigation. SQL, Jinja and YAML work without the Python plugin.
 
 ## A SQL column has no target
 
-Navigation needs a declared column, a simple model projection or fresh selected
-metadata. Qualify names with a table alias when several relations have matching columns.
+Declare the column, use a simple model projection or select fresh metadata.
+Qualify ambiguous columns with a table alias.
 
-Some SQL dialect syntax and dynamic query structures are unsupported. `SELECT *`
-does not supply missing column declarations. The plugin does not query the warehouse
-to discover schemas.
+Some SQL dialect syntax and dynamic queries are unsupported. `SELECT *` does not supply
+missing declarations; the plugin does not query warehouse schemas.
 
 ## Local metadata is missing or stale
 
-Check the configured paths and [supported metadata formats](configuration.md#local-metadata).
-Use fresh artifacts and save source edits before relying on metadata columns or dependencies.
-Local source takes precedence over metadata.
+Check paths and [supported formats](configuration.md#local-metadata), refresh
+artifacts and save source edits. Local source takes precedence over metadata.
 
-Metadata cannot confirm whether a resource exists in a warehouse or which source
-dbt will choose during a deferred run. State-dependent selections remain unknown when
-the selected files do not contain enough information.
+Metadata does not prove warehouse existence or dbt's deferral choice.
+State-dependent selections need sufficient information in the selected files.
 
 ## A selector or template import has no target
 
-YAML selector aliases are not expanded into inferred selections. Named
-`method: selector` references are supported; string `selector:nightly` terms
-require Core 1.12+.
+YAML aliases are not expanded into selections. Use `method: selector` for named
+references; string `selector:nightly` terms require Core 1.12+.
 
-Template loader operations such as `import`, `from`, `include` and `extends`
-have no navigation target in the standard dbt context.
+Template `import`, `from`, `include` and `extends` have no target in standard dbt.
 
 ## Feature boundaries
 
-The plugin provides source navigation, reference search, properties navigation and
-dependency browsing. It does not execute dbt, Jinja, Python or SQL; download packages
-or remote metadata; query a warehouse; or provide SQL highlighting, completion,
-data previews or Rename refactoring.
-
-Use your normal dbt tools to run projects, install dependencies and generate artifacts.
+The plugin navigates local source and selected metadata. It does not execute code,
+download packages or remote metadata, query warehouses, or provide SQL highlighting,
+completion, data previews or Rename refactoring. Use your dbt tools for execution,
+dependencies and artifacts.

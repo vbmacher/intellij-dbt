@@ -21,143 +21,44 @@ values may have no navigation target.
 
 See the [user guide](docs/README.md) for installation, navigation, settings and troubleshooting.
 
-## Example project
+## Features
 
-These files form one example: a model uses another model, a source, a macro and a
-variable, while its YAML properties link to a documentation block.
+- **IDE actions:** open definitions with Go to Declaration or Ctrl+Click, find
+  references with Find Usages, open YAML properties with **dbt Properties**, and
+  browse **Uses** / **Used by** with **dbt Dependencies**. Resource icons identify
+  target types; choosers let you select between matching definitions.
+- **dbt resources:** follow references to models, seeds, snapshots, sources and
+  documentation blocks, including model versions, installed packages and public
+  cross-project dependencies. Open UDF bodies, overloads and argument declarations
+  in SQL, Python and JavaScript.
+- **Jinja and configuration:** jump to definitions of macros, parameters, local
+  names, variables, environment keys and statement results. Follow configuration
+  keys to settings, builtin names to documentation or local source, and macro
+  dispatch to adapter-specific implementations.
+- **Tests:** open generic-test definitions and parameters, follow relationship
+  targets and columns, and navigate from unit tests to models, inputs, overrides
+  and CSV/SQL fixtures.
+- **Semantic Layer:** follow references to semantic models, entities, dimensions,
+  measures, metrics and aliases; resolve saved-query metrics, export owners,
+  time-spine columns, exposure dependencies and groups.
+- **SQL and Python:** jump from SQL CTEs, aliases and columns to their definitions
+  in SQL, YAML or local metadata. Follow Python model `dbt.ref`, `dbt.source` and
+  `dbt.config` calls to resources and settings.
+- **Selections:** open resources matched by named selectors, wildcards, graph
+  operators, set operations and configured run selections; follow selector
+  inheritance and state metadata references.
+- **Local metadata and dbt v2:** navigate to resources and columns without local
+  source using manifest, catalog, state-manifest JSON or Information Schema Parquet.
+  Follow check references to views, columns and resources. Metadata targets open
+  read-only with stale indicators; local source takes precedence.
+- **Project settings:** select the dbt engine/version and resource paths, keep
+  projects scoped separately, and exclude generated files and `.dbtignore` matches.
+  Navigation updates after edits or file moves and works in SQL, Jinja, YAML and
+  optional Python.
 
-### Define the resources
-
-**`dbt_project.yml`** — project name and variable:
-
-```yaml
-name: navigation_demo
-version: '1.0'
-config-version: 2
-profile: demo
-vars:
-  start_date: '2026-01-01'
-```
-
-**`models/orders.sql`** — the model to navigate to:
-
-```sql
-select 1 as order_id
-```
-
-**`models/schema.yml`** — model properties and source declarations:
-
-```yaml
-models:
-  - name: orders
-    description: "{{ doc('orders_description') }}"
-    columns:
-      - name: order_id
-sources:
-  - name: raw
-    tables:
-      - name: events
-        columns:
-          - name: event_id
-```
-
-**`macros/math.sql`** — a macro and its parameter:
-
-```jinja
-{% macro double(value) %}
-  {{ value * 2 }}
-{% endmacro %}
-```
-
-**`docs/catalog.md`** — the documentation used by the model description:
-
-```jinja
-{% docs orders_description %}
-Order identifiers.
-{% enddocs %}
-```
-
-### Follow references from a model
-
-**`models/events.sql`** — uses the resources above:
-
-```sql
-select
-  {{ double(value=2) }} as doubled,
-  '{{ var("start_date") }}' as start_date
-from {{ ref('orders') }}
-join {{ source('raw', 'events') }} e on true
-```
-
-Try **Ctrl+Click** on these names:
-
-- **orders** in `ref('orders')` opens `models/orders.sql`.
-- **raw** in `source('raw', 'events')` opens the source's `name: raw` in `schema.yml`.
-- **events** in the same call opens the table's `name: events` in `schema.yml`.
-- **double** opens the macro in `macros/math.sql`; **value** in `value=2` opens its parameter.
-- **start_date** opens the variable in `dbt_project.yml`.
-- **orders_description** in the YAML `doc()` call opens the docs block in `docs/catalog.md`.
-
-### Find where a resource is used
-
-Open `models/orders.sql` and invoke **Find Usages**. The IDE lists references to
-that model and shows a preview of each selected usage.
-
-<img src="docs/screenshots/model-usages.png" alt="Find Usages results for orders, with a YAML model reference selected" width="640">
-
-*The screenshot includes additional resources, so it shows
-more usages than the small example above.*
-
-The same action works on macro, variable, source and documentation definitions.
-For example, invoke **Find Usages** on `orders_description` in `docs/catalog.md`
-to find YAML descriptions that use it:
-
-<img src="docs/screenshots/doc-usages.png" alt="Find Usages for orders_description, showing YAML descriptions that call doc()" width="640">
-
-### Open properties and dependencies
-
-Right-click inside `models/orders.sql` and choose:
-
-- **dbt Properties** to open the model's YAML properties. If several files describe
-  the model, choose one from the popup.
-- **dbt Dependencies** to see what the model depends on and what depends on it.
-
-<img src="docs/screenshots/model-properties.png" alt="dbt Properties popup offering YAML files that describe the orders model" width="373">
-
-<img src="docs/screenshots/model-dependencies.png" alt="dbt Dependencies popup showing resource-type icons and indented file-and-line references" width="320">
-
-**Uses** lists resources that `orders` depends on; **Used by** lists resources that
-depend on `orders`. Each resource has an icon for its type, shared with Go to
-Declaration, Find Usages and dbt Properties. Click its name to open its definition.
-The indented entries below it open the references: `events.sql:4`, for example,
-opens line 4 where `events` calls `ref('orders')`. Multiple references to the same
-resource are grouped beneath its name.
-
-See the [icon legend](docs/icons.md) for each icon's meaning.
-
-*Screenshots show an expanded version of this example project in IntelliJ IDEA Community Edition.*
-
-## More navigation examples
-
-The [navigation guide](docs/navigation.md) and [configuration reference](docs/configuration.md) cover:
-
-- Versioned models and installed packages, such as `ref('orders', v=1)`.
-- Variable overrides, Jinja scope, configuration and macro dispatch.
-- Generic tests, unit-test fixtures and Python models.
-- SQL CTEs and columns, Semantic Layer names, UDFs and selectors.
-- Engine/version settings and explicitly selected local JSON or Parquet metadata.
-
-The plugin defaults to dbt Core 1.10 navigation. To select a different engine/version,
-create **`.dbt-navigation.yml`** at the dbt project root, for example:
-
-```yaml
-engine: core
-dbt-version: '1.12'
-```
-
-Navigation updates after edits and file moves. Generated output, `.git`, `.idea`,
-`logs` and `.dbtignore` matches are excluded. See the guide for project scope and
-other [navigation limits](docs/troubleshooting.md).
+See the [navigation guide](docs/navigation.md),
+[configuration reference](docs/configuration.md) and [icon legend](docs/icons.md)
+for details and version requirements. The default is dbt Core 1.10.
 
 This plugin provides source navigation and Find Usages. It does not run dbt or
 query a warehouse, and does not provide SQL highlighting, completion, data previews

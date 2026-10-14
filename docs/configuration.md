@@ -2,14 +2,11 @@
 
 [User guide](README.md) · [Navigation](navigation.md) · [Troubleshooting](troubleshooting.md)
 
-Most source navigation works without additional settings. To select a version,
-profile, local overrides or metadata, create **`.dbt-navigation.yml`** at the dbt
-project root. This file configures navigation only; it is separate from
-`dbt_project.yml` and is not passed to dbt. Paths in it are relative to the dbt
-project root.
+Most navigation needs no settings. Create **`.dbt-navigation.yml`** at the dbt
+project root to select a version, profile, overrides or metadata. Paths are relative
+to that root. This file configures the plugin and is not passed to dbt.
 
-The plugin only reads existing files. Install packages and generate artifacts through
-your normal dbt workflow.
+Install packages and generate artifacts with your dbt tools; the plugin only reads them.
 
 ## Settings reference
 
@@ -33,31 +30,29 @@ Include only the settings you use.
 
 ## Projects and ignored files
 
-Open one or more directories containing `dbt_project.yml`. Project names, variables
-and configured paths remain scoped to each dbt project.
+Each directory containing `dbt_project.yml` has its own names, variables and paths.
 
-Navigation follows the resource paths in `dbt_project.yml`: `model-paths`,
+Navigation uses the paths in `dbt_project.yml`: `model-paths`,
 `seed-paths`, `snapshot-paths`, `macro-paths`, `test-paths`, `docs-paths` and
-supported function/check paths. Installed packages are read from
-`packages-install-path` under their own dbt project names.
+supported function/check paths. Packages use `packages-install-path` and their own
+dbt project names.
 
-Source navigation omits `.git`, `.idea`, `logs`, the configured `target-path`, other
-generated output and `.dbtignore` exclusions. Installed package sources remain
-available for dependency navigation. `.dbtignore` supports ordered exclusions and
-re-inclusions, anchored paths, directory patterns and wildcards; re-inclusions do not
-apply to generated paths.
+Navigation excludes `.git`, `.idea`, `logs`, `target-path`, other generated output
+and `.dbtignore` matches, but includes installed package sources. `.dbtignore`
+supports ordered exclusions/re-inclusions, anchored paths, directories and wildcards.
+Generated paths cannot be re-included.
 
 ```gitignore
 models/experimental/
 !models/experimental/keep.sql
 ```
 
-Navigation updates after file edits and moves.
+Edits and file moves update navigation.
 
 ## Engine and version
 
-The default is dbt Core 1.10. A scalar `require-dbt-version` in `dbt_project.yml`
-can supply a version hint. For an explicit selection:
+The default is dbt Core 1.10; scalar `require-dbt-version` in `dbt_project.yml` can
+provide a hint. To select explicitly:
 
 ```yaml
 # .dbt-navigation.yml
@@ -65,9 +60,9 @@ engine: core
 dbt-version: '1.12'
 ```
 
-A minor-only version such as `'1.10'` represents the supported patch level of that
-minor series; use a full version such as `'1.10.5'` when patch-specific behavior
-matters. Unsupported engine or schema versions do not enable newer features.
+A minor version such as `'1.10'` uses that series' supported patch level. Set a full
+version such as `'1.10.5'` for patch-specific behavior. Unsupported engine or schema
+versions do not enable newer features.
 
 | Feature | Required version or setting |
 | --- | --- |
@@ -89,9 +84,8 @@ target: dev
 adapter: postgres
 ```
 
-The selected profile output supplies targets for fields such as `target.schema`.
-The adapter narrows macro dispatch and function targets; if it is unknown, navigation
-may offer several candidates.
+The selected profile output defines fields such as `target.schema`. The adapter
+narrows dispatch and function targets; an unknown adapter may yield several candidates.
 
 ### Function compatibility
 
@@ -100,9 +94,8 @@ may offer several candidates.
 | Python | Snowflake, BigQuery, Databricks |
 | JavaScript | Snowflake, BigQuery |
 
-Overload navigation uses the supported Snowflake/Postgres combinations. Unknown
-adapters can preserve source candidates; this does not confirm that the function is
-installed or supported in a warehouse.
+Overloads use supported Snowflake/Postgres combinations. Unknown adapters may retain
+source candidates; navigation does not prove warehouse installation or support.
 
 ## Variables and environment
 
@@ -123,18 +116,15 @@ target: dev
 select: orders
 ```
 
-Variable and environment keys in the run config take precedence over source
-defaults. Environment navigation shows key names only. The plugin does not execute
-the run config or infer values from terminal variables, shell scripts, `dbt --vars`
-commands or unselected IDE run configurations.
+Run-config variable and environment keys override source defaults. Environment
+navigation shows names only. The plugin does not execute this file or infer values
+from terminal variables, shell scripts, `dbt --vars` or unselected IDE run configs.
 
-Selected profiles and `packages.yml` support environment references and explicitly
-configured runtime variable keys. Project variable defaults are not treated as CLI
-variable overrides.
+Selected profiles and `packages.yml` resolve environment keys and configured runtime
+variables. Project defaults do not count as CLI overrides.
 
-For Core 1.12+, `vars.yml` uses a top-level `vars` mapping. Avoid nonempty variable
-mappings in both `vars.yml` and `dbt_project.yml`; conflicting declarations remain
-unresolved.
+Core 1.12+ supports a top-level `vars` mapping in `vars.yml`. Define variables there
+or in `dbt_project.yml`; nonempty mappings in both leave conflicts unresolved.
 
 ```yaml
 # vars.yml
@@ -144,8 +134,8 @@ vars:
 
 ## Local builtin definitions
 
-Without a local definition, builtin names open the documentation for the selected
-dbt version. To navigate into locally available builtin sources instead:
+Builtin names open documentation for the selected dbt version. To open local
+definitions instead:
 
 ```yaml
 # .dbt-navigation.yml
@@ -154,15 +144,14 @@ builtin-sources:
   run_query: vendor/core_macros.sql
 ```
 
-SQL mappings open the named macro block. Python mappings open the matching function
-when the Python Community Edition plugin is enabled. Unavailable definitions fall back
-to the documentation. Find Usages works on local definitions; documentation targets
-have no project usages.
+SQL mappings open macros; Python mappings open functions with the Python Community
+Edition plugin enabled. Missing definitions fall back to documentation. Find Usages
+works on local definitions, not documentation targets.
 
 ## Local metadata
 
-Select metadata files to get targets for resources or columns without local source.
-Local source definitions and declared columns take precedence.
+Select metadata for resources or columns without local source. Source definitions
+and declared columns take precedence.
 
 | Metadata | Setting | Supported selection |
 | --- | --- | --- |
@@ -178,14 +167,13 @@ catalog: target/catalog.json
 state-manifest: state/manifest.json
 ```
 
-Metadata targets are marked as metadata, including stale metadata, and metadata-only
-targets open a read-only document. Metadata does not confirm warehouse existence or a
-runtime deferral decision. Unsupported versions and unreadable files supply no targets.
+Metadata targets are labeled, including stale entries; metadata-only targets open
+read-only. They do not prove warehouse existence or runtime deferral. Unsupported
+versions and unreadable files provide no targets.
 
 ### dbt v2 Information Schema and checks
 
-Both require `engine: v2`. If `dbt_project.yml` sets `info_schema.version`, it must
-be `1`.
+Requires `engine: v2` and, if set in `dbt_project.yml`, `info_schema.version: 1`.
 
 ```yaml
 # .dbt-navigation.yml
@@ -193,16 +181,14 @@ engine: v2
 info-schema-dir: target/info_schema/v1
 ```
 
-The directory can contain resource files such as `dbt.models.parquet`, column
-metadata in `dbt.node_columns.parquet` and dependencies in `dbt.edges.parquet`.
-Selected files are limited to 100,000 rows and 64 MiB each. For example,
-`ref('remote_orders')` can open a metadata entry when no local source exists.
-Uncompressed, Snappy, Gzip, Zstd and LZ4 raw pages are supported; other compression
-formats supply no targets.
+Files include resources (`dbt.models.parquet`), columns (`dbt.node_columns.parquet`)
+and dependencies (`dbt.edges.parquet`). Each file is limited to 100,000 rows and
+64 MiB. For example, `ref('remote_orders')` opens metadata when local source is absent.
+Supported pages: uncompressed, Snappy, Gzip, Zstd and LZ4 raw; other formats supply
+no targets.
 
-Resources with a missing or old `ingested_at` are marked stale. Columns and
-dependencies of stale resources, or of resources with unsaved source edits, are
-ignored.
+Missing or old `ingested_at` marks resources stale. Columns and dependencies are
+ignored for stale resources or those with unsaved source edits.
 
 In a check:
 
@@ -210,11 +196,10 @@ In a check:
 select name from {{ info_schema('models') }} where name = 'orders'
 ```
 
-The view and its known columns open their Information Schema metadata, or the builtin
-schema documentation when `info-schema-dir` is not selected. The literal `orders`
-can open the model when the condition clearly identifies a resource in that view.
-Unsupported views, schema versions or conditions may have no target. Runtime tables,
-variable values and arbitrary Parquet datasets are not navigation sources.
+The view and known columns open metadata, or builtin schema documentation without
+`info-schema-dir`. The literal `orders` can open the model if the condition identifies
+it in that view. Unsupported views, versions or conditions may have no target.
+Runtime tables, variable values and arbitrary Parquet are not navigation sources.
 
 See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
 and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).

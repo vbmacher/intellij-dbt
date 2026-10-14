@@ -2,11 +2,10 @@
 
 [User guide](README.md) · [Configuration](configuration.md) · [Icon legend](icons.md) · [Troubleshooting](troubleshooting.md)
 
-Use **Ctrl+Click** or **Go to Declaration** on a name to open its definition, and
-**Find Usages** on a definition to list its references. These examples extend the
-[example project](../README.md#example-project). For dbt v2 checks and resources
-without local source, see [local metadata](configuration.md#local-metadata). If a
-reference has no target or several, see [troubleshooting](troubleshooting.md).
+Use **Ctrl+Click** or **Go to Declaration** to open definitions; **Find Usages** lists
+their references. See [features](../README.md#features),
+[local metadata and v2 checks](configuration.md#local-metadata), or
+[troubleshooting](troubleshooting.md) for missing or ambiguous targets.
 
 ## Where references work
 
@@ -22,9 +21,9 @@ reference has no target or several, see [troubleshooting](troubleshooting.md).
 | `dependencies.yml` and `package-lock.yml` | Declarative dependency references |
 | Python models | Supported `dbt` API calls |
 
-Quoted and multiline YAML values support navigation. Ordinary strings, variable
-definition values, values in selected run files and unrelated YAML do not acquire
-Jinja navigation merely because they contain a call.
+Quoted and multiline YAML values work in supported locations. Ordinary strings,
+variable definitions, selected run-file values and unrelated YAML do not gain Jinja
+navigation just by containing a call.
 
 ## Models, seeds, snapshots and sources
 
@@ -34,13 +33,11 @@ from {{ ref('orders') }}
 join {{ source('raw', 'events') }} e on true
 ```
 
-Click `orders` to open the model; a `ref()` can also target a seed or snapshot.
-In `source('raw', 'events')`, `raw` opens the source declaration and `events` its
-table declaration. Use the logical YAML names even when `identifier` supplies a
-different warehouse table name.
+Click `orders` to open the model; `ref()` also targets seeds and snapshots.
+In `source()`, `raw` opens the source and `events` its table. Use YAML names,
+even when `identifier` sets a different warehouse name.
 
-A resource's YAML properties link back to its source file, and **dbt Properties**
-opens the YAML entries from the resource file.
+YAML properties link to source files; **dbt Properties** opens YAML from source.
 
 ### Model versions
 
@@ -62,18 +59,16 @@ models:
 {{ ref('finance', 'orders', v=2) }}  {# opens the finance version #}
 ```
 
-Without an explicit version, navigation follows `latest_version`. A version's
-`defined_in` points to its source file.
+Unversioned references use `latest_version`; `defined_in` names the source file.
 
 ### Packages and other projects
 
-Use the package's dbt project name as its namespace, such as
-`ref('finance', 'orders')` or `finance.format_amount()`. Navigation uses locally
-installed package files.
+Use the package's dbt project name: `ref('finance', 'orders')` or
+`finance.format_amount()`. The package must be installed locally.
 
-Cross-project references require a project dependency in `dependencies.yml` and a
-public target. Dependency entries link to installed sources, and version/revision
-entries can link to `package-lock.yml`.
+Cross-project references require a `dependencies.yml` project dependency and a public
+target. Dependency entries open installed sources; versions/revisions can open
+`package-lock.yml`.
 
 ## Macros and Jinja names
 
@@ -88,18 +83,15 @@ entries can link to `package-lock.yml`.
 {{ var('start_' ~ 'date') }}
 ```
 
-Click `double` to open the macro and `value` to open its parameter; Find Usages on
-the macro shows its callers. Simple constant expressions, such as `model_name` and
-`'start_' ~ 'date'`, also navigate.
+Click `double` for the macro or `value` for its parameter; Find Usages lists callers.
+Constants such as `model_name` and `'start_' ~ 'date'` also navigate.
 
-Assignments, loop variables, macro and call-block parameters, `with` bindings,
-captures and namespace attributes link to their definitions in the applicable scope.
-A local name can shadow a dbt context name. Simple wrapper macros connect a literal
-caller argument to a `ref()`, `source()`, `var()`, `doc()` or `function()` inside
-the wrapper.
+Assignments, loop variables, macro/call-block parameters, `with` bindings, captures
+and namespace attributes resolve within their scope. Local names can shadow dbt context.
+Simple wrappers connect literal arguments to inner `ref()`, `source()`, `var()`,
+`doc()` or `function()` calls.
 
-Jinja comments and raw blocks do not count as usages; active Jinja inside SQL
-comments does.
+Jinja comments and raw blocks are ignored; active Jinja in SQL comments counts.
 
 ## Variables
 
@@ -122,14 +114,12 @@ vars:
 {{ var('options')['include_archived'] }}
 ```
 
-`start_date` opens the project-scoped declaration. The fallback `'eu'` is a default
-value with no definition target. `options` opens the dictionary variable; its members
-are not separate dbt variables.
+`start_date` opens the project-scoped definition. The fallback `'eu'` has no target.
+`options` opens the dictionary; its members are not separate dbt variables.
 
-Root package-scoped defaults take precedence over root global defaults, which take
-precedence over installed package defaults. A package macro uses variables from the
-calling node's project. `builtins.var`, `builtins.ref` and `builtins.source` bypass
-same-named user macro overrides.
+Default precedence: root package-scoped, root global, then installed package.
+Package macros use the calling node's project variables. `builtins.var`,
+`builtins.ref` and `builtins.source` bypass same-named user macros.
 
 For run-specific variables, environment keys and `vars.yml`, see
 [local overrides](configuration.md#variables-and-environment).
@@ -142,9 +132,8 @@ models:
     description: "{{ doc('orders_description') }}"
 ```
 
-Click `orders_description` to open the matching `{% docs orders_description %}`
-block. Find Usages on that block lists descriptions that reference it. `doc()`
-navigation applies only to resource descriptions, not to SQL or
+Click `orders_description` to open its `{% docs %}` block; Find Usages lists referencing
+descriptions. `doc()` navigation works only in resource descriptions, not SQL or
 `config.meta.description`.
 
 <img src="screenshots/doc-usages.png" alt="Find Usages for a documentation block" width="640">
@@ -173,15 +162,13 @@ unit_tests:
       fixture: orders_expected
 ```
 
-A custom test name opens its `{% test ... %}` block; a builtin test name opens its
-documentation. Named arguments link to test parameters, and relationship targets and
-columns navigate separately.
+Custom tests open their `{% test ... %}` block; builtins open documentation.
+Named arguments open parameters; relationship targets and columns navigate separately.
 
-Unit-test models, inputs, and macro and variable overrides link to their declarations.
-CSV/SQL fixtures link to files in the `fixtures/` directories of the configured test
-paths, and Find Usages on a fixture file lists its references. Inline rows are data
-and do not link to files. Test syntax support depends on the
-[selected version](configuration.md#engine-and-version).
+Unit-test models, inputs and macro/variable overrides open their declarations.
+CSV/SQL fixtures open files under `<test-path>/fixtures/`; Find Usages lists their
+references. Inline rows have no file targets. Supported syntax depends on the
+[dbt version](configuration.md#engine-and-version).
 
 ## Configuration, profiles and dispatch
 
@@ -191,14 +178,13 @@ and do not link to files. Test syntax support depends on the
 {{ adapter.dispatch('format_amount', 'finance')(amount) }}
 ```
 
-Configuration keys link to applicable project, folder, resource-property or inline
-settings. Schema, alias and database settings can also link to available
-`generate_*_name` macros, and custom materialization names to their definitions.
+Configuration keys open project, folder, resource-property or inline settings.
+Schema, alias and database settings can open `generate_*_name` macros; custom
+materializations open their definitions.
 
-Dispatch follows `macro_namespace`, `search_order` and the selected adapter, including
-default fallbacks and Redshift's Postgres inheritance. Select the adapter, profile and
-target in [configuration](configuration.md#profiles-and-adapters); the target also
-supplies fields such as `target.schema`.
+Dispatch uses `macro_namespace`, `search_order` and the selected adapter, with default
+fallbacks and Redshift's Postgres inheritance. [Select a profile, target and adapter](configuration.md#profiles-and-adapters)
+to resolve dispatch and fields such as `target.schema`.
 
 ## Semantic Layer and resource ownership
 
@@ -207,12 +193,11 @@ supplies fields such as `target.schema`.
 {{ Metric('revenue') }}
 ```
 
-Standalone `semantic_models` and model-embedded semantic definitions both support
-navigation for their applicable dbt versions. Entity paths, dimensions, measures,
-metrics, metric inputs and expression aliases link to their definitions, as do
-saved-query metrics and export owners. `standard_granularity_column` in a time-spine
-definition links to the model column. Exposure dependencies and group names link to
-the resources they describe.
+Standalone `semantic_models` and model-embedded definitions work in supported dbt
+versions. Entity paths, dimensions, measures, metrics, inputs, expression aliases,
+saved-query metrics and export owners open their definitions.
+Time-spine `standard_granularity_column` opens the model column; exposure dependencies
+and group names open their resources.
 
 ## User-defined functions
 
@@ -220,12 +205,10 @@ the resources they describe.
 {{ function('hash_customer') }}(customer_id)
 ```
 
-Click `hash_customer` to open the configured function source. **dbt Properties**
-opens its YAML properties for SQL, Python and JavaScript bodies.
-`overloads[].defined_in` links to additional bodies, and argument names in SQL
-function bodies can link to their YAML declarations. Availability depends on the
-selected version, adapter and language; see
-[function compatibility](configuration.md#function-compatibility).
+Click `hash_customer` to open its source; **dbt Properties** opens YAML for SQL,
+Python and JavaScript bodies. `overloads[].defined_in` opens additional bodies;
+SQL argument names can open YAML declarations. Support depends on
+[version, adapter and language](configuration.md#function-compatibility).
 
 ## SQL names and columns
 
@@ -236,10 +219,9 @@ with recent_orders as (
 select r.order_id as id from recent_orders r order by id
 ```
 
-Click `recent_orders` to open the CTE definition, `r` to open its alias, or `id` in
-`order by` to open the selected expression. Columns can link to YAML declarations,
-simple model projections or explicitly selected local metadata. Ambiguous joins can
-offer several targets.
+Click `recent_orders` for the CTE, `r` for its alias, or `id` in `order by` for the
+selected expression. Columns open YAML declarations, simple model projections or
+selected local metadata. Ambiguous joins offer several targets.
 
 ## Selectors
 
@@ -255,13 +237,13 @@ selectors:
       value: raw.*
 ```
 
-References in selector definitions navigate to matching resources; wildcards can
-offer several matches. Named selectors, nested unions/intersections/exclusions and
-graph operators expose their individual references. YAML `method: selector`
-inheritance is supported, as are string `selector:nightly` terms in Core 1.12+.
+Selector references open matching resources; wildcards can offer several targets.
+Named selectors, nested unions/intersections/exclusions and graph operators expose
+individual references. Inheritance uses YAML `method: selector`, or string
+`selector:nightly` terms in Core 1.12+.
 
-`select`, `exclude` and `selector` fields in configured local selection files also
-navigate. State-dependent selections require explicitly selected state metadata.
+Configured selection files support `select`, `exclude` and `selector` navigation.
+State-dependent selections need explicitly selected state metadata.
 
 ## Python models
 
@@ -275,6 +257,5 @@ def model(dbt, session):
     return orders
 ```
 
-Calls through the model's `dbt` parameter or a local alias navigate. Unrelated
-objects, shadowed names, interpolated strings and comments are not treated as dbt
-calls.
+Use the model's `dbt` parameter or a local alias. Unrelated objects, shadowed names,
+interpolated strings and comments do not navigate.
