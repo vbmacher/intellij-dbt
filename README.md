@@ -24,41 +24,18 @@ See the [user guide](docs/README.md) for installation, navigation, settings and 
 
 ## Features
 
-- **IDE actions:** open definitions with Go to Declaration or Ctrl+Click, find
-  references with Find Usages, open YAML properties with **dbt Properties**, and
-  browse **Uses** / **Used by** with **dbt Dependencies**. Resource icons identify
-  target types; choosers let you select between matching definitions. Gutter markers
-  offer properties, definitions, dependencies and callers beside relevant lines.
-- **Syntax highlighting:** reuse the dbt TextMate grammars for SQL, YAML and Markdown
-  templates, including Jinja comments, expressions, tags and whitespace control.
-- **dbt resources:** follow references to models, seeds, snapshots, sources and
-  documentation blocks, including model versions, installed packages and public
-  cross-project dependencies. Open UDF bodies, overloads and argument declarations
-  in SQL, Python and JavaScript.
-- **Jinja and configuration:** jump to definitions of macros, parameters, local
-  names, variables, environment keys and statement results. Follow configuration
-  keys to settings, builtin names to documentation or local source, and macro
-  dispatch to adapter-specific implementations.
-- **Tests:** open generic-test definitions and parameters, follow relationship
-  targets and columns, and navigate from unit tests to models, inputs, overrides
-  and CSV/SQL fixtures.
-- **Semantic Layer:** follow references to semantic models, entities, dimensions,
-  measures, metrics and aliases; resolve saved-query metrics, export owners,
-  time-spine columns, exposure dependencies and groups.
-- **SQL and Python:** jump from SQL CTEs, aliases and columns to their definitions
-  in SQL, YAML or local metadata. Follow Python model `dbt.ref`, `dbt.source` and
-  `dbt.config` calls to resources and settings.
-- **Selections:** open resources matched by named selectors, wildcards, graph
-  operators, set operations and configured run selections; follow selector
-  inheritance and state metadata references.
-- **Local metadata and dbt v2:** navigate to resources and columns without local
-  source using manifest, catalog, state-manifest JSON or Information Schema Parquet.
-  Follow check references to views, columns and resources. Metadata targets open
-  read-only with stale indicators; local source takes precedence.
-- **Project settings:** select the dbt engine/version and resource paths, keep
-  projects scoped separately, and exclude generated files and `.dbtignore` matches.
-  Navigation updates after edits or file moves and works in SQL, Jinja, YAML and
-  optional Python.
+- **Navigation and Find Usages** for models, seeds, snapshots, sources, docs blocks,
+  macros, variables, tests, UDFs and Semantic Layer objects, including package and
+  cross-project references.
+- **Jinja, SQL and Python:** jump from macros, parameters, CTEs, aliases, columns and
+  Python `dbt.ref` / `dbt.source` / `dbt.config` calls to their definitions.
+- **Selectors:** open the resources matched by selectors, wildcards and graph operators.
+- **Local metadata:** navigate without source using manifest, catalog or state
+  artifacts; local source takes precedence.
+- **IDE tools:** **dbt Properties** and **dbt Dependencies** actions, gutter markers,
+  resource icons and syntax highlighting for dbt templates.
+- **Project settings:** choose the dbt engine/version and resource paths, and exclude
+  generated or `.dbtignore` files.
 
 See the [navigation guide](docs/navigation.md),
 [configuration reference](docs/configuration.md) and [icon legend](docs/icons.md)
