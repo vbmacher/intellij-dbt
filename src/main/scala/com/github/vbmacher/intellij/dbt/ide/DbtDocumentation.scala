@@ -42,6 +42,15 @@ private[ide] final class DbtDocumentationTarget(file: PsiFile, offset: Int, symb
 }
 
 private[ide] object DbtDocumentation {
+  /** Documentation follows resource and macro dependencies, not navigation to config keys or source groups. */
+  def dependencies(w: DbtWorkspace, s: DbtSymbol): (Vector[String], Vector[String]) = {
+    def documented(symbol: DbtSymbol): Boolean = DbtResourceData.GraphKinds(symbol.kind) || symbol.kind == "macro"
+    val edges = DbtLineage.edges(w).filter(e => documented(e.from) && documented(e.to))
+    def same(a: DbtSymbol): Boolean = w.owner(a) == w.owner(s) && a.uniqueId == s.uniqueId
+    edges.filter(e => same(e.from)).map(_.to.presentableText).distinct ->
+      edges.filter(e => same(e.to)).map(_.from.presentableText).distinct
+  }
+
   def escape(text: String): String = text.flatMap {
     case '&' => "&amp;"
     case '<' => "&lt;"
@@ -53,10 +62,7 @@ private[ide] object DbtDocumentation {
 
   def render(w: DbtWorkspace, s: DbtSymbol, bounded: Boolean = true): String = {
     val data = DbtResourceData.get(w, s)
-    val edges = DbtLineage.edges(w)
-    def same(a: DbtSymbol): Boolean = w.owner(a) == w.owner(s) && a.uniqueId == s.uniqueId
-    val upstream = edges.filter(e => same(e.from)).map(_.to.presentableText).distinct
-    val downstream = edges.filter(e => same(e.to)).map(_.from.presentableText).distinct
+    val (upstream, downstream) = dependencies(w, s)
     def e(value: String): String = escape(value)
     def list(label: String, items: Vector[String], limit: Int): String =
       s"<h3>$label (${items.size})</h3>" + (if (items.isEmpty) "<p>None recorded</p>" else "<ul>" + items.take(limit).map(x => s"<li>${e(x)}</li>").mkString + "</ul>") +
