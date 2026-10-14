@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.navigation
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRoot, DbtWorkspace}
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiFile
 import com.intellij.psi.util.{CachedValue, CachedValueProvider, CachedValuesManager, PsiModificationTracker}
@@ -16,6 +16,9 @@ private[dbt] final case class DbtNavigationContext(file: PsiFile, workspace: Dbt
 /** Port of the languages hosting dbt references; implementations are registered in `plugin.xml` in priority order. */
 private[dbt] trait DbtReferenceProvider {
   def references(context: DbtNavigationContext): Vector[DbtNavigationReference]
+
+  /** Physical relation positions from a host parser, for clipboard conversion. */
+  def relationRanges(sql: String): Vector[TextRange] = Vector.empty
 }
 
 private[dbt] object DbtReferenceProvider {
@@ -24,6 +27,8 @@ private[dbt] object DbtReferenceProvider {
 
 /** The references of dbt files, cached until PSI or VFS changes. */
 private[dbt] object DbtNavigation {
+  def relationRanges(sql: String): Vector[TextRange] =
+    DbtReferenceProvider.EP.getExtensionList.asScala.toVector.flatMap(_.relationRanges(sql)).distinct
   private val ProjectFiles = Set(DbtWorkspace.ProjectFileName, "profiles.yml", "packages.yml", "package-lock.yml", "dependencies.yml",
     "selectors.yml", "vars.yml")
   private val ReferenceCache = Key.create[CachedValue[Vector[DbtNavigationReference]]]("dbt.navigation.references")

@@ -21,6 +21,8 @@ import scala.jdk.CollectionConverters._
 
 /** Relations, columns and aliases of SQL resources; the Jinja references found before resolve template relations. */
 private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
+  override def relationRanges(sql: String): Vector[TextRange] = DbtSqlRelations.ranges(sql)
+
   override def references(context: DbtNavigationContext): Vector[DbtNavigationReference] =
     DbtSqlNavigation.references(context.file, context.workspace, context.root, context.found)
 }
