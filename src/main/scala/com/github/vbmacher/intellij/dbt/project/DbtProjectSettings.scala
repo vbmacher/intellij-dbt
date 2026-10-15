@@ -25,7 +25,6 @@ final class DbtSettingsState {
   @BeanProperty var direction: String = "LR"
   @BeanProperty var edgeStyle: String = "round-taxi"
   @BeanProperty var exposures: Boolean = true
-  @BeanProperty var autoOpen: Boolean = false
   @BeanProperty var docsVisible: Boolean = true
   @BeanProperty var docsWidth: Int = 360
 }

@@ -25,7 +25,6 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
   private val direction = new JComboBox[String](Array("LR", "TB", "RL", "BT"))
   private val edges = new JComboBox[String](Array("bezier", "taxi", "round-taxi", "segments", "straight", "unbundled-bezier", "haystack"))
   private val exposures = new JBCheckBox("Show exposures")
-  private val autoOpen = new JBCheckBox("Open dbt tool window for dbt SQL files")
   private var selectedRoot: String = ""
   private var drafts = Map.empty[String, DbtRunOptions]
   private var baseline = ""
@@ -37,7 +36,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream depth" -> upstream,
-      "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures, "" -> autoOpen)
+      "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures)
     rows.zipWithIndex.foreach { case ((label, field), index) =>
       val c = new GridBagConstraints; c.gridy = index; c.gridx = 0; c.anchor = GridBagConstraints.WEST; c.insets = new Insets(4, 5, 4, 10)
       panel.add(new JLabel(label), c); c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(field, c)
@@ -70,7 +69,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
       Vector(p, o.executable, o.executableArguments, o.projectRoot, o.profilesDirectory, o.artifactDirectory, o.target, o.previewLimit, o.colors, o.notifications).mkString("\u0000")
     }
     (options ++ Vector(upstream.getValue, downstream.getValue, direction.getSelectedItem, edges.getSelectedItem,
-      exposures.isSelected, autoOpen.isSelected).map(_.toString)).mkString("\u0001")
+      exposures.isSelected).map(_.toString)).mkString("\u0001")
   }
   override def reset(): Unit = {
     selectedRoot = ""
@@ -83,7 +82,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
     fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
     upstream.setValue(Int.box(settings.getState.upstreamDepth.max(1).min(20))); downstream.setValue(Int.box(settings.getState.downstreamDepth.max(1).min(20)))
     direction.setSelectedItem(settings.getState.direction); edges.setSelectedItem(settings.getState.edgeStyle)
-    exposures.setSelected(settings.getState.exposures); autoOpen.setSelected(settings.getState.autoOpen); baseline = snapshot()
+    exposures.setSelected(settings.getState.exposures); baseline = snapshot()
   }
   override def isModified: Boolean = snapshot() != baseline
   override def apply(): Unit = {
@@ -93,7 +92,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
     settings.getState.upstreamDepth = upstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.downstreamDepth = downstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.direction = direction.getSelectedItem.toString; settings.getState.edgeStyle = edges.getSelectedItem.toString
-    settings.getState.exposures = exposures.isSelected; settings.getState.autoOpen = autoOpen.isSelected
+    settings.getState.exposures = exposures.isSelected
     settings.changed(); baseline = snapshot()
   }
 }

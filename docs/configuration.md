@@ -220,7 +220,7 @@ Open **Settings → dbt Workspace** to configure each owning dbt root independen
 | Colored output / native notifications | Enabled |
 | Upstream / downstream graph depth | 5 / 5 (each 1–20) |
 | Layout / edges | Left-to-right / `round-taxi` |
-| Exposures / automatic tool-window opening | Shown / disabled |
+| Exposures | Shown |
 
 Graph directions are `LR`, `TB`, `RL`, `BT`; edge options are `bezier`, `taxi`,
 `round-taxi`, `segments`, `straight`, `unbundled-bezier`, `haystack`. Settings persist

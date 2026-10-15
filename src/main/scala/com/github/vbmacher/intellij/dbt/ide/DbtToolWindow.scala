@@ -32,7 +32,7 @@ import scala.util.control.NonFatal
 
 final class DbtToolWindowFactory extends ToolWindowFactory {
   override def createToolWindowContent(project: Project, toolWindow: ToolWindow): Unit = {
-    val panel = new DbtToolWindowPanel(project, toolWindow)
+    val panel = new DbtToolWindowPanel(project)
     val manager = toolWindow.getContentManager
     Vector("Lineage" -> panel.lineagePanel, "Runner" -> panel.runnerPanel, "Status" -> panel.statusPanel).foreach { case (name, component) =>
       val content = ContentFactory.getInstance().createContent(component, name, false)
@@ -47,7 +47,7 @@ private[ide] final case class DbtViewContext(root: Option[String], model: Option
   targets: Vector[String], target: String, status: String)
 
 /** All PSI/artifact work is performed in cancellable nonblocking read actions. Only immutable UI payloads cross to the EDT. */
-private[ide] final class DbtToolWindowPanel(project: Project, toolWindow: ToolWindow) extends Disposable {
+private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable {
   val lineagePanel = new JPanel(new BorderLayout)
   val runnerPanel = new JPanel(new BorderLayout)
   val statusPanel = new JPanel(new BorderLayout)
@@ -204,7 +204,6 @@ private[ide] final class DbtToolWindowPanel(project: Project, toolWindow: ToolWi
         payload.add("theme", theme)
         browser.foreach(_.update(payload))
         updateButtons()
-        if (settings.getState.autoOpen && context.root.nonEmpty && file.exists(_.getExtension == "sql") && follow) toolWindow.show()
       }
     ).submit(AppExecutorUtil.getAppExecutorService)
   }

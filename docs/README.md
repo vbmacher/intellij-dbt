@@ -1,11 +1,10 @@
 # User guide
 
-Navigate dbt definitions, usages, YAML properties and dependencies in IntelliJ IDEA
-Community Edition, including SQL files opened as plain text.
+Navigate dbt definitions, usages, YAML properties and dependencies, including SQL files opened as plain text.
 
 ## Installation
 
-Requires **IntelliJ IDEA 2026.2** (build `262.8665`–`262.*`) and the bundled YAML
+Requires **IntelliJ IDEA** (at least 2026.2) and the bundled YAML
 plugin. Python navigation also requires the free Python Community Edition plugin.
 Enable the bundled **TextMate Bundles** plugin for [dbt syntax highlighting](highlighting.md).
 
@@ -13,7 +12,7 @@ To install a locally built distribution:
 
 1. Build the ZIP with JDK 25 and `sbt packageArtifactZip` from the repository root.
 2. Open **Settings → Plugins**, select the gear menu, then **Install Plugin from Disk**.
-3. Choose `target/intellij-dbt-1.1.0.zip` and restart the IDE if prompted.
+3. Choose `target/intellij-dbt-[version].zip` and restart the IDE if prompted.
 
 ## First navigation
 

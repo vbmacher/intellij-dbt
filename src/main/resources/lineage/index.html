@@ -21,7 +21,7 @@ window.dbtUpdate=function(p){
  displayDocs(p.docsVisible!==false);$('docs').style.width=(p.docsWidth||360)+'px';
  const nodes=p.nodes.map(n=>({data:{...n},classes:n.boundary?'boundary':''})),edges=p.edges.map((e,i)=>({data:{id:'edge:'+i,...e,...(!e.candidate?{candidate:undefined}:{candidate:1})}}));
  for(const b of p.boundary||[]){const id='boundary:'+b.direction;nodes.push({data:{id,name:'+ '+b.count+' more',boundary:b.direction},classes:'boundary'});for(const a of b.anchors)edges.push({data:{id:id+':'+a,source:b.direction==='upstream'?id:a,target:b.direction==='upstream'?a:id}})}
- if(!cy){cy=cytoscape({container:$('cy'),elements:[],style:styleEdges(p.edgeStyle),minZoom:.15,maxZoom:2.5,wheelSensitivity:.15,boxSelectionEnabled:false});
+ if(!cy){cy=cytoscape({container:$('cy'),elements:[],style:styleEdges(p.edgeStyle),minZoom:.15,maxZoom:2.5,boxSelectionEnabled:false});
  cy.on('render pan zoom position',positions);
  cy.on('mouseover','node',e=>{const d=e.target.data();if(d.boundary)return;const tip=$('tooltip'),p=e.target.renderedPosition(),r=$('cy').getBoundingClientRect();tip.textContent=[d.package+'.'+d.name,d.kind+' '+(d.materialized||''),d.schema,d.description].filter(Boolean).join('\n');tip.style.left=Math.min(innerWidth-370,r.x+p.x+25)+'px';tip.style.top=Math.max(45,r.y+p.y+45)+'px';tip.style.display='block'});
  cy.on('mouseout mousedown drag pan zoom',()=>{$('tooltip').style.display='none'});cy.on('tap','node',e=>{const n=e.target;if(n.data('boundary'))send('expand',n.data('boundary'));else{clearTimeout(selectedTimer);selectedTimer=setTimeout(()=>select(n.id()),180)}});

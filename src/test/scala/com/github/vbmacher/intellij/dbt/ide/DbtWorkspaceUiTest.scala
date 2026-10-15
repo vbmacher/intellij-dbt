@@ -59,9 +59,9 @@ print('started from the Run button',flush=True)
     val options = DbtProjectSettings.get(getProject).options(directory)
     options.executable = executable.getPath; options.notifications = false
     val manager = ToolWindowManager.getInstance(getProject)
-    val toolWindow = manager.registerToolWindow(RegisterToolWindowTask.notClosable("dbt-ui-test"))
+    manager.registerToolWindow(RegisterToolWindowTask.notClosable("dbt-ui-test"))
     try {
-      val panel = new DbtToolWindowPanel(getProject, toolWindow)
+      val panel = new DbtToolWindowPanel(getProject)
       Disposer.register(ui, panel)
       def children(component: Component): Vector[Component] = Vector(component) ++ (component match {
         case container: Container => container.getComponents.toVector.flatMap(children)

@@ -4,11 +4,8 @@
 
 An IntelliJ IDEA plugin for [dbt](https://www.getdbt.com/) navigation, documentation, lineage and local dbt execution.
 
-Works in **IntelliJ IDEA Community Edition**, including SQL files opened as plain text.
-The bundled YAML plugin is required. SQL navigation does not require Ultimate or
-Database Tools. Python model navigation optionally uses the free Python
-Community Edition plugin.
-Enable the bundled **TextMate Bundles** plugin for [dbt syntax highlighting](docs/highlighting.md).
+The plugin does not require Ultimate edition or Database Tools. Python model navigation optionally uses the free Python
+Community Edition plugin. Enable the bundled **TextMate Bundles** plugin for [dbt syntax highlighting](docs/highlighting.md).
 
 ## Getting started
 
@@ -39,7 +36,7 @@ See the [user guide](docs/README.md) for installation, navigation, settings and 
 
 See the [navigation guide](docs/navigation.md),
 [configuration reference](docs/configuration.md) and [icon legend](docs/icons.md)
-for details and version requirements. The default is dbt Core 1.10.
+for details and version requirements.
 
 Open the bottom **dbt** tool window for interactive lineage, a documentation sidebar,
 model commands and SQL previews. Native hover, missing-reference warnings and
@@ -54,18 +51,16 @@ To set up the development environment:
 2. Configure JDK 25
 3. Open the project in IntelliJ IDEA as an sbt project
 
-Development uses [sbt](https://www.scala-sbt.org/) and IntelliJ IDEA Community 2026.2.
-
 ```bash
-sbt compile        # downloads IntelliJ SDK (first run) and compiles the plugin
-sbt test           # runs tests
+sbt compile             # downloads IntelliJ SDK (first run) and compiles the plugin
+sbt test                # runs tests
 sbt packageArtifactZip  # builds the plugin distribution zip
-sbt testPackaged   # tests the minimized runtime, including all supported Parquet codecs
-sbt runPluginVerifier  # checks binary compatibility and reports API warnings
-sbt runIDE         # runs IntelliJ IDEA with the plugin installed
+sbt testPackaged        # tests the minimized runtime, including all supported Parquet codecs
+sbt runPluginVerifier   # checks binary compatibility and reports API warnings
+sbt runIDE              # runs IntelliJ IDEA with the plugin installed
 ```
 
-For Lineage in the development IDE, install the SDK's matching native JCEF bundle;
+For Lineage in the development IDE (in production IDE it works out of the box), install the SDK's matching native JCEF bundle;
 see [JCEF setup](docs/workspace.md#jcef-setup).
 
 The default suite runs without a Python plugin. To also test Python navigation, install the

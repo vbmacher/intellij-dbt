@@ -26,7 +26,7 @@ metadata fills gaps. Compiled SQL is shown only when available. Keys, constraint
 and tests are labeled as declarations, never as verified warehouse constraints or
 passing results. Resources without SQL/columns show explicit empty states.
 
-Settings control depth, direction, connectors, exposures and automatic opening.
+Settings control depth, direction, connectors and exposures.
 Theme, source and artifact updates refresh the view; the same graph focus preserves
 zoom/pan. Ambiguous declarations remain distinct candidates. The graph uses bundled
 Cytoscape.js/dagre assets; it makes no CDN requests.
