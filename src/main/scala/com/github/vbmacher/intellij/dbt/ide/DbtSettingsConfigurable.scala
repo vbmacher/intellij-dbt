@@ -1,8 +1,10 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions}
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.{Configurable, ConfigurationException}
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.{JBCheckBox, JBTextField}
 import com.intellij.util.ui.JBUI
 import java.awt.{Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
@@ -12,7 +14,7 @@ import scala.jdk.CollectionConverters._
 final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin {
   private val settings = DbtProjectSettings.get(project)
   private val root = new JComboBox[String]()
-  private val executable = new JBTextField
+  private val executable = new TextFieldWithBrowseButton
   private val executableArguments = new JBTextField
   private val projectRoot = new JBTextField
   private val profiles = new JBTextField
@@ -47,6 +49,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     }
     // NoMargin keeps this Scrollable panel directly in the IDE viewport; supply the usual padding here.
     panel.setBorder(JBUI.Borders.empty(11, 16, 16, 16))
+    executable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile()
+      .withTitle("Select dbt executable")
+      .withDescription("Choose a dbt executable, wrapper script, or custom tool."))
+    executable.getButton.setToolTipText("Choose a dbt executable, script, or custom tool")
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
@@ -140,6 +146,8 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   }
 
   override def isModified: Boolean = snapshot() != baseline
+
+  override def disposeUIResources(): Unit = executable.dispose()
 
   override def apply(): Unit = {
     if (executable.getText.trim.isEmpty || artifacts.getText.trim.isEmpty) throw new ConfigurationException("Executable and artifact directory must not be blank.")

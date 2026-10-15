@@ -43,9 +43,22 @@ test('documentation controls stay together on the right when the window narrows'
    assert.ok(toggle.x>=status.x+status.width-1);assert.ok(regenerate.x>toggle.x);
    assert.ok(Math.abs(regenerate.x+regenerate.width-(width-10))<=1);
    for(const name of ['Clear search','Zoom in','Zoom out','Fit graph','Toggle documentation','Regenerate Docs'])
-    assert.ok(await page.getByRole('button',{name,exact:true}).getAttribute('title'));
+    assert.ok(await page.getByRole('button',{name,exact:true}).getAttribute('data-tooltip'));
   }
  }finally{await page.setViewportSize({width:1400,height:850})}
+});
+test('button tooltips appear on hover and keyboard focus inside the panel',async()=>{
+ for(const [name,text]of [['Zoom in','Zoom in'],['Toggle documentation','Show/hide documentation'],['Regenerate Docs','Regenerate Docs'],['Columns','View documented columns']]){
+  const button=page.getByRole('button',{name,exact:true});
+  await button.hover();assert.equal(await page.getByRole('tooltip').isVisible(),true);
+  assert.equal(await page.getByRole('tooltip').innerText(),text);
+  const box=await page.getByRole('tooltip').boundingBox();assert.ok(box.x>=0&&box.x+box.width<=1400);
+  await page.mouse.move(5,840);assert.equal(await page.getByRole('tooltip').isVisible(),false);
+ }
+ const regenerate=page.getByRole('button',{name:'Regenerate Docs',exact:true});
+ await regenerate.focus();assert.equal(await page.getByRole('tooltip').innerText(),'Regenerate Docs');
+ assert.equal(await page.getByRole('tooltip').isVisible(),true);
+ await regenerate.evaluate(button=>button.blur());assert.equal(await page.getByRole('tooltip').isVisible(),false);
 });
 test('Regenerate Docs requests generation and is disabled while a command runs',async()=>{
  const count=await page.evaluate(()=>events.filter(e=>e.type==='regenerate').length);

@@ -18,6 +18,7 @@ import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.{PsiDocumentManager, PsiManager}
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
+import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
@@ -31,7 +32,7 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicLong
-import javax.swing.{JButton, JCheckBox, JComboBox, JPanel, JSplitPane}
+import javax.swing.{JButton, JCheckBox, JComboBox, JPanel}
 import javax.imageio.ImageIO
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
@@ -95,6 +96,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
   executableArguments.setName("dbt.executableArguments")
+  target.setToolTipText("Select the dbt target for the current execution root")
+  fullRefresh.setToolTipText("Rebuild incremental models from scratch for Run and Build")
   executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
   executableArguments.addActionListener(_ => saveExecutableArguments())
   executableArguments.addFocusListener(new FocusAdapter {
@@ -108,29 +111,34 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   configuration.add(argumentsLabel);
   configuration.add(executableArguments)
   DbtCommand.Actions.foreach { name =>
-    val icon = name match {
-      case "Run" => AllIcons.Actions.Execute
-      case "Build" | "Compile" => AllIcons.Actions.Compile
-      case "Test" => AllIcons.RunConfigurations.TestState.Run
-      case "Preview" => AllIcons.Actions.Preview
-      case "Generate Docs" => AllIcons.Actions.PreviewDetails
+    val (icon, tooltip) = name match {
+      case "Run" => AllIcons.Actions.Execute -> "Run the current dbt model"
+      case "Build" => AllIcons.Actions.Compile -> "Build and test the current dbt model"
+      case "Compile" => AllIcons.Actions.Compile -> "Compile the current dbt model"
+      case "Test" => AllIcons.RunConfigurations.TestState.Run -> "Run tests for the current dbt model"
+      case "Preview" => AllIcons.Actions.Preview -> "Preview selected SQL or the current dbt model"
+      case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation artifacts for the current dbt project and target"
     }
     val button = new JButton(name, icon);
+    button.setToolTipText(tooltip)
     commands(name) = button;
     button.addActionListener(_ => start(name));
     toolbar.add(button)
     if (name == "Build") toolbar.add(fullRefresh)
   }
   val clear = new JButton("Clear", AllIcons.Actions.GC);
+  clear.setToolTipText("Clear the command log and preview")
   clear.addActionListener(_ => {
     runner.console.clear();
     preview.setText("")
   });
   toolbar.add(clear)
+  stop.setToolTipText("Cancel the running dbt command")
   stop.addActionListener(_ => runner.stop());
   stop.setEnabled(false);
   toolbar.add(stop)
   val configure = new JButton("Settings", AllIcons.General.Settings);
+  configure.setToolTipText("Configure dbt Workspace settings")
   configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"));
   toolbar.add(configure)
   val north = new JPanel(new BorderLayout);
@@ -141,8 +149,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   preview.setEditable(false);
   preview.setLineWrap(false);
   preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
-  val output = new JSplitPane(JSplitPane.VERTICAL_SPLIT, runner.console.getComponent, new JBScrollPane(preview));
-  output.setResizeWeight(.75)
+  val output = new OnePixelSplitter(true, .75f)
+  output.setFirstComponent(runner.console.getComponent)
+  output.setSecondComponent(new JBScrollPane(preview))
   runner.console match {
     case console: com.intellij.execution.impl.ConsoleViewImpl => console.getEditor.getSettings.setUseSoftWraps(true)
     case _ => ()

@@ -236,6 +236,9 @@ adds the active `--target` to every command.
 
 ### Script wrappers
 
+Use the browse button beside **dbt executable** to select a script or custom tool,
+or type a command name such as `dbt` or `zsh`.
+
 Set **Executable** to a wrapper script or interpreter and **Executable arguments**
 to any arguments it needs before the dbt command. For example:
 
