@@ -211,6 +211,7 @@ Open **Settings → dbt Workspace** to configure each owning dbt root independen
 | Setting | Default |
 | --- | --- |
 | Executable | `dbt`; discover `.venv` / `venv` first |
+| Executable arguments | Empty; arguments inserted before the dbt command |
 | Project root override | Owning directory containing `dbt_project.yml` |
 | Profiles directory | `DBT_PROFILES_DIR`, project-local `profiles.yml`, then `~/.dbt` |
 | Artifact directory | `target` |
@@ -232,3 +233,25 @@ Explicit `.dbt-navigation.yml` artifact paths still select additional metadata. 
 the selected manifest and Runner artifact directory consistent when using both.
 The Runner passes `DBT_TARGET_PATH` and `DBT_PROFILES_DIR` to the child process and
 adds the active `--target` to every command.
+
+### Script wrappers
+
+Set **Executable** to a wrapper script or interpreter and **Executable arguments**
+to any arguments it needs before the dbt command. For example:
+
+| Setting | Value |
+| --- | --- |
+| Executable | `zsh` |
+| Executable arguments | `scripts/dbt-wrapper.zsh analytics` |
+
+For **Run**, the resulting command starts with
+`zsh scripts/dbt-wrapper.zsh analytics run`. The Runner then adds the model selector,
+target and other dbt options. All Runner actions use the same prefix, including
+**Generate Docs** and inline **Preview**. Configure each owning dbt root independently;
+the wrapper handles any additional project selection or environment setup.
+
+Executable paths containing `/` or `\` resolve relative to the execution root.
+Quote executable arguments containing spaces. Arguments are passed directly to the
+process; shell expressions are not evaluated. When a local
+`.venv` or `venv` contains dbt, its executable directory is added to `PATH` for the
+wrapper's dbt and Python calls.

@@ -12,6 +12,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
   private val settings = DbtProjectSettings.get(project)
   private val root = new JComboBox[String]()
   private val executable = new JBTextField
+  private val executableArguments = new JBTextField
   private val projectRoot = new JBTextField
   private val profiles = new JBTextField
   private val artifacts = new JBTextField
@@ -32,7 +33,8 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
   override def getDisplayName: String = "dbt Workspace"
   override def createComponent(): JComponent = {
     val panel = new JPanel(new GridBagLayout)
-    val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Project root override" -> projectRoot,
+    executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
+    val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream depth" -> upstream,
       "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures, "" -> autoOpen)
@@ -49,23 +51,23 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable {
   }
   private def copyOptions(o: DbtRunOptions): DbtRunOptions = {
     val c = new DbtRunOptions
-    c.executable = o.executable; c.projectRoot = o.projectRoot; c.profilesDirectory = o.profilesDirectory
+    c.executable = o.executable; c.executableArguments = o.executableArguments; c.projectRoot = o.projectRoot; c.profilesDirectory = o.profilesDirectory
     c.artifactDirectory = o.artifactDirectory; c.target = o.target; c.previewLimit = o.previewLimit; c.colors = o.colors; c.notifications = o.notifications; c
   }
   private def fill(o: DbtRunOptions): Unit = {
-    executable.setText(o.executable); projectRoot.setText(o.projectRoot); profiles.setText(o.profilesDirectory)
+    executable.setText(o.executable); executableArguments.setText(o.executableArguments); projectRoot.setText(o.projectRoot); profiles.setText(o.profilesDirectory)
     artifacts.setText(o.artifactDirectory); target.setText(o.target); limit.setValue(Int.box(o.previewLimit.max(1).min(1000)))
     colors.setSelected(o.colors); notifications.setSelected(o.notifications)
   }
   private def readOptions(): DbtRunOptions = {
     val o = new DbtRunOptions
-    o.executable = executable.getText.trim; o.projectRoot = projectRoot.getText.trim; o.profilesDirectory = profiles.getText.trim
+    o.executable = executable.getText.trim; o.executableArguments = executableArguments.getText.trim; o.projectRoot = projectRoot.getText.trim; o.profilesDirectory = profiles.getText.trim
     o.artifactDirectory = artifacts.getText.trim; o.target = target.getText.trim; o.previewLimit = limit.getValue.asInstanceOf[Number].intValue()
     o.colors = colors.isSelected; o.notifications = notifications.isSelected; o
   }
   private def snapshot(): String = {
     val options = drafts.updated(selectedRoot, readOptions()).toVector.sortBy(_._1).map { case (p, o) =>
-      Vector(p, o.executable, o.projectRoot, o.profilesDirectory, o.artifactDirectory, o.target, o.previewLimit, o.colors, o.notifications).mkString("\u0000")
+      Vector(p, o.executable, o.executableArguments, o.projectRoot, o.profilesDirectory, o.artifactDirectory, o.target, o.previewLimit, o.colors, o.notifications).mkString("\u0000")
     }
     (options ++ Vector(upstream.getValue, downstream.getValue, direction.getSelectedItem, edges.getSelectedItem,
       exposures.isSelected, autoOpen.isSelected).map(_.toString)).mkString("\u0001")

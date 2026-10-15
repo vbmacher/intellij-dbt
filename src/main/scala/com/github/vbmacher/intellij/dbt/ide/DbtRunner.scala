@@ -13,6 +13,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.util.execution.ParametersListUtil
 import com.intellij.ui.SystemNotifications
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.nio.charset.StandardCharsets
@@ -45,6 +46,7 @@ private[ide] object DbtCommand {
     else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml"))) Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
     else if (!inline && action != "Generate Docs" && model.isEmpty) Left("Open a dbt model, or select SQL for Preview.")
     else {
+      val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
       val w = DbtWorkspace.get(root.config.getProject)
       val selector = model.map { s =>
         val folders = w.owner(s).toVector.flatMap(_.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2))
@@ -58,9 +60,9 @@ private[ide] object DbtCommand {
       val preview = if (action == "Preview") Vector("--limit", options.previewLimit.max(1).min(1000).toString, "--output", "json") else Vector.empty
       val profiles = DbtExecutionContext.profiles(root).directory.toString
       val artifact = root.artifactDirectory
-      Right(DbtCommand(Vector(DbtExecutionContext.executable(root)) ++ command ++ select ++ refresh ++ preview ++
+      Right(DbtCommand(prefix ++ command ++ select ++ refresh ++ preview ++
         (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
-        directory.toString, Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
+        directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
         action, target, options.notifications, artifact.toString))
     }
   }

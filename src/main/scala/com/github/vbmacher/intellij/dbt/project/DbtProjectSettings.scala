@@ -8,6 +8,7 @@ import scala.beans.BeanProperty
 
 final class DbtRunOptions {
   @BeanProperty var executable: String = "dbt"
+  @BeanProperty var executableArguments: String = ""
   @BeanProperty var projectRoot: String = ""
   @BeanProperty var profilesDirectory: String = ""
   @BeanProperty var artifactDirectory: String = "target"

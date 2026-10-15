@@ -250,6 +250,7 @@ select * from {{ source('raw', 'missing_table') }}
     val settings = DbtProjectSettings.get(getProject)
     val root = workspace.roots.head.directory.getPath
     settings.options(root).target = "dev"
+    settings.options(root).executableArguments = "analytics"
     settings.options(root + "/another").target = "prod"
     for (direction <- Vector("LR", "TB", "RL", "BT"); edge <- Vector("bezier", "taxi", "round-taxi", "segments", "straight", "unbundled-bezier", "haystack")) {
       settings.getState.direction = direction; settings.getState.edgeStyle = edge
@@ -257,6 +258,8 @@ select * from {{ source('raw', 'missing_table') }}
       val restored = com.intellij.util.xmlb.XmlSerializer.deserialize(xml, classOf[DbtSettingsState])
       assertEquals(direction, restored.direction); assertEquals(edge, restored.edgeStyle)
       assertEquals("dev", restored.projects.get(root).target); assertEquals("prod", restored.projects.get(root + "/another").target)
+      assertEquals("analytics", restored.projects.get(root).executableArguments)
+      assertEquals("", restored.projects.get(root + "/another").executableArguments)
     }
   }
 
