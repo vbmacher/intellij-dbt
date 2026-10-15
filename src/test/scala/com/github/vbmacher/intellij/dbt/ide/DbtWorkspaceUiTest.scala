@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettingsState}
+import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettingsState, DbtWorkspace}
 import com.google.gson.JsonParser
 import com.intellij.codeHighlighting.Pass
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
@@ -16,7 +16,7 @@ import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestF
 import org.junit.Assert._
 import java.awt.{Component, Container}
 import java.nio.file.{Files, Paths}
-import javax.swing.JButton
+import javax.swing.{JButton, JTextField}
 import scala.jdk.CollectionConverters._
 
 /** Exercise the Swing start button and daemon invalidation rather than forcing a new resolver/highlighting run. */
@@ -44,6 +44,11 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
   private def await(message: String)(condition: => Boolean): Unit =
     PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
 
+  private def children(component: Component): Vector[Component] = Vector(component) ++ (component match {
+    case container: Container => container.getComponents.toVector.flatMap(children)
+    case _ => Vector.empty
+  })
+
   def testRunButtonSavesTheEditorAndLaunchesDbt(): Unit = {
     setupEditor()
     val runner = new DbtRunner(getProject)
@@ -63,10 +68,6 @@ print('started from the Run button',flush=True)
     try {
       val panel = new DbtToolWindowPanel(getProject)
       Disposer.register(ui, panel)
-      def children(component: Component): Vector[Component] = Vector(component) ++ (component match {
-        case container: Container => container.getComponents.toVector.flatMap(children)
-        case _ => Vector.empty
-      })
       val run = children(panel.runnerPanel).collectFirst { case button: JButton if button.getText == "Run" => button }.get
       panel.refresh(follow = true)
       await("Current model enables Run")(run.isEnabled)
@@ -82,6 +83,47 @@ print('started from the Run button',flush=True)
       assertTrue(result.getAsJsonArray("args").asScala.exists(_.getAsString == "fqn:analytics.report"))
       await("Run returns to idle")(!getProject.getService(classOf[DbtRunner]).isRunning)
     } finally manager.unregisterToolWindow("dbt-ui-test")
+  }
+
+  def testRunnerEditsSharedPrefixAndGeneratesRenderableDocs(): Unit = {
+    setupEditor()
+    val runner = new DbtRunner(getProject)
+    Disposer.register(ui, runner)
+    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
+    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
+    val executable = add("fake-dbt", """#!/usr/bin/python3
+import json,os,pathlib,sys
+target=pathlib.Path(os.environ['DBT_TARGET_PATH'])
+target.mkdir(parents=True,exist_ok=True)
+target.joinpath('manifest.json').write_text(json.dumps({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/manifest/v12.json'},'nodes':{'model.analytics.report':{'unique_id':'model.analytics.report','resource_type':'model','name':'report','package_name':'analytics','original_file_path':'models/report.sql','description':'Generated for '+sys.argv[1]}}}))
+pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
+""").getVirtualFile
+    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
+    val settings = DbtProjectSettings.get(getProject)
+    val options = settings.options(directory)
+    options.executable = executable.getPath; options.executableArguments = "initial"; options.notifications = false
+    val panel = new DbtToolWindowPanel(getProject)
+    Disposer.register(ui, panel)
+    val controls = children(panel.runnerPanel)
+    val arguments = controls.collectFirst { case field: JTextField if field.getName == "dbt.executableArguments" => field }.get
+    val generate = controls.collectFirst { case button: JButton if button.getText == "Generate Docs" => button }.get
+    panel.refresh(follow = true)
+    await("Runner loads the Workspace prefix")(arguments.isEnabled && arguments.getText == "initial")
+    options.executableArguments = "updated-in-settings"; settings.changed()
+    await("Workspace changes reach Runner")(arguments.getText == "updated-in-settings")
+    arguments.setText("'analytics context'")
+    // Launch immediately, without Enter or a focus-lost event committing the edit first.
+    ApplicationManager.getApplication.invokeLater(() => generate.doClick(), ModalityState.nonModal())
+    val invocation = Paths.get(directory, "invocation.json")
+    await("Generate Docs launches the configured executable")(Files.isRegularFile(invocation))
+    assertEquals(Vector("analytics context", "docs", "generate"), JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).take(3).toVector)
+    assertEquals("'analytics context'", settings.options(directory).executableArguments)
+    await("Generated artifacts refresh documentation") {
+      val workspace = DbtWorkspace.get(getProject)
+      workspace.codeSymbols(myFixture.getFile).find(_.kind == "model").exists(symbol =>
+        DbtDocumentation.render(workspace, symbol).contains("Generated for analytics context"))
+    }
+    await("Docs command returns to idle")(!runner.isRunning)
   }
 
   def testAddingAReferencedDefinitionInvalidatesOpenEditorHighlighting(): Unit = {

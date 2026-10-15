@@ -58,8 +58,13 @@ changes. Source-only resolution cannot prove runtime macro behavior or warehouse
 
 ## Runner
 
-Toolbar order: **Target | Run | Build | Full Refresh | Test | Compile | Preview |
-Generate Docs | Clear | Stop**. Current model and target appear below it.
+The configuration row contains **Target** and **Executable arguments**. Arguments
+are passed before the dbt command and shared with **Settings → dbt Workspace** for
+the current execution root. They also apply to **Generate Docs** and the graph's
+**Regenerate Docs** action.
+
+The toolbar uses IDE icons alongside **Run | Build | Full Refresh | Test | Compile |
+Preview | Generate Docs | Clear | Stop | Settings**. Current model and target appear below it.
 
 | Button | Command |
 | --- | --- |

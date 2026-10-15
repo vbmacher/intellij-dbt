@@ -2,6 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{Gson, JsonObject, JsonParser}
+import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction, WriteIntentReadAction}
@@ -12,16 +13,17 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.{VirtualFile, VirtualFileManager}
 import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.{PsiDocumentManager, PsiManager}
 import com.intellij.psi.util.PsiModificationTracker
-import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea}
+import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.{BorderLayout, FlowLayout}
+import java.awt.event.{FocusAdapter, FocusEvent}
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.Callable
@@ -55,8 +57,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val runner = project.getService(classOf[DbtRunner])
   private val contextLabel = new JBLabel("Open a dbt model to run commands.")
   private val target = new JComboBox[String]()
+  private val executableArguments = new JBTextField(24)
   private val fullRefresh = new JCheckBox("Full Refresh")
-  private val stop = new JButton("Stop")
+  private val stop = new JButton("Stop", AllIcons.Actions.Suspend)
   private val preview = new JBTextArea
   private val status = new JBTextArea
   private val toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
@@ -83,15 +86,31 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       unavailable.setEditable(false); unavailable.setLineWrap(true); unavailable.setWrapStyleWord(true)
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
-  toolbar.add(target)
+  executableArguments.setName("dbt.executableArguments")
+  executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
+  executableArguments.addActionListener(_ => saveExecutableArguments())
+  executableArguments.addFocusListener(new FocusAdapter {
+    override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
+  })
+  val configuration = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
+  configuration.add(new JBLabel("Target:")); configuration.add(target)
+  val argumentsLabel = new JBLabel("Executable arguments:"); argumentsLabel.setLabelFor(executableArguments)
+  configuration.add(argumentsLabel); configuration.add(executableArguments)
   DbtCommand.Actions.foreach { name =>
-    val button = new JButton(name); commands(name) = button; button.addActionListener(_ => start(name)); toolbar.add(button)
+    val icon = name match {
+      case "Run" => AllIcons.Actions.Execute
+      case "Build" | "Compile" => AllIcons.Actions.Compile
+      case "Test" => AllIcons.RunConfigurations.TestState.Run
+      case "Preview" => AllIcons.Actions.Preview
+      case "Generate Docs" => AllIcons.Actions.PreviewDetails
+    }
+    val button = new JButton(name, icon); commands(name) = button; button.addActionListener(_ => start(name)); toolbar.add(button)
     if (name == "Build") toolbar.add(fullRefresh)
   }
-  val clear = new JButton("Clear"); clear.addActionListener(_ => { runner.console.clear(); preview.setText("") }); toolbar.add(clear)
+  val clear = new JButton("Clear", AllIcons.Actions.GC); clear.addActionListener(_ => { runner.console.clear(); preview.setText("") }); toolbar.add(clear)
   stop.addActionListener(_ => runner.stop()); stop.setEnabled(false); toolbar.add(stop)
-  val configure = new JButton("Settings"); configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace")); toolbar.add(configure)
-  val north = new JPanel(new BorderLayout); north.add(toolbar, BorderLayout.NORTH); north.add(contextLabel, BorderLayout.SOUTH)
+  val configure = new JButton("Settings", AllIcons.General.Settings); configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace")); toolbar.add(configure)
+  val north = new JPanel(new BorderLayout); north.add(configuration, BorderLayout.NORTH); north.add(toolbar, BorderLayout.CENTER); north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
   preview.setEditable(false); preview.setLineWrap(false); preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
   val output = new JSplitPane(JSplitPane.VERTICAL_SPLIT, runner.console.getComponent, new JBScrollPane(preview)); output.setResizeWeight(.75)
@@ -116,7 +135,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     override def settingsChanged(): Unit = schedule(follow = false)
   })
   connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, new FileEditorManagerListener {
+    override def fileOpened(source: FileEditorManager, file: VirtualFile): Unit = schedule(follow = false)
     override def selectionChanged(event: FileEditorManagerEvent): Unit = {
+      saveExecutableArguments()
       fullRefresh.setSelected(false)
       context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
       contextLabel.setText("Updating current model and target…")
@@ -136,6 +157,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   connection.subscribe(EditorColorsManager.TOPIC, new com.intellij.openapi.editor.colors.EditorColorsListener {
     override def globalSchemeChange(scheme: com.intellij.openapi.editor.colors.EditorColorsScheme): Unit = schedule(follow = false)
   })
+  updateButtons()
+
+  private def saveExecutableArguments(): Unit = context.root.foreach { path =>
+    val options = settings.options(path)
+    val value = executableArguments.getText.trim
+    if (options.executableArguments != value) { options.executableArguments = value; settings.changed() }
+  }
 
   private def schedule(follow: Boolean): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed) {
     followPending ||= follow
@@ -157,7 +185,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val psi = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f)))
         val owner = psi.flatMap(w.root).filter(r => psi.exists(f => !r.excluded(f.getVirtualFile))).map(w.executionRoot)
         val model = psi.toVector.flatMap(w.codeSymbols).filter(_.kind == "model").headOption
-        val nextFocus = if (follow) model.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
+        val nextFocus = if (follow || oldFocus.isEmpty) model.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
         val graph = DbtGraphData.build(w, nextFocus, if (nextFocus != oldFocus) state.upstreamDepth.max(1).min(20) else up,
           if (nextFocus != oldFocus) state.downstreamDepth.max(1).min(20) else down, state.exposures)
         val data = model.map(DbtResourceData.get(w, _))
@@ -173,15 +201,18 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val summary = owner.map(r => "Executable: " + DbtExecutionContext.executable(r)).getOrElse("Executable: unavailable") +
           "\nCLI version: " + data.flatMap(_.attributes.get("dbt_version")).getOrElse("Not available in the manifest; see Runner output.") +
           "\nTarget: " + selectedTarget + "\nAdapter: " + profile.flatMap(_.adapter).getOrElse("Unavailable") +
-          "\nModel: " + model.map(_.presentableText).getOrElse("None") + "\nResources: " + graph.targets.size + "\n" + artifacts
+          "\nModel: " + model.map(_.presentableText).getOrElse("None") + "\nResources: " + graph.payload.getAsJsonArray("nodes").size() + "\n" + artifacts
         val incremental = model.exists(_.attributes.get("materialized").contains("incremental")) || data.exists(_.attributes.get("materialized").contains("incremental"))
         graph -> DbtViewContext(owner.map(_.directory.getPath), model.map(_.uniqueId), incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary)
       }
     }).inSmartMode(project).expireWith(this).coalesceBy(graphWork).finishOnUiThread(ModalityState.any(), (result: (DbtGraphSnapshot, DbtViewContext)) =>
       if (!disposed && request == generation.get()) {
         val (snapshot, next) = result
+        val changedRoot = context.root != next.root
         val changedModel = context.model != next.model || context.root != next.root
         context = next
+        if (changedRoot || !executableArguments.isFocusOwner)
+          executableArguments.setText(context.root.map(settings.options(_).executableArguments).getOrElse(""))
         if (changedModel || !context.incremental) fullRefresh.setSelected(false)
         fullRefresh.setVisible(context.incremental)
         fillingTarget = true; target.removeAllItems(); target.addItem(""); context.targets.foreach(target.addItem); target.setSelectedItem(context.target); fillingTarget = false
@@ -211,9 +242,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private def updateButtons(): Unit = {
     commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty && (name == "Generate Docs" || name == "Preview" || context.model.nonEmpty)) }
     stop.setEnabled(runner.isRunning); target.setEnabled(!runner.isRunning); fullRefresh.setEnabled(!runner.isRunning)
+    executableArguments.setEnabled(!runner.isRunning && context.root.nonEmpty)
   }
 
   private def start(action: String): Unit = WriteIntentReadAction.run(() => {
+    saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
     val editor = Option(FileEditorManager.getInstance(project).getSelectedTextEditor)
     val selectedSql = editor.flatMap(e => Option(e.getSelectionModel.getSelectedText)).getOrElse("")
