@@ -13,11 +13,14 @@ snapshots and exposures, with upstream → downstream arrows. Tests appear in do
 
 - Single click selects documentation and dims unrelated resources.
 - Double click focuses that resource and opens its definition. Drag a card to rearrange it.
-- Drag empty space to pan; use the wheel or **+ / −** to zoom, and **Fit** to recenter.
+- Drag empty space to pan; use the wheel or **Zoom in / Zoom out** to zoom, and **Fit graph** to recenter.
 - Search by resource/package name; **Clear search** restores the selected resource's neighborhood.
 - **+ N more** expands another five levels in that direction, keeping the same focus.
-- **Docs** shows the sidebar; **×** hides it. Drag its divider to resize.
-- **Regenerate Docs** uses the same command lifecycle as Runner → **Generate Docs**.
+- **Toggle documentation** shows or hides the sidebar; **Close documentation** hides it. Drag its divider to resize.
+- **Regenerate Docs**, beside the documentation toggle on the right, uses the same command lifecycle as Runner → **Generate Docs**.
+
+Lineage toolbar buttons use native IntelliJ icons; hover over an icon to see its action.
+Graph refreshes preserve sidebar visibility, including when the focused model changes.
 
 The sidebar has **Columns**, **Tests**, **SQL**, and **Metadata** tabs. Descriptions
 scroll independently and can expand. SQL preserves whitespace and scrolls horizontally.

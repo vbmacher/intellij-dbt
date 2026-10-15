@@ -9,6 +9,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ApplicationManager, ModalityState}
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.options.ex.ConfigurableCardPanel
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.{RegisterToolWindowTask, ToolWindowManager}
 import com.intellij.testFramework.{PlatformTestUtil, PsiTestUtil, ServiceContainerUtil}
@@ -16,7 +17,7 @@ import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestF
 import org.junit.Assert._
 import java.awt.{Component, Container}
 import java.nio.file.{Files, Paths}
-import javax.swing.{JButton, JTextField}
+import javax.swing.{JButton, JScrollPane, JTextField}
 import scala.jdk.CollectionConverters._
 
 /** Exercise the Swing start button and daemon invalidation rather than forcing a new resolver/highlighting run. */
@@ -48,6 +49,32 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
     case container: Container => container.getComponents.toVector.flatMap(children)
     case _ => Vector.empty
   })
+
+  def testSettingsFieldsFitTheSettingsViewportWithLongValues(): Unit = {
+    setupEditor()
+    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
+    val options = DbtProjectSettings.get(getProject).options(directory)
+    options.executable = "/long executable path/" * 30
+    options.executableArguments = "long argument " * 100
+    options.projectRoot = "/long project path/" * 30
+    val configurable = new DbtSettingsConfigurable(getProject)
+    val scroll = ConfigurableCardPanel.createConfigurableComponent(configurable).asInstanceOf[JScrollPane]
+    try {
+      val fields = scroll.getViewport.getView.asInstanceOf[Container].getComponents.collect { case field: JTextField => field }
+      assertEquals(6, fields.size)
+      for (width <- Vector(800, 500, 1000)) {
+        scroll.setSize(width, 300); scroll.doLayout(); scroll.getViewport.doLayout()
+        scroll.getViewport.getView.asInstanceOf[Container].doLayout()
+        assertFalse("No horizontal scrollbar at width " + width, scroll.getHorizontalScrollBar.isVisible)
+        assertEquals(scroll.getViewport.getExtentSize.width, scroll.getViewport.getView.getWidth)
+        fields.foreach { field =>
+          assertTrue("Text fields retain usable space", field.getWidth > 50)
+          assertTrue("Text fields fit inside the viewport", field.getX + field.getWidth <= scroll.getViewport.getExtentSize.width)
+        }
+      }
+      assertFalse("Resizing keeps saved values intact", configurable.isModified)
+    } finally configurable.disposeUIResources()
+  }
 
   def testRunButtonSavesTheEditorAndLaunchesDbt(): Unit = {
     setupEditor()

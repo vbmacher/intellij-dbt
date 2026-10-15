@@ -10,7 +10,7 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.{Disposer, IconLoader}
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.{VirtualFile, VirtualFileManager}
@@ -22,13 +22,17 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
+import com.intellij.util.IconUtil
+import com.intellij.util.ui.UIUtil
 import java.awt.{BorderLayout, FlowLayout}
 import java.awt.event.{FocusAdapter, FocusEvent}
+import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.{JButton, JCheckBox, JComboBox, JPanel, JSplitPane}
+import javax.imageio.ImageIO
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
 
@@ -78,12 +82,16 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var followPending = false
   private val browser = try {
     if (!JBCefApp.isSupported()) None else Some(new DbtLineageBrowser(this, handleMessage))
-  } catch { case NonFatal(_) => None }
+  } catch {
+    case NonFatal(_) => None
+  }
   browser match {
     case Some(view) => lineagePanel.add(view.component, BorderLayout.CENTER)
     case None =>
       val unavailable = new JBTextArea("The lineage graph requires the IDE's embedded JCEF browser. Use the bundled JetBrains Runtime with JCEF and enable the JCEF module. dbt Dependencies and the Runner remain available.")
-      unavailable.setEditable(false); unavailable.setLineWrap(true); unavailable.setWrapStyleWord(true)
+      unavailable.setEditable(false);
+      unavailable.setLineWrap(true);
+      unavailable.setWrapStyleWord(true)
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
   executableArguments.setName("dbt.executableArguments")
@@ -93,9 +101,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
   })
   val configuration = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
-  configuration.add(new JBLabel("Target:")); configuration.add(target)
-  val argumentsLabel = new JBLabel("Executable arguments:"); argumentsLabel.setLabelFor(executableArguments)
-  configuration.add(argumentsLabel); configuration.add(executableArguments)
+  configuration.add(new JBLabel("Target:"));
+  configuration.add(target)
+  val argumentsLabel = new JBLabel("Executable arguments:");
+  argumentsLabel.setLabelFor(executableArguments)
+  configuration.add(argumentsLabel);
+  configuration.add(executableArguments)
   DbtCommand.Actions.foreach { name =>
     val icon = name match {
       case "Run" => AllIcons.Actions.Execute
@@ -104,29 +115,52 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "Preview" => AllIcons.Actions.Preview
       case "Generate Docs" => AllIcons.Actions.PreviewDetails
     }
-    val button = new JButton(name, icon); commands(name) = button; button.addActionListener(_ => start(name)); toolbar.add(button)
+    val button = new JButton(name, icon);
+    commands(name) = button;
+    button.addActionListener(_ => start(name));
+    toolbar.add(button)
     if (name == "Build") toolbar.add(fullRefresh)
   }
-  val clear = new JButton("Clear", AllIcons.Actions.GC); clear.addActionListener(_ => { runner.console.clear(); preview.setText("") }); toolbar.add(clear)
-  stop.addActionListener(_ => runner.stop()); stop.setEnabled(false); toolbar.add(stop)
-  val configure = new JButton("Settings", AllIcons.General.Settings); configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace")); toolbar.add(configure)
-  val north = new JPanel(new BorderLayout); north.add(configuration, BorderLayout.NORTH); north.add(toolbar, BorderLayout.CENTER); north.add(contextLabel, BorderLayout.SOUTH)
+  val clear = new JButton("Clear", AllIcons.Actions.GC);
+  clear.addActionListener(_ => {
+    runner.console.clear();
+    preview.setText("")
+  });
+  toolbar.add(clear)
+  stop.addActionListener(_ => runner.stop());
+  stop.setEnabled(false);
+  toolbar.add(stop)
+  val configure = new JButton("Settings", AllIcons.General.Settings);
+  configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"));
+  toolbar.add(configure)
+  val north = new JPanel(new BorderLayout);
+  north.add(configuration, BorderLayout.NORTH);
+  north.add(toolbar, BorderLayout.CENTER);
+  north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
-  preview.setEditable(false); preview.setLineWrap(false); preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
-  val output = new JSplitPane(JSplitPane.VERTICAL_SPLIT, runner.console.getComponent, new JBScrollPane(preview)); output.setResizeWeight(.75)
+  preview.setEditable(false);
+  preview.setLineWrap(false);
+  preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
+  val output = new JSplitPane(JSplitPane.VERTICAL_SPLIT, runner.console.getComponent, new JBScrollPane(preview));
+  output.setResizeWeight(.75)
   runner.console match {
     case console: com.intellij.execution.impl.ConsoleViewImpl => console.getEditor.getSettings.setUseSoftWraps(true)
     case _ => ()
   }
   runnerPanel.add(output, BorderLayout.CENTER)
-  status.setEditable(false); status.setLineWrap(true); status.setWrapStyleWord(true); statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
+  status.setEditable(false);
+  status.setLineWrap(true);
+  status.setWrapStyleWord(true);
+  statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
   fullRefresh.setVisible(false)
   target.addActionListener(_ => if (!fillingTarget) context.root.foreach { path =>
     settings.options(path).target = Option(target.getSelectedItem).map(_.toString).getOrElse("")
-    settings.changed(); schedule(follow = false)
+    settings.changed();
+    schedule(follow = false)
   })
   runner.listen(this, event => {
-    updateButtons(); browser.foreach(_.runnerState(event.running, event.message))
+    updateButtons();
+    browser.foreach(_.runnerState(event.running, event.message))
     event.preview.foreach(preview.setText)
     if (event.refresh) schedule(follow = false)
   })
@@ -136,6 +170,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, new FileEditorManagerListener {
     override def fileOpened(source: FileEditorManager, file: VirtualFile): Unit = schedule(follow = false)
+
     override def selectionChanged(event: FileEditorManagerEvent): Unit = {
       saveExecutableArguments()
       fullRefresh.setSelected(false)
@@ -162,12 +197,20 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private def saveExecutableArguments(): Unit = context.root.foreach { path =>
     val options = settings.options(path)
     val value = executableArguments.getText.trim
-    if (options.executableArguments != value) { options.executableArguments = value; settings.changed() }
+    if (options.executableArguments != value) {
+      options.executableArguments = value;
+      settings.changed()
+    }
   }
 
   private def schedule(follow: Boolean): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed) {
     followPending ||= follow
-    alarm.cancelAllRequests(); alarm.addRequest(() => { val next = followPending; followPending = false; refresh(next) }, 180)
+    alarm.cancelAllRequests();
+    alarm.addRequest(() => {
+      val next = followPending;
+      followPending = false;
+      refresh(next)
+    }, 180)
   })
 
   def refresh(follow: Boolean): Unit = {
@@ -215,22 +258,35 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           executableArguments.setText(context.root.map(settings.options(_).executableArguments).getOrElse(""))
         if (changedModel || !context.incremental) fullRefresh.setSelected(false)
         fullRefresh.setVisible(context.incremental)
-        fillingTarget = true; target.removeAllItems(); target.addItem(""); context.targets.foreach(target.addItem); target.setSelectedItem(context.target); fillingTarget = false
+        fillingTarget = true;
+        target.removeAllItems();
+        target.addItem("");
+        context.targets.foreach(target.addItem);
+        target.setSelectedItem(context.target);
+        fillingTarget = false
         contextLabel.setText(context.model.getOrElse("No current model") + " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
         status.setText(context.status)
         val payload = snapshot.payload
         val nextFocus = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
-        if (nextFocus != focus) { upstreamExtra = 0; downstreamExtra = 0 }
+        if (nextFocus != focus) {
+          upstreamExtra = 0;
+          downstreamExtra = 0
+        }
         focus = nextFocus
-        payload.addProperty("direction", settings.getState.direction); payload.addProperty("edgeStyle", settings.getState.edgeStyle)
-        payload.addProperty("docsVisible", settings.getState.docsVisible); payload.addProperty("docsWidth", settings.getState.docsWidth)
+        payload.addProperty("direction", settings.getState.direction);
+        payload.addProperty("edgeStyle", settings.getState.edgeStyle)
+        payload.addProperty("docsVisible", settings.getState.docsVisible);
+        payload.addProperty("docsWidth", settings.getState.docsWidth)
         payload.addProperty("running", runner.isRunning)
         payload.addProperty("status", if (runner.isRunning) "dbt command running…" else if (context.model.nonEmpty && !snapshot.payload.getAsJsonArray("nodes").asScala.exists(n =>
           Option(n.getAsJsonObject.get("focus")).exists(_.getAsBoolean) && Option(n.getAsJsonObject.get("manifest")).exists(_.getAsBoolean))) "Model missing from manifest — Generate Docs" else context.model.map("Focused: " + _).getOrElse("Select a model or graph resource"))
         val theme = new JsonObject
+
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
+
         val scheme = EditorColorsManager.getInstance().getGlobalScheme
-        theme.addProperty("bg", color(scheme.getDefaultBackground)); theme.addProperty("fg", color(scheme.getDefaultForeground))
+        theme.addProperty("bg", color(scheme.getDefaultBackground));
+        theme.addProperty("fg", color(scheme.getDefaultForeground))
         theme.addProperty("panel", color(javax.swing.UIManager.getColor("Panel.background")))
         payload.add("theme", theme)
         browser.foreach(_.update(payload))
@@ -241,7 +297,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
 
   private def updateButtons(): Unit = {
     commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty && (name == "Generate Docs" || name == "Preview" || context.model.nonEmpty)) }
-    stop.setEnabled(runner.isRunning); target.setEnabled(!runner.isRunning); fullRefresh.setEnabled(!runner.isRunning)
+    stop.setEnabled(runner.isRunning);
+    target.setEnabled(!runner.isRunning);
+    fullRefresh.setEnabled(!runner.isRunning)
     executableArguments.setEnabled(!runner.isRunning && context.root.nonEmpty)
   }
 
@@ -273,8 +331,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private def handleMessage(raw: String): Unit = {
     if (disposed) return
     val message = JsonParser.parseString(raw).getAsJsonObject
+
     def field(name: String): String = Option(message.get(name)).map(_.getAsString).getOrElse("")
-    val kind = field("type"); val id = field("id")
+
+    val kind = field("type");
+    val id = field("id")
     kind match {
       case "ready" => refresh(follow = true)
       case "select" | "focus" =>
@@ -289,7 +350,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         }).expireWith(this).inSmartMode(project).coalesceBy(docWork).finishOnUiThread(ModalityState.any(), (result: Option[(JsonObject, DbtSymbolElement)]) =>
           if (!disposed && request == docGeneration.get()) result.foreach { case (doc, targetElement) =>
             browser.foreach(_.showDoc(id, doc))
-            if (kind == "focus") { focus = Some(id); upstreamExtra = 0; downstreamExtra = 0; targetElement.navigate(true); refresh(follow = false) }
+            if (kind == "focus") {
+              focus = Some(id);
+              upstreamExtra = 0;
+              downstreamExtra = 0;
+              targetElement.navigate(true);
+              refresh(follow = false)
+            }
           }
         ).submit(AppExecutorUtil.getAppExecutorService)
       case "expand" => if (id == "upstream") upstreamExtra += 5 else downstreamExtra += 5; refresh(follow = false)
@@ -299,7 +366,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case _ => ()
     }
   }
-  override def dispose(): Unit = { disposed = true; generation.incrementAndGet(); docGeneration.incrementAndGet(); () }
+
+  override def dispose(): Unit = {
+    disposed = true;
+    generation.incrementAndGet();
+    docGeneration.incrementAndGet();
+    ()
+  }
 }
 
 private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String => Unit) {
@@ -312,18 +385,45 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
     null
   })
   val component: javax.swing.JComponent = browser.getComponent
+
   private def resource(path: String): String = {
     val stream = Option(getClass.getResourceAsStream("/lineage/" + path)).getOrElse(throw new IllegalStateException("Missing bundled lineage resource " + path))
     try new String(stream.readAllBytes(), StandardCharsets.UTF_8) finally stream.close()
   }
+
   private val scripts = Vector("vendor/cytoscape.min.js", "vendor/dagre.min.js", "vendor/cytoscape-dagre.min.js")
     .map(path => "<script>" + resource(path).replace("</script", "<\\/script") + "</script>").mkString
   browser.loadHTML(resource("index.html").replace("<!-- SCRIPTS -->", scripts + "<script>window.dbtSend=function(message){" + query.inject("message") + "};</script>"))
   browser.disableNavigation()
+
   private def encoded(json: String): String = Base64.getEncoder.encodeToString(json.getBytes(StandardCharsets.UTF_8))
+
   private def decode(json: String): String = "JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('" + encoded(json) + "'),c=>c.charCodeAt(0))))"
-  def update(payload: JsonObject): Unit = browser.runJavaScript("window.dbtUpdate&&window.dbtUpdate(" + decode(payload.toString) + ")")
+
+  private def icons(dark: Boolean): JsonObject = {
+    val result = new JsonObject
+    Vector("clear-search" -> AllIcons.Actions.Close, "zoom-in" -> AllIcons.General.ZoomIn,
+      "zoom-out" -> AllIcons.General.ZoomOut, "fit" -> AllIcons.General.FitContent,
+      "show-docs" -> AllIcons.Actions.PreviewDetails, "regenerate" -> AllIcons.Actions.Refresh,
+      "close-docs" -> AllIcons.Actions.Close).foreach { case (id, icon) =>
+      val bytes = new ByteArrayOutputStream
+      ImageIO.write(IconUtil.toBufferedImage(IconLoader.getDarkIcon(icon, dark)), "png", bytes)
+      result.addProperty(id, "data:image/png;base64," + Base64.getEncoder.encodeToString(bytes.toByteArray))
+    }
+    result
+  }
+
+  private lazy val lightIcons = icons(dark = false)
+  private lazy val darkIcons = icons(dark = true)
+
+  def update(payload: JsonObject): Unit = {
+    payload.add("icons", if (UIUtil.isUnderDarcula) darkIcons else lightIcons)
+    browser.runJavaScript("window.dbtUpdate&&window.dbtUpdate(" + decode(payload.toString) + ")")
+  }
+
   def showDoc(id: String, data: JsonObject): Unit = browser.runJavaScript("window.dbtShowDoc&&window.dbtShowDoc(" + new Gson().toJson(id) + "," + decode(data.toString) + ")")
+
   def clearDoc(): Unit = () // The browser clears immediately when selection changes, before requesting fresh data.
+
   def runnerState(running: Boolean, message: String): Unit = browser.runJavaScript("window.dbtRunnerState&&window.dbtRunnerState(" + running + "," + new Gson().toJson(message) + ")")
 }
