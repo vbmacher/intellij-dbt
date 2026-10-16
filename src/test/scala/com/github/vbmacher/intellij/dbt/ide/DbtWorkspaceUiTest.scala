@@ -290,7 +290,7 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     val target = controls.collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.target" => combo.asInstanceOf[JComboBox[String]] }.get
     val arguments = controls.collectFirst { case field: JTextField if field.getName == "dbt.executableArguments" => field }.get
     val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
-    for ((path, index) <- Vector(model.getPath, model.getParent.getPath, "").zipWithIndex) {
+    for ((path, index) <- Vector(model.getPath, model.getParent.getPath, "", directory).zipWithIndex) {
       choose(panel, path)
       assertTrue(target.isEnabled)
       assertTrue("Targets supplied by wrappers must also be editable", target.isEditable)
@@ -326,7 +326,7 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
       await("Run launches with the edited configuration")(Files.isRegularFile(invocation))
       val args = JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).toVector
       assertEquals(s"scope $index", args.head)
-      assertEquals(path.nonEmpty, args.contains("--select"))
+      assertEquals(path.nonEmpty && path != directory, args.contains("--select"))
       assertEquals("custom_" + index, args(args.indexOf("--target") + 1))
       assertEquals("custom_" + index, options.target)
       assertEquals(s"'scope $index'", options.executableArguments)

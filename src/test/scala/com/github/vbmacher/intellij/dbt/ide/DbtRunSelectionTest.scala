@@ -81,8 +81,9 @@ final class DbtRunSelectionTest extends DbtCodeInsightTestCase {
     val all = DbtRunSelection.all(w, "").get
     assertEquals("", all.path)
     assertEquals(Set("orders", "detail"), DbtRunSelection.selectedModels(w, all).map(_.name).toSet)
-    for (action <- Vector("Run", "Build", "Test", "Compile", "Generate Docs")) {
-      val command = DbtCommand.create(w, all, action, fullRefresh = true).toOption.get
+    val projectDirectory = DbtRunSelection.available(w).find(_.path == root).get
+    for (selection <- Vector(all, projectDirectory); action <- Vector("Run", "Build", "Test", "Compile", "Generate Docs")) {
+      val command = DbtCommand.create(w, selection, action, fullRefresh = true).toOption.get
       assertEquals(root, command.directory)
       assertEquals("dev", command.target)
       assertEquals("wms", command.arguments(1))
@@ -92,6 +93,20 @@ final class DbtRunSelectionTest extends DbtCodeInsightTestCase {
     }
     assertTrue(DbtCommand.create(w, all, "Preview", fullRefresh = false).isLeft)
     assertTrue(DbtCommand.create(w, all.copy(root = root + "/missing"), "Run", fullRefresh = false).isLeft)
+  }
+
+  def testPackageRootRemainsScopedWhenItsConsumerIsTheExecutionProject(): Unit = {
+    project()
+    add("models/local.sql", "select 1")
+    val config = add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    add("dbt_packages/util/models/staging/orders.sql", "select 2")
+    val w = workspace
+    val chosen = DbtRunSelection.available(w).find(_.path == config.getVirtualFile.getParent.getPath).get
+    val command = DbtCommand.create(w, chosen, "Compile", fullRefresh = false).toOption.get
+    assertTrue(command.arguments.contains("--select"))
+    assertTrue(command.arguments.contains("fqn:util.staging.orders"))
+    assertFalse(command.arguments.contains("fqn:analytics.local"))
+    assertEquals(w.roots.find(_.name == "analytics").get.directory.getPath, command.directory)
   }
 
   def testAllModelsKeepsTheExplicitProjectInAMultiProjectWorkspace(): Unit = {

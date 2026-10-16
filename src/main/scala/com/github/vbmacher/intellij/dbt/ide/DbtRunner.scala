@@ -42,16 +42,17 @@ private[ide] object DbtCommand {
         val options = root.runOptions
         val directory = root.executionDirectory
         val target = DbtExecutionContext.activeTarget(root).getOrElse("")
-        val selectors = if (selection.path.isEmpty) Vector.empty else DbtRunSelection.selectors(w, selection)
+        val all = selection.directory && (selection.path.isEmpty || selection.path == root.directory.getPath)
+        val selectors = if (all) Vector.empty else DbtRunSelection.selectors(w, selection)
         if (!Actions.contains(action)) Left("Unknown dbt command.")
         else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
           Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
         else if (action == "Preview" && selection.directory) Left("Choose a single model to preview.")
-        else if (action != "Generate Docs" && selection.path.nonEmpty && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
+        else if (action != "Generate Docs" && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {
           val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
           val command = if (action == "Generate Docs") Vector("docs", "generate") else Vector(if (action == "Preview") "show" else action.toLowerCase)
-          val select = if (action == "Generate Docs" || selection.path.isEmpty) Vector.empty else Vector("--select") ++ selectors
+          val select = if (action == "Generate Docs" || all) Vector.empty else Vector("--select") ++ selectors
           val incremental = DbtRunSelection.selectedModels(w, selection).exists(s =>
             DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
           val refresh = if (fullRefresh && incremental && Set("Run", "Build")(action)) Vector("--full-refresh") else Vector.empty

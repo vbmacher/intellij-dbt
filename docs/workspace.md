@@ -70,7 +70,8 @@ changes. Source-only resolution cannot prove runtime macro behavior or warehouse
 
 The configuration row contains **Target**, **Model or directory**, and **Executable
 arguments**, from left to right. Enter a model path or use its **Browse** button to
-choose a model file or directory. Leave the model path blank for **all models**;
+choose a model file or directory. Leave the model path blank or select the execution
+project's root directory for **all models**;
 Run, Build, Test, and Compile then omit `--select`. Paths can be absolute or relative
 to the IDE project. The choice is remembered
 when the tool window is reopened and stays selected when editors change or close.
@@ -94,12 +95,14 @@ Preview | Generate Docs | Clear | Stop | Settings**. The selected scope and targ
 | Button | Command |
 | --- | --- |
 | Run / Build / Test / Compile | `dbt <command> --select <selected model FQNs>` |
-| Run / Build / Test / Compile with blank model path | `dbt <command>` |
+| Run / Build / Test / Compile with blank path or execution project root | `dbt <command>` |
 | Preview | `dbt show --select <model> --limit N --output json` |
 | Generate Docs | `dbt docs generate` |
 
-Directory selections expand to the contained models' fully qualified names, preserving
-their packages and versions. **Preview** requires a single selected model.
+Subdirectory and installed-package selections expand to the contained models' fully
+qualified names, preserving their packages and versions. The execution project root
+adds no selector, allowing dbt and configured wrappers to apply their normal scope.
+**Preview** requires a single selected model.
 **Full Refresh** appears when the selection includes incremental models and affects
 Run/Build. It resets when the run selection changes. Commands save documents and use
 argument vectors. **Generate Docs** generates artifacts for the selected execution

@@ -50,6 +50,16 @@ final class DbtWrapperTest extends DbtCodeInsightTestCase {
     assertEquals("analytics", root.runOptions.executableArguments)
   }
 
+  def testProjectRootDoesNotAddSelectorsToTheWrapperCommand(): Unit = {
+    val root = setupWrapper()
+    add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    add("dbt_packages/util/models/example.sql", "select 2")
+    val selected = DbtRunSelection.available(workspace).find(_.path == root.directory.getPath).get
+    val command = DbtCommand.create(workspace, selected, "Compile", fullRefresh = false).toOption.get
+    assertEquals(Vector(root.executionDirectory.resolve("scripts/dbt-wrapper").toString,
+      "analytics", "compile", "--target", "dev", "--use-colors"), command.arguments)
+  }
+
   def testWrapperFindsLocalDbtAndPreservesQuotedArgumentsWithoutAShell(): Unit = {
     val root = setupWrapper()
     val directory = Files.createTempDirectory("dbt wrapper with spaces ")
