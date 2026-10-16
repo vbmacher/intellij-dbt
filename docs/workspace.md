@@ -54,6 +54,9 @@ Hover a `ref()` model argument, `source()` table argument, or macro name, or inv
 Show quick documentation on hover**. Existing Ctrl+hover still navigates the exact
 reference name. Popups show at most 15 columns and eight entries in each dependency
 direction, with counts; the sidebar has the full lists.
+For builtin names such as `ref`, `source`, and `var`, Quick Documentation loads the
+official dbt reference article in the native pane. Ctrl+Click on a builtin opens that
+article in the Documentation tool window; links to other dbt reference pages stay there.
 Source headings retain the logical source/table identity (for example, `analytics.raw.events`).
 Known database, schema and physical relation fields are listed separately; unavailable fields are omitted.
 

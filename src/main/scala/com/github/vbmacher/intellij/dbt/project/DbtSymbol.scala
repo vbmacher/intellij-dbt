@@ -1,7 +1,6 @@
 package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
-import com.intellij.ide.BrowserUtil
 import com.intellij.lang.Language
 import com.intellij.navigation.ItemPresentation
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -102,10 +101,9 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
 
   override def isWritable: Boolean = false
 
-  override def navigate(requestFocus: Boolean): Unit = symbol.attributes.get("url") match {
-    case Some(url) => BrowserUtil.browse(url)
-    case None => new OpenFileDescriptor(getProject, symbol.file.getVirtualFile, getTextOffset).navigate(requestFocus)
-  }
+  override def navigate(requestFocus: Boolean): Unit =
+    if (symbol.kind == "documentation") getProject.getService(classOf[DbtDocumentationNavigation]).show(this)
+    else new OpenFileDescriptor(getProject, symbol.file.getVirtualFile, getTextOffset).navigate(requestFocus)
 
   override def canNavigate: Boolean = isValid
 
@@ -119,6 +117,11 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
   }
 
   override def hashCode(): Int = symbol.id.hashCode
+}
+
+/** The IDE supplies the presentation of builtin reference documentation. */
+private[dbt] trait DbtDocumentationNavigation {
+  def show(element: DbtSymbolElement): Unit
 }
 
 private[dbt] object DbtSymbolElement {

@@ -74,6 +74,10 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <platform.backend.documentation.targetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtDocumentationTargetProvider"/>
+        <platform.backend.documentation.psiTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinPsiDocumentationTargetProvider"/>
+        <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLinkHandler"/>
+        <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtDocumentationNavigation" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationNavigation"/>
+        <projectService serviceInterface="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationSource" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLoader"/>
         <externalAnnotator language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedAnnotator"/>
         <localInspection language="" shortName="DbtUnresolvedReference" displayName="Unresolved dbt reference" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedReferenceInspection"/>
         <notificationGroup id="dbt Workspace" displayType="BALLOON" isLogByDefault="true"/>

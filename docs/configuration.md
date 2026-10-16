@@ -134,8 +134,12 @@ vars:
 
 ## Local builtin definitions
 
-Builtin names open documentation for the selected dbt version. To open local
-definitions instead:
+Builtin names open documentation for the selected dbt version inside IntelliJ's
+Documentation window. Ctrl+Q on a builtin name such as `ref` shows Quick Documentation;
+Ctrl+Click opens the same reference article in the Documentation tool window.
+Articles load from the official dbt site in the background and are cached for the
+IDE session. Network failures appear inside the pane and can be retried with Ctrl+Q.
+To open local definitions instead:
 
 ```yaml
 # .dbt-navigation.yml

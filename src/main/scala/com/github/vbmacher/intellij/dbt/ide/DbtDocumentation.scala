@@ -15,9 +15,10 @@ import scala.jdk.CollectionConverters._
 final class DbtDocumentationTargetProvider extends DocumentationTargetProvider {
   override def documentationTargets(file: PsiFile, offset: Int): java.util.List[_ <: DocumentationTarget] = {
     val targets = DbtNavigation.at(file, offset).flatMap(_.candidates).collect {
-      case e: DbtSymbolElement if DbtResourceData.GraphKinds(e.symbol.kind) || e.symbol.kind == "macro" => e.symbol
+      case e: DbtSymbolElement if DbtResourceData.GraphKinds(e.symbol.kind) || Set("macro", "documentation")(e.symbol.kind) => e.symbol
     }.distinctBy(_.id)
-    (if (targets.size == 1) Vector(new DbtDocumentationTarget(file, offset, targets.head)) else Vector.empty).asJava
+    (if (targets.size != 1) Vector.empty else if (targets.head.kind == "documentation")
+      Vector(new DbtBuiltinDocumentationTarget(targets.head)) else Vector(new DbtDocumentationTarget(file, offset, targets.head))).asJava
   }
 }
 

@@ -96,7 +96,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
   executableArguments.setName("dbt.executableArguments")
   target.setToolTipText("Select the dbt target for the current execution root")
-  fullRefresh.setToolTipText("Rebuild incremental models from scratch for Run and Build")
+  fullRefresh.setToolTipText("<html>Rebuild the current incremental model from scratch using all source data.<br>" +
+    "Applies to Run and Build. Can take longer and use more warehouse compute.</html>")
   executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
   executableArguments.addActionListener(_ => saveExecutableArguments())
   executableArguments.addFocusListener(new FocusAdapter {
