@@ -15,10 +15,13 @@ import com.intellij.openapi.fileTypes.impl.FileTypeOverrider
 import com.intellij.openapi.project.{Project, ProjectLocator}
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.{PsiElement, PsiFile}
+import com.intellij.textmate.joni.JoniRegexFactory
 import org.jetbrains.plugins.textmate.{TextMateFileType, TextMateService}
 import org.jetbrains.plugins.textmate.api.TextMateBundleProvider
 import org.jetbrains.plugins.textmate.language.syntax.highlighting.{TextMateEditorHighlighterProvider, TextMateHighlighter}
-import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateHighlightingLexer
+import org.jetbrains.plugins.textmate.language.syntax.lexer.{TextMateCachingSyntaxMatcherCoreKt, TextMateHighlightingLexer, TextMateSyntaxMatcherImpl}
+import org.jetbrains.plugins.textmate.language.syntax.selector.{TextMateCachingSelectorWeigherKt, TextMateSelectorWeigherImpl}
+import org.jetbrains.plugins.textmate.regex.{CaffeineCachingRegexProvider, RememberingLastMatchRegexFactory}
 
 import scala.jdk.CollectionConverters._
 
@@ -41,6 +44,10 @@ final class DbtTextMateTargetElementEvaluator extends TargetElementEvaluatorEx2 
 
 /** Use the complete TextMate grammar without replacing the host language's PSI or file associations. */
 final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
+  private lazy val syntaxMatcher = TextMateCachingSyntaxMatcherCoreKt.caching(new TextMateSyntaxMatcherImpl(
+    new CaffeineCachingRegexProvider(new RememberingLastMatchRegexFactory(new JoniRegexFactory)),
+    TextMateCachingSelectorWeigherKt.caching(new TextMateSelectorWeigherImpl)))
+
   override def create(fileType: FileType, project: Project, file: VirtualFile): SyntaxHighlighter = {
     if (project == null || project.isDisposed || file == null || file.isDirectory) return null
     val supportedTypes = Set("DBT_SQL", "SQL", "PLAIN_TEXT", "YAML", "Markdown", TextMateFileType.INSTANCE.getName)
@@ -52,7 +59,7 @@ final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
       case "md" => "dbt-markdown"
       case _ => return null
     }
-    val supported = ReadAction.compute[Boolean, RuntimeException](() => {
+    val supported = ReadAction.computeBlocking[Boolean, RuntimeException](() => {
       DbtWorkspace.rootForFile(project, file).exists { root =>
         !root.excluded(file) && (root.kind(file).nonEmpty || (extension != "sql" && file.getParent == root.directory) ||
           root.relative(file).contains(root.profilesFile))
@@ -60,7 +67,7 @@ final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
     })
     if (!supported) return null
     val descriptor = TextMateService.getInstance.getLanguageDescriptorByExtension(grammar)
-    if (descriptor == null) null else new TextMateHighlighter(new TextMateHighlightingLexer(descriptor, -1))
+    if (descriptor == null) null else new TextMateHighlighter(new TextMateHighlightingLexer(descriptor, syntaxMatcher, -1))
   }
 }
 
@@ -72,17 +79,21 @@ final class DbtSqlFileTypeOverrider extends FileTypeOverrider {
     if (original.isInstanceOf[LanguageFileType]) return null
     val project = ProjectLocator.getInstance.guessProjectForFile(file)
     if (project == null || project.isDisposed) return null
-    val resource = ReadAction.compute[Boolean, RuntimeException](() =>
+    val resource = ReadAction.computeBlocking[Boolean, RuntimeException](() =>
       DbtWorkspace.rootForFile(project, file).exists(r => !r.excluded(file) && r.kind(file).nonEmpty))
-    if (resource) DbtSqlFileType else null
+    if (resource) DbtSqlFileType.Instance else null
   }
 }
 
-private object DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
+private final class DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
   override def getName: String = "DBT_SQL"
   override def getDescription: String = "dbt SQL"
   override def getDefaultExtension: String = "sql"
   override def getIcon: javax.swing.Icon = com.intellij.icons.AllIcons.FileTypes.Text
+}
+
+private object DbtSqlFileType {
+  val Instance: LanguageFileType = new DbtSqlFileType
 }
 
 /** TextMate tokens require its editor storage, rather than the platform's registered-token storage. */

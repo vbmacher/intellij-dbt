@@ -20,6 +20,8 @@ lazy val root = (project in file("."))
     name := "intellij-dbt",
     version := "1.1.0",
     scalaVersion := "2.13.18",
+    // Inherit interface defaults instead of generating calls to deprecated platform methods.
+    scalacOptions ++= Seq("-deprecation", "-Xmixin-force-forwarders:junit"),
     ThisBuild / intellijPluginName := "intellij-dbt",
     ThisBuild / intellijBuild := intellijVersion,
     ThisBuild / intellijPlatform := IntelliJPlatform.IdeaCommunity,

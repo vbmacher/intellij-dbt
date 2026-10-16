@@ -4,6 +4,7 @@ import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettings
 import com.google.gson.JsonParser
 import com.intellij.codeHighlighting.Pass
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
+import com.intellij.codeInsight.multiverse.CodeInsightContexts
 import com.intellij.mock.Mock
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ApplicationManager, ModalityState}
@@ -97,7 +98,7 @@ print('started from the Run button',flush=True)
     val options = DbtProjectSettings.get(getProject).options(directory)
     options.executable = executable.getPath; options.notifications = false
     val manager = ToolWindowManager.getInstance(getProject)
-    manager.registerToolWindow(RegisterToolWindowTask.notClosable("dbt-ui-test"))
+    val toolWindow = manager.registerToolWindow(RegisterToolWindowTask.notClosable("dbt-ui-test"))
     try {
       val panel = new DbtToolWindowPanel(getProject)
       Disposer.register(ui, panel)
@@ -115,7 +116,7 @@ print('started from the Run button',flush=True)
       assertEquals(sql, result.get("saved").getAsString)
       assertTrue(result.getAsJsonArray("args").asScala.exists(_.getAsString == "fqn:analytics.report"))
       await("Run returns to idle")(!getProject.getService(classOf[DbtRunner]).isRunning)
-    } finally manager.unregisterToolWindow("dbt-ui-test")
+    } finally toolWindow.remove()
   }
 
   def testRunnerEditsSharedPrefixAndGeneratesRenderableDocs(): Unit = {
@@ -170,7 +171,7 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     // Pending setup changes must settle before testing a new change in another file.
     val quiet = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500)
     PlatformTestUtil.waitWithEventsDispatching("Initial refresh settles", () => System.nanoTime() >= quiet, 2)
-    status.markFileUpToDate(document, Pass.EXTERNAL_TOOLS)
+    status.markFileUpToDate(document, CodeInsightContexts.anyContext(), Pass.EXTERNAL_TOOLS, null)
     assertNull(status.getFileDirtyScope(document, myFixture.getFile, Pass.EXTERNAL_TOOLS))
     add("models/missing.sql", "select 1")
     await("Adding a definition invalidates the unchanged referencing editor")(

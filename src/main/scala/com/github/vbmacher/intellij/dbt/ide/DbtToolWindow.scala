@@ -18,13 +18,12 @@ import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.{PsiDocumentManager, PsiManager}
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.{JBColor, OnePixelSplitter}
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.IconUtil
-import com.intellij.util.ui.UIUtil
 import java.awt.{BorderLayout, FlowLayout}
 import java.awt.event.{FocusAdapter, FocusEvent}
 import java.io.ByteArrayOutputStream
@@ -426,7 +425,7 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
   private lazy val darkIcons = icons(dark = true)
 
   def update(payload: JsonObject): Unit = {
-    payload.add("icons", if (UIUtil.isUnderDarcula) darkIcons else lightIcons)
+    payload.add("icons", if (JBColor.isBright) lightIcons else darkIcons)
     browser.runJavaScript("window.dbtUpdate&&window.dbtUpdate(" + decode(payload.toString) + ")")
   }
 

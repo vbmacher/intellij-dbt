@@ -83,7 +83,7 @@ final class DbtHighlightingRefresh(project: Project) extends Disposable {
       val daemon = com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project)
       FileEditorManager.getInstance(project).getOpenFiles
         .filter(f => f.isValid && Set("sql", "jinja", "jinja2")(Option(f.getExtension).getOrElse("")))
-        .flatMap(f => Option(psi.findFile(f))).foreach(daemon.restart)
+        .flatMap(f => Option(psi.findFile(f))).foreach(file => daemon.restart(file, "dbt workspace changed"))
     }), 200)
   })
 

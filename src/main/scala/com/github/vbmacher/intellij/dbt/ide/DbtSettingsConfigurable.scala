@@ -14,9 +14,13 @@ import scala.jdk.CollectionConverters._
 final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin {
   private val settings = DbtProjectSettings.get(project)
   private val root = new JComboBox[String]()
-  private val executable = new TextFieldWithBrowseButton
+  private val executable = new TextFieldWithBrowseButton {
+    override protected def getIconTooltip: String = "Choose a dbt executable, script, or custom tool"
+  }
   private val executableArguments = new JBTextField
-  private val projectRoot = new TextFieldWithBrowseButton
+  private val projectRoot = new TextFieldWithBrowseButton {
+    override protected def getIconTooltip: String = "Choose a dbt project root directory"
+  }
   private val profiles = new JBTextField
   private val artifacts = new JBTextField
   private val target = new JBTextField
@@ -52,11 +56,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     executable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile()
       .withTitle("Select dbt executable")
       .withDescription("Choose a dbt executable, wrapper script, or custom tool."))
-    executable.getButton.setToolTipText("Choose a dbt executable, script, or custom tool")
     projectRoot.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
       .withTitle("Select dbt project root")
       .withDescription("Choose the directory containing dbt_project.yml."))
-    projectRoot.getButton.setToolTipText("Choose a dbt project root directory")
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
