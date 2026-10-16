@@ -25,7 +25,7 @@ final class DbtWrapperTest extends DbtCodeInsightTestCase {
     val root = setupWrapper()
     val file = root.psiFile("models/orders.sql").get
     DbtCommand.Actions.foreach { action =>
-      val command = DbtCommand.forFile(workspace, file, action, "", None).toOption.get
+      val command = DbtCommand.create(workspace, DbtRunSelection.available(workspace).find(_.path == file.getVirtualFile.getPath).get, action, fullRefresh = false).toOption.get
       val subcommand = if (action == "Generate Docs") "docs" else if (action == "Preview") "show" else action.toLowerCase
       assertEquals(Vector(root.executionDirectory.resolve("scripts/dbt-wrapper").toString, "analytics", subcommand), command.arguments.take(3))
       assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "dev")))
@@ -35,18 +35,17 @@ final class DbtWrapperTest extends DbtCodeInsightTestCase {
     }
   }
 
-  def testRootsKeepIndependentArgumentsAndInlineSqlNeedsNoModel(): Unit = {
+  def testRootsKeepIndependentArgumentsAndDirectorySelection(): Unit = {
     val root = setupWrapper()
     add("other/dbt_project.yml", "name: marketing\nconfig-version: 2\n")
-    val file = add("other/scratch.sql", "select 1")
+    val file = add("other/models/orders.sql", "select 1")
     val other = workspace.root(file).get
     other.runOptions.executable = "custom-dbt"
     other.runOptions.executableArguments = "'marketing data'"
-    val sql = "select 'path with spaces'\nunion all select 'second row'"
-    val command = DbtCommand.forFile(workspace, file, "Preview", sql, None).toOption.get
-    assertEquals(Vector("custom-dbt", "marketing data", "show"), command.arguments.take(3))
-    assertTrue(command.arguments.sliding(2).exists(_ == Vector("--inline", sql)))
-    assertFalse(command.arguments.contains("--select"))
+    val selected = DbtRunSelection.available(workspace).find(_.path == other.directory.getPath + "/models").get
+    val command = DbtCommand.create(workspace, selected, "Run", fullRefresh = false).toOption.get
+    assertEquals(Vector("custom-dbt", "marketing data", "run"), command.arguments.take(3))
+    assertTrue(command.arguments.sliding(2).exists(_ == Vector("--select", "fqn:marketing.orders")))
     assertEquals(other.directory.getPath, command.directory)
     assertEquals("analytics", root.runOptions.executableArguments)
   }
@@ -64,7 +63,7 @@ final class DbtWrapperTest extends DbtCodeInsightTestCase {
     root.runOptions.projectRoot = directory.toString
     root.runOptions.executable = "./runner script"
     root.runOptions.executableArguments = "\"a project\" '$(echo untouched)'"
-    val command = DbtCommand.create(root, None, "Generate Docs", "", fullRefresh = false).toOption.get
+    val command = DbtCommand.create(workspace, DbtRunSelection.available(workspace).find(_.path == root.directory.getPath).get, "Generate Docs", fullRefresh = false).toOption.get
     assertEquals(Vector(wrapper.toString, "a project", "$(echo untouched)", "docs", "generate"), command.arguments.take(5))
     assertTrue(command.environment("PATH").startsWith(bin.toString + java.io.File.pathSeparator))
     val process = new GeneralCommandLine(command.arguments.asJava).withWorkDirectory(command.directory)

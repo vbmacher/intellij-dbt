@@ -30,41 +30,39 @@ private[ide] final case class DbtCommand(arguments: Vector[String], directory: S
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs")
-  def forFile(w: DbtWorkspace, file: com.intellij.psi.PsiFile, action: String, selection: String,
-    fullRefreshModel: Option[String]): Either[String, DbtCommand] =
-    w.root(file).filterNot(_.excluded(file.getVirtualFile)).map(w.executionRoot).toRight("Open a file in a dbt project.").flatMap { root =>
-      val model = w.codeSymbols(file).find(_.kind == "model")
-      create(root, model, action, selection, fullRefreshModel.exists(id => model.exists(_.id == id)))
-    }
-
-  def create(root: DbtRoot, model: Option[DbtSymbol], action: String, selection: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
-    val options = root.runOptions
-    val directory = root.executionDirectory
-    val target = DbtExecutionContext.activeTarget(root).getOrElse("")
-    val inline = action == "Preview" && selection.trim.nonEmpty
-    if (!Actions.contains(action)) Left("Unknown dbt command.")
-    else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml"))) Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
-    else if (!inline && action != "Generate Docs" && model.isEmpty) Left("Open a dbt model, or select SQL for Preview.")
-    else {
-      val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
-      val w = DbtWorkspace.get(root.config.getProject)
-      val selector = model.map { s =>
-        val folders = w.owner(s).toVector.flatMap(_.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2))
-        val fqn = Vector(s.namespace) ++ folders ++ Vector(s.name) ++ s.version.map("v" + _)
-        "fqn:" + fqn.mkString(".")
+  def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
+    val selected = DbtRunSelection.available(w).find(s => s.path == requested.path && s.root == requested.root && s.directory == requested.directory)
+    for {
+      selection <- selected.toRight("Choose an available model or directory in the Runner.")
+      owner <- DbtRunSelection.owner(w, selection).toRight("The selected dbt project is no longer available.")
+      command <- {
+        val root = w.executionRoot(owner)
+        val options = root.runOptions
+        val directory = root.executionDirectory
+        val target = DbtExecutionContext.activeTarget(root).getOrElse("")
+        val selectors = DbtRunSelection.selectors(w, selection)
+        if (!Actions.contains(action)) Left("Unknown dbt command.")
+        else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
+          Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
+        else if (action == "Preview" && selection.directory) Left("Choose a single model to preview.")
+        else if (action != "Generate Docs" && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
+        else {
+          val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
+          val command = if (action == "Generate Docs") Vector("docs", "generate") else Vector(if (action == "Preview") "show" else action.toLowerCase)
+          val select = if (action == "Generate Docs") Vector.empty else Vector("--select") ++ selectors
+          val incremental = DbtRunSelection.selectedModels(w, selection).exists(s =>
+            DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+          val refresh = if (fullRefresh && incremental && Set("Run", "Build")(action)) Vector("--full-refresh") else Vector.empty
+          val preview = if (action == "Preview") Vector("--limit", options.previewLimit.max(1).min(1000).toString, "--output", "json") else Vector.empty
+          val profiles = DbtExecutionContext.profiles(root).directory.toString
+          val artifact = root.artifactDirectory
+          Right(DbtCommand(prefix ++ command ++ select ++ refresh ++ preview ++
+            (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
+            directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
+            action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root)))
+        }
       }
-      val command = if (action == "Generate Docs") Vector("docs", "generate") else Vector(if (action == "Preview") "show" else action.toLowerCase)
-      val select = if (action == "Generate Docs") Vector.empty else if (inline) Vector("--inline", selection) else Vector("--select", selector.getOrElse(""))
-      val incremental = model.exists(s => DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
-      val refresh = if (fullRefresh && incremental && Set("Run", "Build")(action)) Vector("--full-refresh") else Vector.empty
-      val preview = if (action == "Preview") Vector("--limit", options.previewLimit.max(1).min(1000).toString, "--output", "json") else Vector.empty
-      val profiles = DbtExecutionContext.profiles(root).directory.toString
-      val artifact = root.artifactDirectory
-      Right(DbtCommand(prefix ++ command ++ select ++ refresh ++ preview ++
-        (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
-        directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
-        action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root)))
-    }
+    } yield command
   }
 }
 

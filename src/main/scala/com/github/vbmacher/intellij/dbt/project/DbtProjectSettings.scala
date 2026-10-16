@@ -20,6 +20,7 @@ final class DbtRunOptions {
 
 final class DbtSettingsState {
   @BeanProperty var projects: java.util.Map[String, DbtRunOptions] = new java.util.TreeMap[String, DbtRunOptions]()
+  @BeanProperty var runnerSelection: String = ""
   @BeanProperty var upstreamDepth: Int = 5
   @BeanProperty var downstreamDepth: Int = 5
   @BeanProperty var direction: String = "LR"

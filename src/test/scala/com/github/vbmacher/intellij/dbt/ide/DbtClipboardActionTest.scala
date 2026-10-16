@@ -143,7 +143,7 @@ final class DbtClipboardActionTest extends DbtCodeInsightTestCase {
     setupRelations()
     val w = DbtWorkspace.get(getProject)
     val root = w.roots.head
-    val command = DbtCommand.create(root, None, "Generate Docs", "", fullRefresh = false).toOption.get
+    val command = DbtCommand.create(w, DbtRunSelection.available(w).find(_.path == root.directory.getPath).get, "Generate Docs", fullRefresh = false).toOption.get
     root.runOptions.executableArguments = "--another-warehouse"
     DbtArtifactContext.record(command.artifactDirectory, command.artifactContext)
     assertTrue("An in-flight command cannot certify later configuration changes", DbtClipboard.ready(root).isLeft)

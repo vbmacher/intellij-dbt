@@ -136,23 +136,24 @@ sources:
     assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20, exposures = true).targets.size)
   }
 
-  def testRunnerCommandsKeepVersionTargetCwdAndInlineSqlIntact(): Unit = {
+  def testRunnerCommandsKeepVersionTargetAndCwdIntact(): Unit = {
     documentedProject()
+    val properties = resource("orders").mapping.get.getContainingFile
+    edit(properties, properties.getText.replace("- name: orders\n", "- name: orders\n  latest_version: 2\n  versions: [{v: 2, defined_in: orders}]\n"))
     val w = workspace; val root = w.roots.head
-    val model = resource("orders").copy(version = Some("2"))
+    val model = resource("orders")
+    assertEquals(Some("2"), model.version)
+    val selected = DbtRunSelection.available(w).find(_.path == model.file.getVirtualFile.getPath).get
     DbtCommand.Actions.foreach { action =>
-      val command = DbtCommand.create(root, Some(model), action, "", fullRefresh = true).toOption.get
+      val command = DbtCommand.create(w, selected, action, fullRefresh = true).toOption.get
       assertEquals(root.directory.getPath, command.directory)
       assertTrue(command.environment("DBT_PROFILES_DIR").endsWith(root.directory.getPath))
       assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "dev")))
       assertEquals(Set("Run", "Build")(action), command.arguments.contains("--full-refresh"))
       if (action != "Generate Docs") assertTrue(command.arguments.contains("fqn:analytics.orders.v2"))
     }
-    val sql = "select 'path with spaces';\nselect 2"
-    val inline = DbtCommand.create(root, None, "Preview", sql, fullRefresh = true).toOption.get
-    assertTrue(inline.arguments.sliding(2).exists(_ == Vector("--inline", sql)))
-    assertFalse(inline.arguments.contains("--select")); assertFalse(inline.arguments.contains("--full-refresh"))
-    assertTrue(DbtCommand.create(root, None, "Run", sql, fullRefresh = false).isLeft)
+    val folder = DbtRunSelection.available(w).find(_.path == root.directory.getPath + "/models").get
+    assertTrue(DbtCommand.create(w, folder, "Preview", fullRefresh = false).isLeft)
   }
 
   def testPreviewFormatsColumnsNullAndNoData(): Unit = {
@@ -311,7 +312,7 @@ select * from {{ source('raw', 'missing_table') }}
     val consuming = w.executionRoot(owner)
     assertEquals("analytics", consuming.name)
     val model = w.codeSymbols(modelFile).head
-    val command = DbtCommand.create(consuming, Some(model), "Run", "", fullRefresh = false).toOption.get
+    val command = DbtCommand.create(w, DbtRunSelection.available(w).find(_.path == model.file.getVirtualFile.getPath).get, "Run", fullRefresh = false).toOption.get
     assertTrue(command.arguments.contains("fqn:util.staging.orders"))
     assertEquals(consuming.directory.getPath, command.directory)
     assertEquals("dev", command.target)
@@ -345,21 +346,20 @@ select * from {{ source('raw', 'missing_table') }}
     assertTrue(current.contains("production"))
   }
 
-  def testRunnerResolvesTheClickedFileRatherThanAnOlderToolbarContext(): Unit = {
-    project()
-    val oldFile = add("models/orders.sql", "{{ config(materialized='incremental') }} select 1")
+  def testRunnerResolvesTheExplicitSelectionAndItsProject(): Unit = {
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: duckdb}}}\n")
+    val chosen = add("models/orders.sql", "{{ config(materialized='incremental') }} select 1")
     add("other/dbt_project.yml", "name: marketing\nconfig-version: 2\nprofile: marketing\n")
     add("other/profiles.yml", "marketing: {target: prod, outputs: {prod: {type: duckdb}}}\n")
-    val current = add("other/models/orders.sql", "{{ config(materialized='incremental') }} select 2")
+    configure("other/models/orders.sql", "{{ config(materialized='incremental') }} select 2<caret>")
     val w = workspace
-    val oldModel = w.codeSymbols(oldFile).head
-    val command = DbtCommand.forFile(w, current, "Run", "", Some(oldModel.id)).toOption.get
-    assertTrue(command.arguments.contains("fqn:marketing.orders"))
-    assertEquals("prod", command.target)
-    assertTrue(command.directory.endsWith("/other"))
-    assertFalse(command.arguments.contains("--full-refresh"))
-    val scratch = add("scratch.sql", "select 3")
-    assertTrue(DbtCommand.forFile(DbtWorkspace.get(getProject), scratch, "Preview", "select 3", None).isRight)
+    val selected = DbtRunSelection.available(w).find(_.path == chosen.getVirtualFile.getPath).get
+    val command = DbtCommand.create(w, selected, "Run", fullRefresh = true).toOption.get
+    assertTrue(command.arguments.contains("fqn:analytics.orders"))
+    assertEquals("dev", command.target)
+    assertFalse(command.directory.endsWith("/other"))
+    assertTrue(command.arguments.contains("--full-refresh"))
   }
 
   def testConfiguredArtifactDirectoryRemainsExcludedFromSourceResources(): Unit = {

@@ -57,7 +57,7 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     }
     Disposer.register(ui, panel)
     panel.refresh(follow = true)
-    await("Initial refresh precedes editor restoration")(status(panel).contains("Model: None") && status(panel).contains("Resources: 4"))
+    await("Initial refresh precedes editor restoration")(status(panel).contains("Lineage focus: None") && status(panel).contains("Resources: 4"))
     (panel, file => selected = Option(file), model)
   }
 
@@ -66,12 +66,12 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     select(model)
     panel.refresh(follow = true)
     panel.refresh(follow = false)
-    await("Restored model reaches the panel")(status(panel).contains("Model: analytics.orders"))
+    await("Restored model reaches the panel")(status(panel).contains("Lineage focus: analytics.orders"))
     assertTrue("Show the model's three connected resources, excluding the unrelated model", status(panel).contains("Resources: 3"))
     val unrelated = model.getParent.findChild("unrelated.sql")
     select(unrelated)
     panel.refresh(follow = false)
-    await("Background refresh sees the new editor")(status(panel).contains("Model: analytics.unrelated"))
+    await("Background refresh sees the new editor")(status(panel).contains("Lineage focus: analytics.unrelated"))
     assertTrue("An established graph focus survives background refreshes", status(panel).contains("Resources: 3"))
   }
 
@@ -80,7 +80,7 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     select(model)
     getProject.getMessageBus.syncPublisher(FileEditorManagerListener.FILE_EDITOR_MANAGER)
       .fileOpened(FileEditorManager.getInstance(getProject), model)
-    await("Opening the restored editor refreshes the panel")(status(panel).contains("Model: analytics.orders"))
+    await("Opening the restored editor refreshes the panel")(status(panel).contains("Lineage focus: analytics.orders"))
     assertTrue(status(panel).contains("Resources: 3"))
   }
 }

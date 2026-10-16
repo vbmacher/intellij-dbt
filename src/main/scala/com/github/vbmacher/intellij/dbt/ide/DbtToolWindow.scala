@@ -18,7 +18,7 @@ import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.{PsiDocumentManager, PsiManager}
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.ui.{JBColor, OnePixelSplitter}
+import com.intellij.ui.{ComboboxSpeedSearch, JBColor, OnePixelSplitter}
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
@@ -49,8 +49,8 @@ final class DbtToolWindowFactory extends ToolWindowFactory {
   }
 }
 
-private[ide] final case class DbtViewContext(root: Option[String], model: Option[String], incremental: Boolean,
-  targets: Vector[String], target: String, status: String)
+private[ide] final case class DbtViewContext(root: Option[String], selection: Option[DbtRunSelection], incremental: Boolean,
+  targets: Vector[String], target: String, status: String, choices: Vector[DbtRunSelection] = Vector.empty)
 
 /** All PSI/artifact work is performed in cancellable nonblocking read actions. Only immutable UI payloads cross to the EDT. */
 private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable {
@@ -59,7 +59,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   val statusPanel = new JPanel(new BorderLayout)
   private val settings = DbtProjectSettings.get(project)
   private val runner = project.getService(classOf[DbtRunner])
-  private val contextLabel = new JBLabel("Open a dbt model to run commands.")
+  private val contextLabel = new JBLabel("Choose a model or directory to run commands.")
+  private val runSelection = new JComboBox[DbtRunSelection]()
   private val target = new JComboBox[String]()
   private val executableArguments = new JBTextField(24)
   private val fullRefresh = new JCheckBox("Full Refresh")
@@ -78,6 +79,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var downstreamExtra = 0
   private var context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
   private var fillingTarget = false
+  private var fillingSelection = false
   private var disposed = false
   private var followPending = false
   private val browser = try {
@@ -95,8 +97,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
   executableArguments.setName("dbt.executableArguments")
+  runSelection.setName("dbt.runSelection")
+  runSelection.addItem(DbtRunSelection.Prompt)
+  runSelection.setMaximumRowCount(20)
+  runSelection.setToolTipText("Choose a model or directory. Type in the list to search.")
+  ComboboxSpeedSearch.installOn(runSelection)
   target.setToolTipText("Select the dbt target for the current execution root")
-  fullRefresh.setToolTipText("<html>Rebuild the current incremental model from scratch using all source data.<br>" +
+  fullRefresh.setToolTipText("<html>Rebuild incremental models in the selected model or directory from all source data.<br>" +
     "Applies to Run and Build. Can take longer and use more warehouse compute.</html>")
   executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
   executableArguments.addActionListener(_ => saveExecutableArguments())
@@ -112,12 +119,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   configuration.add(executableArguments)
   DbtCommand.Actions.foreach { name =>
     val (icon, tooltip) = name match {
-      case "Run" => AllIcons.Actions.Execute -> "Run the current dbt model"
-      case "Build" => AllIcons.Actions.Compile -> "Build and test the current dbt model"
-      case "Compile" => AllIcons.Actions.Compile -> "Compile the current dbt model"
-      case "Test" => AllIcons.RunConfigurations.TestState.Run -> "Run tests for the current dbt model"
-      case "Preview" => AllIcons.Actions.Preview -> "Preview selected SQL or the current dbt model"
-      case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation artifacts for the current dbt project and target"
+      case "Run" => AllIcons.Actions.Execute -> "Run the selected model or directory"
+      case "Build" => AllIcons.Actions.Compile -> "Build and test the selected model or directory"
+      case "Compile" => AllIcons.Actions.Compile -> "Compile the selected model or directory"
+      case "Test" => AllIcons.RunConfigurations.TestState.Run -> "Run tests for the selected model or directory"
+      case "Preview" => AllIcons.Actions.Preview -> "Preview a single selected model"
+      case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation for the selected execution project and target"
     }
     val button = new JButton(name, icon);
     button.setToolTipText(tooltip)
@@ -141,8 +148,16 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   configure.setToolTipText("Configure dbt Workspace settings")
   configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"));
   toolbar.add(configure)
+  val selectionRow = new JPanel(new BorderLayout(5, 0))
+  val selectionLabel = new JBLabel("Model or directory:")
+  selectionLabel.setLabelFor(runSelection)
+  selectionRow.add(selectionLabel, BorderLayout.WEST)
+  selectionRow.add(runSelection, BorderLayout.CENTER)
+  val configurationRows = new JPanel(new BorderLayout)
+  configurationRows.add(selectionRow, BorderLayout.NORTH)
+  configurationRows.add(configuration, BorderLayout.SOUTH)
   val north = new JPanel(new BorderLayout);
-  north.add(configuration, BorderLayout.NORTH);
+  north.add(configurationRows, BorderLayout.NORTH);
   north.add(toolbar, BorderLayout.CENTER);
   north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
@@ -162,6 +177,16 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   status.setWrapStyleWord(true);
   statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
   fullRefresh.setVisible(false)
+  runSelection.addActionListener(_ => if (!fillingSelection) {
+    saveExecutableArguments()
+    settings.getState.runnerSelection = Option(runSelection.getSelectedItem).collect { case s: DbtRunSelection => s.path }.getOrElse("")
+    generation.incrementAndGet()
+    fullRefresh.setSelected(false)
+    context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
+    contextLabel.setText("Updating run selection and target…")
+    updateButtons()
+    settings.changed()
+  })
   target.addActionListener(_ => if (!fillingTarget) context.root.foreach { path =>
     settings.options(path).target = Option(target.getSelectedItem).map(_.toString).getOrElse("")
     settings.changed();
@@ -181,11 +206,6 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     override def fileOpened(source: FileEditorManager, file: VirtualFile): Unit = schedule(follow = false)
 
     override def selectionChanged(event: FileEditorManagerEvent): Unit = {
-      saveExecutableArguments()
-      fullRefresh.setSelected(false)
-      context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
-      contextLabel.setText("Updating current model and target…")
-      updateButtons()
       schedule(follow = true)
     }
   })
@@ -229,18 +249,22 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       .orElse(FileEditorManager.getInstance(project).getSelectedFiles.headOption)
     val oldFocus = focus
     val state = settings.getState
+    val selectedPath = state.runnerSelection
     val up = state.upstreamDepth.max(1).min(20) + upstreamExtra
     val down = state.downstreamDepth.max(1).min(20) + downstreamExtra
     ReadAction.nonBlocking(new Callable[(DbtGraphSnapshot, DbtViewContext)] {
       override def call(): (DbtGraphSnapshot, DbtViewContext) = {
         val w = DbtWorkspace.get(project)
         val psi = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f)))
-        val owner = psi.flatMap(w.root).filter(r => psi.exists(f => !r.excluded(f.getVirtualFile))).map(w.executionRoot)
-        val model = psi.toVector.flatMap(w.codeSymbols).filter(_.kind == "model").headOption
-        val nextFocus = if (follow || oldFocus.isEmpty) model.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
+        val editorModel = psi.toVector.flatMap(w.codeSymbols).find(_.kind == "model")
+        val choices = DbtRunSelection.available(w)
+        val selection = choices.find(_.path == selectedPath)
+        val owner = selection.flatMap(DbtRunSelection.owner(w, _)).map(w.executionRoot)
+        val models = selection.toVector.flatMap(DbtRunSelection.selectedModels(w, _))
+        val nextFocus = if (follow || oldFocus.isEmpty) editorModel.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
         val graph = DbtGraphData.build(w, nextFocus, if (nextFocus != oldFocus) state.upstreamDepth.max(1).min(20) else up,
           if (nextFocus != oldFocus) state.downstreamDepth.max(1).min(20) else down, state.exposures)
-        val data = model.map(DbtResourceData.get(w, _))
+        val data = models.headOption.map(DbtResourceData.get(w, _))
         val profile = owner.map(DbtExecutionContext.profiles(_))
         val selectedTarget = owner.flatMap(DbtExecutionContext.activeTarget).getOrElse("")
         val artifacts = owner.map { root =>
@@ -249,23 +273,32 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
             "Manifest: " + m.getVirtualFile.getPath + "\nFile updated: " + java.time.Instant.ofEpochMilli(m.getVirtualFile.getTimeStamp) +
               (if (DbtArtifactContext.matches(root)) "\nPhysical relation context verified." else "\nPhysical relation target unverified; Generate Docs before clipboard conversion.")) +
             "\n" + DbtDeclarationSource.EP.getExtensionList.asScala.toVector.flatMap(_.artifactStatus(root)).mkString("\n")
-        }.getOrElse("Select a file in a dbt project.")
+        }.getOrElse("Choose a model or directory in the Runner.")
         val summary = owner.map(r => "Executable: " + DbtExecutionContext.executable(r)).getOrElse("Executable: unavailable") +
           "\nCLI version: " + data.flatMap(_.attributes.get("dbt_version")).getOrElse("Not available in the manifest; see Runner output.") +
           "\nTarget: " + selectedTarget + "\nAdapter: " + profile.flatMap(_.adapter).getOrElse("Unavailable") +
-          "\nModel: " + model.map(_.presentableText).getOrElse("None") + "\nResources: " + graph.payload.getAsJsonArray("nodes").size() + "\n" + artifacts
-        val incremental = model.exists(_.attributes.get("materialized").contains("incremental")) || data.exists(_.attributes.get("materialized").contains("incremental"))
-        graph -> DbtViewContext(owner.map(_.directory.getPath), model.map(_.uniqueId), incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary)
+          "\nSelection: " + selection.map(_.label).getOrElse("None") + "\nLineage focus: " + editorModel.map(_.presentableText).getOrElse("None") + "\nResources: " + graph.payload.getAsJsonArray("nodes").size() + "\n" + artifacts
+        val incremental = models.exists(s => DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+        graph -> DbtViewContext(owner.map(_.directory.getPath), selection, incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary, choices)
       }
     }).inSmartMode(project).expireWith(this).coalesceBy(graphWork).finishOnUiThread(ModalityState.any(), (result: (DbtGraphSnapshot, DbtViewContext)) =>
       if (!disposed && request == generation.get()) {
         val (snapshot, next) = result
         val changedRoot = context.root != next.root
-        val changedModel = context.model != next.model || context.root != next.root
+        val changedSelection = context.selection.map(_.path) != next.selection.map(_.path) || changedRoot
+        val changedChoices = context.choices != next.choices
         context = next
         if (changedRoot || !executableArguments.isFocusOwner)
           executableArguments.setText(context.root.map(settings.options(_).executableArguments).getOrElse(""))
-        if (changedModel || !context.incremental) fullRefresh.setSelected(false)
+        if (changedChoices || changedSelection) {
+          fillingSelection = true
+          runSelection.removeAllItems()
+          runSelection.addItem(DbtRunSelection.Prompt)
+          context.choices.foreach(runSelection.addItem)
+          runSelection.setSelectedItem(context.selection.getOrElse(DbtRunSelection.Prompt))
+          fillingSelection = false
+        }
+        if (changedSelection || !context.incremental) fullRefresh.setSelected(false)
         fullRefresh.setVisible(context.incremental)
         fillingTarget = true;
         target.removeAllItems();
@@ -273,7 +306,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         context.targets.foreach(target.addItem);
         target.setSelectedItem(context.target);
         fillingTarget = false
-        contextLabel.setText(context.model.getOrElse("No current model") + " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
+        contextLabel.setText(context.selection.map(_.label).getOrElse("Choose a model or directory") + " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
         status.setText(context.status)
         val payload = snapshot.payload
         val nextFocus = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
@@ -287,8 +320,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         payload.addProperty("docsVisible", settings.getState.docsVisible);
         payload.addProperty("docsWidth", settings.getState.docsWidth)
         payload.addProperty("running", runner.isRunning)
-        payload.addProperty("status", if (runner.isRunning) "dbt command running…" else if (context.model.nonEmpty && !snapshot.payload.getAsJsonArray("nodes").asScala.exists(n =>
-          Option(n.getAsJsonObject.get("focus")).exists(_.getAsBoolean) && Option(n.getAsJsonObject.get("manifest")).exists(_.getAsBoolean))) "Model missing from manifest — Generate Docs" else context.model.map("Focused: " + _).getOrElse("Select a model or graph resource"))
+        payload.addProperty("canGenerateDocs", context.root.nonEmpty)
+        val focusedNode = payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject)
+          .find(n => Option(n.get("focus")).exists(_.getAsBoolean))
+        payload.addProperty("status", if (runner.isRunning) "dbt command running…" else focusedNode.map { node =>
+          if (!Option(node.get("manifest")).exists(_.getAsBoolean)) "Model missing from manifest — Generate Docs"
+          else "Focused: " + node.get("name").getAsString
+        }.getOrElse("Select a model or graph resource"))
         val theme = new JsonObject
 
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
@@ -305,9 +343,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   private def updateButtons(): Unit = {
-    commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty && (name == "Generate Docs" || name == "Preview" || context.model.nonEmpty)) }
+    commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty &&
+      context.selection.exists(s => name != "Preview" || !s.directory)) }
+    runSelection.setEnabled(!runner.isRunning)
     stop.setEnabled(runner.isRunning);
-    target.setEnabled(!runner.isRunning);
+    target.setEnabled(!runner.isRunning && context.root.nonEmpty);
     fullRefresh.setEnabled(!runner.isRunning)
     executableArguments.setEnabled(!runner.isRunning && context.root.nonEmpty)
   }
@@ -315,19 +355,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private def start(action: String): Unit = WriteIntentReadAction.run(() => {
     saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
-    val editor = Option(FileEditorManager.getInstance(project).getSelectedTextEditor)
-    val selectedSql = editor.flatMap(e => Option(e.getSelectionModel.getSelectedText)).getOrElse("")
-    val activeFile = editor.flatMap(e => Option(FileDocumentManager.getInstance().getFile(e.getDocument)))
-      .orElse(FileEditorManager.getInstance(project).getSelectedFiles.headOption)
-    val fullRefreshIdentity = if (fullRefresh.isSelected) focus else None
+    val selection = Option(runSelection.getSelectedItem).collect { case s: DbtRunSelection if s.path.nonEmpty => s }
+    val requestedRefresh = fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
-      override def call(): Either[String, DbtCommand] = {
-        val w = DbtWorkspace.get(project)
-        activeFile.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).toRight("Open a file in a dbt project.").flatMap { file =>
-          val refreshModel = w.codeSymbols(file).find(s => s.kind == "model" && fullRefreshIdentity.contains(DbtGraphData.key(w, s))).map(_.id)
-          DbtCommand.forFile(w, file, action, selectedSql, refreshModel)
-        }
-      }
+      override def call(): Either[String, DbtCommand] =
+        selection.toRight("Choose a model or directory in the Runner.").flatMap(selected =>
+          DbtCommand.create(DbtWorkspace.get(project), selected, action, requestedRefresh))
     }).expireWith(this).inSmartMode(project).withDocumentsCommitted(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
       case Right(command) => WriteIntentReadAction.run(() => {
         FileDocumentManager.getInstance().saveAllDocuments()

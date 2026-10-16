@@ -39,7 +39,7 @@ See the [navigation guide](docs/navigation.md),
 for details and version requirements.
 
 Open the bottom **dbt** tool window for interactive lineage, a documentation sidebar,
-model commands and SQL previews. Native hover, missing-reference warnings and
+model/directory run selection and model previews. Native hover, missing-reference warnings and
 Copy for Target DB / Paste as dbt Refs are described in the [workspace guide](docs/workspace.md).
 Autocompletion and Rename refactoring are outside this plugin.
 

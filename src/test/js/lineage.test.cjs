@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../../main/resources/lineage');
 let browser, page, errors=[];
-const fixture = {focus:'model',nodes:[{id:'source',name:'events',kind:'source_table',package:'analytics',schema:'raw'},{id:'model',name:'orders',kind:'model',package:'analytics',schema:'mart',focus:true,materialized:'incremental'},{id:'report',name:'report',kind:'model',package:'analytics'},{id:'other',name:'unrelated',kind:'seed',package:'analytics'}],edges:[{source:'source',target:'model'},{source:'model',target:'report'}],boundary:[{direction:'upstream',count:7,anchors:['source']}],direction:'LR',edgeStyle:'round-taxi',docsVisible:true,docsWidth:360};
+const fixture = {canGenerateDocs:true,focus:'model',nodes:[{id:'source',name:'events',kind:'source_table',package:'analytics',schema:'raw'},{id:'model',name:'orders',kind:'model',package:'analytics',schema:'mart',focus:true,materialized:'incremental'},{id:'report',name:'report',kind:'model',package:'analytics'},{id:'other',name:'unrelated',kind:'seed',package:'analytics'}],edges:[{source:'source',target:'model'},{source:'model',target:'report'}],boundary:[{direction:'upstream',count:7,anchors:['source']}],direction:'LR',edgeStyle:'round-taxi',docsVisible:true,docsWidth:360};
 const doc={name:'analytics.orders',kind:'model',logical:'orders',description:'<script>bad()</script>\n'+ 'Long description. '.repeat(250),source:'/project/models/orders.sql',tags:['finance'],attributes:{materialized:'incremental',relation_name:'db.mart.orders'},columns:[{name:'id',type:'bigint',description:'Identifier',declarations:['unique']}],tests:[{name:'unique',column:'id'}],rawSql:'select '+ 'wide_column, '.repeat(80)+'id',compiledSql:null,upstream:['events'],downstream:['report']};
 before(async()=>{
  browser=await chromium.launch({headless:true,executablePath:process.env.DBT_CHROMIUM, args:['--no-sandbox']});
@@ -48,7 +48,7 @@ test('documentation controls stay together on the right when the window narrows'
  }finally{await page.setViewportSize({width:1400,height:850})}
 });
 test('button tooltips appear on hover and keyboard focus inside the panel',async()=>{
- for(const [name,text]of [['Zoom in','Zoom in'],['Toggle documentation','Show/hide documentation'],['Regenerate Docs','Regenerate Docs'],['Columns','View documented columns']]){
+ for(const [name,text]of [['Zoom in','Zoom in'],['Toggle documentation','Show/hide documentation'],['Regenerate Docs','Generate Docs for the Runner selection'],['Columns','View documented columns']]){
   const button=page.getByRole('button',{name,exact:true});
   await button.hover();assert.equal(await page.getByRole('tooltip').isVisible(),true);
   assert.equal(await page.getByRole('tooltip').innerText(),text);
@@ -56,7 +56,7 @@ test('button tooltips appear on hover and keyboard focus inside the panel',async
   await page.mouse.move(5,840);assert.equal(await page.getByRole('tooltip').isVisible(),false);
  }
  const regenerate=page.getByRole('button',{name:'Regenerate Docs',exact:true});
- await regenerate.focus();assert.equal(await page.getByRole('tooltip').innerText(),'Regenerate Docs');
+ await regenerate.focus();assert.equal(await page.getByRole('tooltip').innerText(),'Generate Docs for the Runner selection');
  assert.equal(await page.getByRole('tooltip').isVisible(),true);
  await regenerate.evaluate(button=>button.blur());assert.equal(await page.getByRole('tooltip').isVisible(),false);
 });
@@ -67,6 +67,14 @@ test('Regenerate Docs requests generation and is disabled while a command runs',
  await page.evaluate(()=>dbtRunnerState(true,'Generating docs'));
  assert.equal(await page.locator('#regenerate').isDisabled(),true);
  await page.evaluate(()=>dbtRunnerState(false,'Docs ready'));
+ assert.equal(await page.locator('#regenerate').isEnabled(),true);
+});
+test('Regenerate Docs requires an explicit Runner selection',async()=>{
+ await page.evaluate(p=>dbtUpdate({...p,canGenerateDocs:false}),fixture);
+ assert.equal(await page.locator('#regenerate').isDisabled(),true);
+ await page.evaluate(()=>dbtRunnerState(false,'Choose a run selection'));
+ assert.equal(await page.locator('#regenerate').isDisabled(),true);
+ await page.evaluate(p=>dbtUpdate(p),fixture);
  assert.equal(await page.locator('#regenerate').isEnabled(),true);
 });
 test('hide, show, resize, zoom, fit and search controls work',async()=>{await page.getByRole('button',{name:'Close documentation'}).click();assert.equal(await page.locator('#docs').isVisible(),false);await page.getByRole('button',{name:'Toggle documentation',exact:true}).click();const handle=await page.locator('#handle').boundingBox();await page.mouse.move(handle.x+2,handle.y+100);await page.mouse.down();await page.mouse.move(handle.x-90,handle.y+100);await page.mouse.up();assert.ok((await page.locator('#docs').boundingBox()).width>400);const zoom=await page.evaluate(()=>cy.zoom());await page.locator('#zoom-in').click();assert.ok(await page.evaluate(()=>cy.zoom())>zoom);await page.locator('#fit').click();await page.locator('#search').fill('orders');assert.equal(await page.locator('.card:not(.dim):not(.boundary)').count(),1);await page.locator('#clear-search').click()});

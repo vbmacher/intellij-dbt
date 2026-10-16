@@ -68,25 +68,32 @@ changes. Source-only resolution cannot prove runtime macro behavior or warehouse
 
 ## Runner
 
+Choose a **Model or directory** from the searchable list. The choice is remembered
+when the tool window is reopened and stays selected when editors change or close.
+Directory runs include enabled models in that folder and its descendants. Models
+and directories are listed for each discovered dbt project; the choice determines
+the execution project, profiles and target settings. Lineage still follows the editor.
+
 The configuration row contains **Target** and **Executable arguments**. Arguments
 are passed before the dbt command and shared with **Settings → dbt Workspace** for
-the current execution root. They also apply to **Generate Docs** and the graph's
+the selected execution root. They also apply to **Generate Docs** and the graph's
 **Regenerate Docs** action.
 
 The toolbar uses IDE icons alongside **Run | Build | Full Refresh | Test | Compile |
-Preview | Generate Docs | Clear | Stop | Settings**. Current model and target appear below it.
+Preview | Generate Docs | Clear | Stop | Settings**. The selected scope and target appear below it.
 
 | Button | Command |
 | --- | --- |
-| Run / Build / Test / Compile | `dbt <command> --select fqn:<package>.[<folders>.]<model>[.v<version>]` |
+| Run / Build / Test / Compile | `dbt <command> --select <selected model FQNs>` |
 | Preview | `dbt show --select <model> --limit N --output json` |
-| Preview with nonblank SQL selection | `dbt show --inline <selection> --limit N --output json` |
 | Generate Docs | `dbt docs generate` |
 
-Selected SQL takes precedence, including when the file has no resolved model.
-**Full Refresh** appears only for incremental models and affects Run/Build. It resets
-when the current model changes. Commands save documents and use argument vectors,
-so multiline SQL and paths with spaces remain single arguments.
+Directory selections expand to the contained models' fully qualified names, preserving
+their packages and versions. **Preview** requires a single selected model.
+**Full Refresh** appears when the selection includes incremental models and affects
+Run/Build. It resets when the run selection changes. Commands save documents and use
+argument vectors. **Generate Docs** generates artifacts for the selected execution
+project; the graph's **Regenerate Docs** button requires a Runner selection too.
 
 The log streams stdout/stderr, renders ANSI colors, and records completion/exit codes.
 **Clear** clears the log and preview; **Stop** cancels the active process. Only one
@@ -99,7 +106,7 @@ Native delivery also requires IntelliJ's **Appearance & Behavior → Notificatio
 setting, an inactive IDE window, and an available desktop notification service (such as a Linux notification daemon).
 
 Successful Run/Build/Compile/Generate Docs refreshes artifacts. **Status** shows the
-executable, available manifest CLI version, target/adapter, model, resource count,
+executable, available manifest CLI version, target/adapter, run selection, lineage focus, resource count,
 artifact errors and timestamps. It never executes a version probe merely to open a tab.
 
 The command surface follows dbt Core 1.5+ (`dbt show`/JSON preview) and installed
