@@ -31,9 +31,18 @@ private[ide] object DbtRunSelection {
   def owner(w: DbtWorkspace, selection: DbtRunSelection): Option[DbtRoot] =
     w.roots.find(_.directory.getPath == selection.root)
 
+  def all(w: DbtWorkspace, preferredRoot: String): Option[DbtRunSelection] = {
+    val roots = w.roots.map(w.executionRoot).distinct
+    roots.find(_.directory.getPath == preferredRoot)
+      .orElse(roots.find(r => Option(r.config.getProject.getBasePath).contains(r.directory.getPath)))
+      .orElse(if (roots.size == 1) roots.headOption else None)
+      .map(r => DbtRunSelection(r.directory.getPath, "", directory = true, s"All models: ${r.name}"))
+  }
+
   def selectedModels(w: DbtWorkspace, selection: DbtRunSelection): Vector[DbtSymbol] = models(w).filter { s =>
     w.owner(s).exists(r => owner(w, selection).exists(selected => w.executionRoot(r) == w.executionRoot(selected))) &&
-      (if (selection.directory) s.file.getVirtualFile.getPath.startsWith(selection.path + "/")
+      (if (selection.path.isEmpty) true
+       else if (selection.directory) s.file.getVirtualFile.getPath.startsWith(selection.path + "/")
        else s.file.getVirtualFile.getPath == selection.path)
   }
 

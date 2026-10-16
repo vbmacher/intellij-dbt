@@ -69,4 +69,40 @@ final class DbtRunSelectionTest extends DbtCodeInsightTestCase {
     val selected = DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getParent.getPath).get
     assertFalse(DbtCommand.create(w, selected, "Run", fullRefresh = true).toOption.get.arguments.contains("--full-refresh"))
   }
+
+  def testAllModelsRunsWithoutASelectorAndKeepsTheProjectConfiguration(): Unit = {
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: duckdb}}}\n")
+    add("models/orders.sql", "{{ config(materialized='incremental') }} select 1")
+    add("models/nested/detail.sql", "select 2")
+    val w = workspace
+    val root = w.roots.head.directory.getPath
+    DbtProjectSettings.get(getProject).options(root).executableArguments = "wms"
+    val all = DbtRunSelection.all(w, "").get
+    assertEquals("", all.path)
+    assertEquals(Set("orders", "detail"), DbtRunSelection.selectedModels(w, all).map(_.name).toSet)
+    for (action <- Vector("Run", "Build", "Test", "Compile", "Generate Docs")) {
+      val command = DbtCommand.create(w, all, action, fullRefresh = true).toOption.get
+      assertEquals(root, command.directory)
+      assertEquals("dev", command.target)
+      assertEquals("wms", command.arguments(1))
+      assertFalse(command.arguments.contains("--select"))
+      assertFalse(command.arguments.exists(_.startsWith("fqn:")))
+      assertEquals(Set("Run", "Build")(action), command.arguments.contains("--full-refresh"))
+    }
+    assertTrue(DbtCommand.create(w, all, "Preview", fullRefresh = false).isLeft)
+    assertTrue(DbtCommand.create(w, all.copy(root = root + "/missing"), "Run", fullRefresh = false).isLeft)
+  }
+
+  def testAllModelsKeepsTheExplicitProjectInAMultiProjectWorkspace(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("other/dbt_project.yml", "name: marketing\nconfig-version: 2\n")
+    add("other/models/campaigns.sql", "select 2")
+    val w = workspace
+    val marketing = w.roots.find(_.name == "marketing").get
+    val all = DbtRunSelection.all(w, marketing.directory.getPath).get
+    assertEquals(Vector("campaigns"), DbtRunSelection.selectedModels(w, all).map(_.name))
+    assertEquals(marketing.directory.getPath, DbtCommand.create(w, all, "Run", fullRefresh = false).toOption.get.directory)
+  }
 }

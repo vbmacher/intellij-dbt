@@ -68,15 +68,21 @@ changes. Source-only resolution cannot prove runtime macro behavior or warehouse
 
 ## Runner
 
-Enter a **Model or directory** path or use its **Browse** button to choose a model
-file or directory. Paths can be absolute or relative to the IDE project. The choice is remembered
+The configuration row contains **Target**, **Model or directory**, and **Executable
+arguments**, from left to right. Enter a model path or use its **Browse** button to
+choose a model file or directory. Leave the model path blank for **all models**;
+Run, Build, Test, and Compile then omit `--select`. Paths can be absolute or relative
+to the IDE project. The choice is remembered
 when the tool window is reopened and stays selected when editors change or close.
 Directory runs include enabled models in that folder and its descendants. The choice determines
 the execution project, profiles and target settings. Lineage still follows the editor.
+Clearing the model path keeps the last selected execution project. Initially, all
+models uses the dbt project at the IDE project root, or the sole discovered execution
+project. If several projects exist without either choice, select a path once to set
+the execution project before clearing it.
 
-The configuration row contains **Target** and **Executable arguments**. Select a
-discovered target or type one, including targets supplied by a wrapper. Blank uses
-the profile default. Pending edits survive background refreshes and are saved when
+Select a discovered target or type one, including targets supplied by a wrapper.
+A blank target uses the profile default. Pending edits survive background refreshes and are saved when
 launching a command or changing the run selection. Arguments
 are passed before the dbt command and shared with **Settings → dbt Workspace** for
 the selected execution root. They also apply to **Generate Docs** and the graph's
@@ -88,6 +94,7 @@ Preview | Generate Docs | Clear | Stop | Settings**. The selected scope and targ
 | Button | Command |
 | --- | --- |
 | Run / Build / Test / Compile | `dbt <command> --select <selected model FQNs>` |
+| Run / Build / Test / Compile with blank model path | `dbt <command>` |
 | Preview | `dbt show --select <model> --limit N --output json` |
 | Generate Docs | `dbt docs generate` |
 
@@ -96,7 +103,7 @@ their packages and versions. **Preview** requires a single selected model.
 **Full Refresh** appears when the selection includes incremental models and affects
 Run/Build. It resets when the run selection changes. Commands save documents and use
 argument vectors. **Generate Docs** generates artifacts for the selected execution
-project; the graph's **Regenerate Docs** button requires a Runner selection too.
+project; the graph's **Regenerate Docs** button uses that execution project too.
 
 The log streams stdout/stderr, renders ANSI colors, and records completion/exit codes.
 **Clear** clears the log and preview; **Stop** cancels the active process. Only one

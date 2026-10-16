@@ -209,8 +209,8 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     Disposer.register(ui, panel)
     panel.refresh(follow = true)
     val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
-    await("Runner starts without automatically choosing the editor")(status.getText.nonEmpty)
-    assertFalse(button(panel, "Run").isEnabled)
+    await("An empty model path enables all models")(button(panel, "Run").isEnabled)
+    assertTrue(status.getText.contains("Selection: All models: analytics"))
     assertEquals("", picker(panel).getText)
     assertTrue(picker(panel).getTextField.isEditable)
     assertTrue(picker(panel).getButton.isEnabled)
@@ -256,13 +256,15 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     assertTrue(button(panel, "Preview").isEnabled)
     assertFalse(refresh.isVisible)
     assertFalse(refresh.isSelected)
-    choose(panel, path)
+    choose(panel, "")
     Disposer.dispose(panel)
     val reopened = new DbtToolWindowPanel(getProject)
     Disposer.register(ui, reopened)
     reopened.refresh(follow = true)
-    assertEquals(path, picker(reopened).getText)
+    assertEquals("", picker(reopened).getText)
     await("Runner restores its remembered selection")(button(reopened, "Run").isEnabled)
+    val restoredStatus = children(reopened.statusPanel).collectFirst { case text: JTextArea => text }.get
+    assertTrue(restoredStatus.getText.contains("Selection: All models: analytics"))
   }
 
   def testTargetAndArgumentsRemainEditableAcrossRunnerRefreshes(): Unit = {
@@ -288,7 +290,7 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     val target = controls.collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.target" => combo.asInstanceOf[JComboBox[String]] }.get
     val arguments = controls.collectFirst { case field: JTextField if field.getName == "dbt.executableArguments" => field }.get
     val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
-    for ((path, index) <- Vector(model.getPath, model.getParent.getPath).zipWithIndex) {
+    for ((path, index) <- Vector(model.getPath, model.getParent.getPath, "").zipWithIndex) {
       choose(panel, path)
       assertTrue(target.isEnabled)
       assertTrue("Targets supplied by wrappers must also be editable", target.isEditable)
@@ -298,12 +300,16 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
         case container: Container => container.doLayout(); container.getComponents.foreach(layout)
         case _ => ()
       }
-      panel.runnerPanel.setSize(420, 600)
+      panel.runnerPanel.setSize(1100, 600)
       layout(panel.runnerPanel)
       for (field <- Vector(target, arguments, picker(panel).getTextField)) {
-        assertTrue("Runner inputs remain usable in a narrow tool window", field.getWidth > 50)
-        assertTrue(SwingUtilities.convertPoint(field, field.getWidth, 0, panel.runnerPanel).x <= 420)
+        assertTrue("Runner inputs retain usable space on one row", field.getWidth > 50)
+        assertTrue(SwingUtilities.convertPoint(field, field.getWidth, 0, panel.runnerPanel).x <= 1100)
       }
+      val positions = Vector(target, picker(panel), arguments).map(field =>
+        SwingUtilities.convertPoint(field, 0, field.getHeight / 2, panel.runnerPanel))
+      assertTrue("All controls share one row: " + positions, positions.map(_.y).max - positions.map(_.y).min <= 2)
+      assertEquals("Target, model, arguments appear from left to right", positions.map(_.x).sorted, positions.map(_.x))
       val targetField = target.getEditor.getEditorComponent.asInstanceOf[JTextField]
       targetField.setText("custom_" + index)
       arguments.setText(s"'scope $index'")
@@ -320,6 +326,7 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
       await("Run launches with the edited configuration")(Files.isRegularFile(invocation))
       val args = JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).toVector
       assertEquals(s"scope $index", args.head)
+      assertEquals(path.nonEmpty, args.contains("--select"))
       assertEquals("custom_" + index, args(args.indexOf("--target") + 1))
       assertEquals("custom_" + index, options.target)
       assertEquals(s"'scope $index'", options.executableArguments)

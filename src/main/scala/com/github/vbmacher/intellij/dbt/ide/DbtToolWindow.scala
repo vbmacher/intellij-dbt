@@ -105,7 +105,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   executableArguments.setName("dbt.executableArguments")
   runSelection.setName("dbt.runSelection")
   runSelection.setText(settings.getState.runnerSelection)
-  runSelection.setToolTipText("Enter a model or directory path, absolute or relative to the IDE project, or browse.")
+  runSelection.getTextField.asInstanceOf[JBTextField].getEmptyText.setText("All models")
+  runSelection.setToolTipText("Leave blank for all models, or enter a model or directory path, absolute or relative to the IDE project.")
   runSelection.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFileOrDir()
     .withTitle("Select dbt model or directory")
     .withDescription("Choose a model file or a directory containing models.")
@@ -125,16 +126,18 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
   })
   val configuration = new JPanel(new GridBagLayout)
-  Vector("Target:" -> target, "Executable arguments:" -> executableArguments).zipWithIndex.foreach { case ((text, field), row) =>
+  Vector(("Target:", target, .2), ("Model or directory:", runSelection, .5),
+    ("Executable arguments:", executableArguments, .3)).zipWithIndex.foreach { case ((text, field, weight), column) =>
     val label = new JBLabel(text)
     label.setLabelFor(field)
     val c = new GridBagConstraints
-    c.gridy = row
+    c.gridy = 0
+    c.gridx = column * 2
     c.anchor = GridBagConstraints.WEST
     c.insets = new Insets(3, 0, 3, 5)
     configuration.add(label, c)
-    c.gridx = 1
-    c.weightx = 1
+    c.gridx += 1
+    c.weightx = weight
     c.fill = GridBagConstraints.HORIZONTAL
     field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
     configuration.add(field, c)
@@ -170,16 +173,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   configure.setToolTipText("Configure dbt Workspace settings")
   configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"));
   toolbar.add(configure)
-  val selectionRow = new JPanel(new BorderLayout(5, 0))
-  val selectionLabel = new JBLabel("Model or directory:")
-  selectionLabel.setLabelFor(runSelection)
-  selectionRow.add(selectionLabel, BorderLayout.WEST)
-  selectionRow.add(runSelection, BorderLayout.CENTER)
-  val configurationRows = new JPanel(new BorderLayout)
-  configurationRows.add(selectionRow, BorderLayout.NORTH)
-  configurationRows.add(configuration, BorderLayout.SOUTH)
   val north = new JPanel(new BorderLayout);
-  north.add(configurationRows, BorderLayout.NORTH);
+  north.add(configuration, BorderLayout.NORTH);
   north.add(toolbar, BorderLayout.CENTER);
   north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
@@ -247,11 +242,14 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   updateButtons()
 
-  private def selectionPath: String = Option(runSelection.getText.trim).filter(_.nonEmpty).flatMap(value => Try {
-    val path = Paths.get(value)
-    (if (path.isAbsolute) path else Option(project.getBasePath).map(Paths.get(_).resolve(path)).getOrElse(path.toAbsolutePath))
-      .normalize().toString.replace(java.io.File.separatorChar, '/')
-  }.toOption).getOrElse("")
+  private def selectionPath: String = {
+    val value = runSelection.getText.trim
+    if (value.isEmpty) "" else Try {
+      val path = Paths.get(value)
+      (if (path.isAbsolute) path else Option(project.getBasePath).map(Paths.get(_).resolve(path)).getOrElse(path.toAbsolutePath))
+        .normalize().toString.replace(java.io.File.separatorChar, '/')
+    }.getOrElse(value)
+  }
 
   private def targetText: String = Option(target.getEditor.getItem).fold("")(_.toString.trim)
 
@@ -295,6 +293,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val oldFocus = focus
     val state = settings.getState
     val selectedPath = state.runnerSelection
+    val selectedRoot = state.runnerRoot
     val up = state.upstreamDepth.max(1).min(20) + upstreamExtra
     val down = state.downstreamDepth.max(1).min(20) + downstreamExtra
     ReadAction.nonBlocking(new Callable[(DbtGraphSnapshot, DbtViewContext)] {
@@ -303,7 +302,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val psi = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f)))
         val editorModel = psi.toVector.flatMap(w.codeSymbols).find(_.kind == "model")
         val choices = DbtRunSelection.available(w)
-        val selection = choices.find(_.path == selectedPath)
+        val selection = if (selectedPath.isEmpty) DbtRunSelection.all(w, selectedRoot) else choices.find(_.path == selectedPath)
         val owner = selection.flatMap(DbtRunSelection.owner(w, _)).map(w.executionRoot)
         val models = selection.toVector.flatMap(DbtRunSelection.selectedModels(w, _))
         val nextFocus = if (follow || oldFocus.isEmpty) editorModel.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
@@ -335,6 +334,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val pendingTarget = targetText
         val targetEdited = pendingTarget != loadedTarget
         context = next
+        context.root.foreach(settings.getState.runnerRoot = _)
         if (changedRoot || executableArguments.getText == loadedArguments) {
           loadedArguments = context.root.map(settings.options(_).executableArguments).getOrElse("")
           executableArguments.setText(loadedArguments)
