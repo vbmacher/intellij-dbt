@@ -53,8 +53,8 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
     case _ => Vector.empty
   })
 
-  private def picker(panel: DbtToolWindowPanel): JComboBox[DbtRunSelection] = children(panel.runnerPanel).collectFirst {
-    case combo: JComboBox[_] if combo.getName == "dbt.runSelection" => combo.asInstanceOf[JComboBox[DbtRunSelection]]
+  private def picker(panel: DbtToolWindowPanel): TextFieldWithBrowseButton = children(panel.runnerPanel).collectFirst {
+    case field: TextFieldWithBrowseButton if field.getName == "dbt.runSelection" => field
   }.get
 
   private def button(panel: DbtToolWindowPanel, name: String): JButton = children(panel.runnerPanel).collectFirst {
@@ -62,9 +62,7 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
   }.get
 
   private def choose(panel: DbtToolWindowPanel, path: String): Unit = {
-    val combo = picker(panel)
-    await("Runner discovers the requested model or directory")((0 until combo.getItemCount).exists(i => combo.getItemAt(i).path == path))
-    combo.setSelectedItem((0 until combo.getItemCount).map(combo.getItemAt).find(_.path == path).get)
+    picker(panel).setText(path)
     await("The explicit run selection enables commands")(button(panel, "Run").isEnabled)
   }
 
@@ -210,9 +208,12 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     val panel = new DbtToolWindowPanel(getProject)
     Disposer.register(ui, panel)
     panel.refresh(follow = true)
-    await("Runner discovers choices without automatically choosing the editor") (picker(panel).getItemCount > 1)
+    val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
+    await("Runner starts without automatically choosing the editor")(status.getText.nonEmpty)
     assertFalse(button(panel, "Run").isEnabled)
-    assertEquals(DbtRunSelection.Prompt, picker(panel).getSelectedItem)
+    assertEquals("", picker(panel).getText)
+    assertTrue(picker(panel).getTextField.isEditable)
+    assertTrue(picker(panel).getButton.isEnabled)
     val path = model.getVirtualFile.getParent.getPath
     choose(panel, path)
     assertFalse("Folder previews require a single model", button(panel, "Preview").isEnabled)
@@ -231,9 +232,8 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     getProject.getMessageBus.syncPublisher(FileEditorManagerListener.FILE_EDITOR_MANAGER)
       .selectionChanged(new FileEditorManagerEvent(manager, null, null))
     panel.refresh(follow = true)
-    val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
     await("Editor changes refresh lineage")(status.getText.contains("Lineage focus: marketing.unrelated"))
-    assertEquals(path, picker(panel).getSelectedItem.asInstanceOf[DbtRunSelection].path)
+    assertEquals(path, picker(panel).getText)
     assertTrue("Changing editors preserves the explicit Full Refresh choice", refresh.isSelected)
     ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
       override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceUiTest.this.getProject
@@ -261,8 +261,94 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
     val reopened = new DbtToolWindowPanel(getProject)
     Disposer.register(ui, reopened)
     reopened.refresh(follow = true)
-    await("Runner restores its remembered selection")(picker(reopened).getSelectedItem.asInstanceOf[DbtRunSelection].path == path)
-    assertTrue(button(reopened, "Run").isEnabled)
+    assertEquals(path, picker(reopened).getText)
+    await("Runner restores its remembered selection")(button(reopened, "Run").isEnabled)
+  }
+
+  def testTargetAndArgumentsRemainEditableAcrossRunnerRefreshes(): Unit = {
+    setupEditor()
+    val config = DbtWorkspace.get(getProject).roots.head.config.getContainingFile
+    edit(config, config.getText + "\nprofile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: duckdb}, qa: {type: duckdb}}}\n")
+    val runner = new DbtRunner(getProject)
+    Disposer.register(ui, runner)
+    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
+    val model = myFixture.getFile.getVirtualFile
+    val directory = model.getParent.getParent.getPath
+    val executable = add("fake-dbt", "#!/usr/bin/python3\nimport json,pathlib,sys\npathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))\n").getVirtualFile
+    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
+    val settings = DbtProjectSettings.get(getProject)
+    val options = settings.options(directory)
+    options.executable = executable.getPath
+    options.notifications = false
+    val panel = new DbtToolWindowPanel(getProject)
+    Disposer.register(ui, panel)
+    panel.refresh(follow = true)
+    val controls = children(panel.runnerPanel)
+    val target = controls.collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.target" => combo.asInstanceOf[JComboBox[String]] }.get
+    val arguments = controls.collectFirst { case field: JTextField if field.getName == "dbt.executableArguments" => field }.get
+    val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
+    for ((path, index) <- Vector(model.getPath, model.getParent.getPath).zipWithIndex) {
+      choose(panel, path)
+      assertTrue(target.isEnabled)
+      assertTrue("Targets supplied by wrappers must also be editable", target.isEditable)
+      assertTrue(arguments.isEnabled)
+      assertTrue((0 until target.getItemCount).map(target.getItemAt).contains("qa"))
+      def layout(component: Component): Unit = component match {
+        case container: Container => container.doLayout(); container.getComponents.foreach(layout)
+        case _ => ()
+      }
+      panel.runnerPanel.setSize(420, 600)
+      layout(panel.runnerPanel)
+      for (field <- Vector(target, arguments, picker(panel).getTextField)) {
+        assertTrue("Runner inputs remain usable in a narrow tool window", field.getWidth > 50)
+        assertTrue(SwingUtilities.convertPoint(field, field.getWidth, 0, panel.runnerPanel).x <= 420)
+      }
+      val targetField = target.getEditor.getEditorComponent.asInstanceOf[JTextField]
+      targetField.setText("custom_" + index)
+      arguments.setText(s"'scope $index'")
+      val targetModel = target.getModel
+      status.setText("")
+      panel.refresh(follow = false)
+      await("Background refresh completes while input is pending")(status.getText.nonEmpty)
+      assertSame("Unchanged target choices keep the dropdown model", targetModel, target.getModel)
+      assertEquals("custom_" + index, targetField.getText)
+      assertEquals(s"'scope $index'", arguments.getText)
+      // Run must save typed values even before Enter or focus loss commits them.
+      ApplicationManager.getApplication.invokeLater(() => button(panel, "Run").doClick(), ModalityState.nonModal())
+      val invocation = Paths.get(directory, "invocation.json")
+      await("Run launches with the edited configuration")(Files.isRegularFile(invocation))
+      val args = JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).toVector
+      assertEquals(s"scope $index", args.head)
+      assertEquals("custom_" + index, args(args.indexOf("--target") + 1))
+      assertEquals("custom_" + index, options.target)
+      assertEquals(s"'scope $index'", options.executableArguments)
+      await("Edited run returns idle")(!runner.isRunning)
+      Files.delete(invocation)
+    }
+  }
+
+  def testRunSelectionAcceptsRelativePathsAndKeepsInvalidInputForCorrection(): Unit = {
+    setupEditor()
+    val runner = new DbtRunner(getProject)
+    Disposer.register(ui, runner)
+    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
+    val panel = new DbtToolWindowPanel(getProject)
+    Disposer.register(ui, panel)
+    val model = Paths.get(myFixture.getFile.getVirtualFile.getPath)
+    val relative = Paths.get(getProject.getBasePath).relativize(model).toString
+    choose(panel, relative)
+    assertEquals(model.toString, DbtProjectSettings.get(getProject).getState.runnerSelection)
+    assertEquals(relative, picker(panel).getText)
+    assertTrue(picker(panel).getButton.getActionListeners.nonEmpty)
+    val invalid = model.getParent.resolve("missing.sql").toString
+    picker(panel).setText(invalid)
+    val status = children(panel.statusPanel).collectFirst { case text: JTextArea => text }.get
+    await("Invalid model cannot launch commands")(status.getText.contains("Selection: None"))
+    assertFalse(button(panel, "Run").isEnabled)
+    assertEquals(invalid, picker(panel).getText)
+    choose(panel, model.getParent.toString)
+    assertFalse(button(panel, "Preview").isEnabled)
   }
 
   def testAddingAReferencedDefinitionInvalidatesOpenEditorHighlighting(): Unit = {

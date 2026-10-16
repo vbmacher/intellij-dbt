@@ -68,13 +68,16 @@ changes. Source-only resolution cannot prove runtime macro behavior or warehouse
 
 ## Runner
 
-Choose a **Model or directory** from the searchable list. The choice is remembered
+Enter a **Model or directory** path or use its **Browse** button to choose a model
+file or directory. Paths can be absolute or relative to the IDE project. The choice is remembered
 when the tool window is reopened and stays selected when editors change or close.
-Directory runs include enabled models in that folder and its descendants. Models
-and directories are listed for each discovered dbt project; the choice determines
+Directory runs include enabled models in that folder and its descendants. The choice determines
 the execution project, profiles and target settings. Lineage still follows the editor.
 
-The configuration row contains **Target** and **Executable arguments**. Arguments
+The configuration row contains **Target** and **Executable arguments**. Select a
+discovered target or type one, including targets supplied by a wrapper. Blank uses
+the profile default. Pending edits survive background refreshes and are saved when
+launching a command or changing the run selection. Arguments
 are passed before the dbt command and shared with **Settings → dbt Workspace** for
 the selected execution root. They also apply to **Generate Docs** and the graph's
 **Regenerate Docs** action.

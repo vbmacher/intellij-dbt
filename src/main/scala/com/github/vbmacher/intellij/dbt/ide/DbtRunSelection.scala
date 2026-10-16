@@ -3,14 +3,10 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtSymbol, DbtWorkspace}
 import com.intellij.openapi.vfs.VfsUtilCore
 
-/** Only stable paths and display text cross from workspace reads into the Runner picker. */
-private[ide] final case class DbtRunSelection(root: String, path: String, directory: Boolean, label: String) {
-  override def toString: String = label
-}
+/** Only stable paths and display text cross from workspace reads into the Runner. */
+private[ide] final case class DbtRunSelection(root: String, path: String, directory: Boolean, label: String)
 
 private[ide] object DbtRunSelection {
-  val Prompt: DbtRunSelection = DbtRunSelection("", "", directory = false, "Choose a model or directory…")
-
   private def models(w: DbtWorkspace): Vector[DbtSymbol] = w.symbols.filter(s => s.kind == "model" && s.isCode && s.isEnabled &&
     w.owner(s).exists(r => !r.excluded(s.file.getVirtualFile))).distinctBy(_.file.getVirtualFile.getPath)
 

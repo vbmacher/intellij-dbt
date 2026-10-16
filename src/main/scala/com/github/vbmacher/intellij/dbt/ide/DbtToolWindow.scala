@@ -7,9 +7,11 @@ import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.util.{Disposer, IconLoader}
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
@@ -18,23 +20,26 @@ import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.{PsiDocumentManager, PsiManager}
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.ui.{ComboboxSpeedSearch, JBColor, OnePixelSplitter}
+import com.intellij.ui.{DocumentAdapter, JBColor, OnePixelSplitter}
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.IconUtil
-import java.awt.{BorderLayout, FlowLayout}
+import java.awt.{BorderLayout, Dimension, FlowLayout, GridBagConstraints, GridBagLayout, Insets}
 import java.awt.event.{FocusAdapter, FocusEvent}
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
+import java.nio.file.Paths
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.{JButton, JCheckBox, JComboBox, JPanel}
+import javax.swing.event.DocumentEvent
 import javax.imageio.ImageIO
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
+import scala.util.Try
 
 final class DbtToolWindowFactory extends ToolWindowFactory {
   override def createToolWindowContent(project: Project, toolWindow: ToolWindow): Unit = {
@@ -60,7 +65,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val settings = DbtProjectSettings.get(project)
   private val runner = project.getService(classOf[DbtRunner])
   private val contextLabel = new JBLabel("Choose a model or directory to run commands.")
-  private val runSelection = new JComboBox[DbtRunSelection]()
+  private val runSelection = new TextFieldWithBrowseButton
   private val target = new JComboBox[String]()
   private val executableArguments = new JBTextField(24)
   private val fullRefresh = new JCheckBox("Full Refresh")
@@ -79,7 +84,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var downstreamExtra = 0
   private var context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
   private var fillingTarget = false
-  private var fillingSelection = false
+  private var loadedArguments = ""
+  private var loadedTarget = ""
   private var disposed = false
   private var followPending = false
   private val browser = try {
@@ -98,11 +104,19 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
   executableArguments.setName("dbt.executableArguments")
   runSelection.setName("dbt.runSelection")
-  runSelection.addItem(DbtRunSelection.Prompt)
-  runSelection.setMaximumRowCount(20)
-  runSelection.setToolTipText("Choose a model or directory. Type in the list to search.")
-  ComboboxSpeedSearch.installOn(runSelection)
-  target.setToolTipText("Select the dbt target for the current execution root")
+  runSelection.setText(settings.getState.runnerSelection)
+  runSelection.setToolTipText("Enter a model or directory path, absolute or relative to the IDE project, or browse.")
+  runSelection.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFileOrDir()
+    .withTitle("Select dbt model or directory")
+    .withDescription("Choose a model file or a directory containing models.")
+    .withFileFilter(file => file.isDirectory || context.choices.exists(_.path == file.getPath)))
+  Disposer.register(this, runSelection)
+  target.setName("dbt.target")
+  target.setEditable(true)
+  target.setToolTipText("Select or type a dbt target. Leave blank for the profile default.")
+  target.getEditor.getEditorComponent.addFocusListener(new FocusAdapter {
+    override def focusLost(event: FocusEvent): Unit = saveTarget()
+  })
   fullRefresh.setToolTipText("<html>Rebuild incremental models in the selected model or directory from all source data.<br>" +
     "Applies to Run and Build. Can take longer and use more warehouse compute.</html>")
   executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
@@ -110,13 +124,21 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   executableArguments.addFocusListener(new FocusAdapter {
     override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
   })
-  val configuration = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
-  configuration.add(new JBLabel("Target:"));
-  configuration.add(target)
-  val argumentsLabel = new JBLabel("Executable arguments:");
-  argumentsLabel.setLabelFor(executableArguments)
-  configuration.add(argumentsLabel);
-  configuration.add(executableArguments)
+  val configuration = new JPanel(new GridBagLayout)
+  Vector("Target:" -> target, "Executable arguments:" -> executableArguments).zipWithIndex.foreach { case ((text, field), row) =>
+    val label = new JBLabel(text)
+    label.setLabelFor(field)
+    val c = new GridBagConstraints
+    c.gridy = row
+    c.anchor = GridBagConstraints.WEST
+    c.insets = new Insets(3, 0, 3, 5)
+    configuration.add(label, c)
+    c.gridx = 1
+    c.weightx = 1
+    c.fill = GridBagConstraints.HORIZONTAL
+    field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
+    configuration.add(field, c)
+  }
   DbtCommand.Actions.foreach { name =>
     val (icon, tooltip) = name match {
       case "Run" => AllIcons.Actions.Execute -> "Run the selected model or directory"
@@ -177,21 +199,23 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   status.setWrapStyleWord(true);
   statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
   fullRefresh.setVisible(false)
-  runSelection.addActionListener(_ => if (!fillingSelection) {
-    saveExecutableArguments()
-    settings.getState.runnerSelection = Option(runSelection.getSelectedItem).collect { case s: DbtRunSelection => s.path }.getOrElse("")
-    generation.incrementAndGet()
-    fullRefresh.setSelected(false)
-    context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
-    contextLabel.setText("Updating run selection and target…")
-    updateButtons()
-    settings.changed()
+  runSelection.addDocumentListener(new DocumentAdapter {
+    override def textChanged(event: DocumentEvent): Unit = {
+      val path = selectionPath
+      if (settings.getState.runnerSelection != path) {
+        saveTarget()
+        saveExecutableArguments()
+        settings.getState.runnerSelection = path
+        generation.incrementAndGet()
+        fullRefresh.setSelected(false)
+        context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
+        contextLabel.setText("Updating run selection and target…")
+        updateButtons()
+        settings.changed()
+      }
+    }
   })
-  target.addActionListener(_ => if (!fillingTarget) context.root.foreach { path =>
-    settings.options(path).target = Option(target.getSelectedItem).map(_.toString).getOrElse("")
-    settings.changed();
-    schedule(follow = false)
-  })
+  target.addActionListener(_ => if (!fillingTarget) saveTarget())
   runner.listen(this, event => {
     updateButtons();
     browser.foreach(_.runnerState(event.running, event.message))
@@ -223,9 +247,30 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   updateButtons()
 
+  private def selectionPath: String = Option(runSelection.getText.trim).filter(_.nonEmpty).flatMap(value => Try {
+    val path = Paths.get(value)
+    (if (path.isAbsolute) path else Option(project.getBasePath).map(Paths.get(_).resolve(path)).getOrElse(path.toAbsolutePath))
+      .normalize().toString.replace(java.io.File.separatorChar, '/')
+  }.toOption).getOrElse("")
+
+  private def targetText: String = Option(target.getEditor.getItem).fold("")(_.toString.trim)
+
+  private def saveTarget(): Unit = context.root.foreach { path =>
+    val options = settings.options(path)
+    val value = targetText
+    if (value != loadedTarget) {
+      loadedTarget = value
+      if (options.target != value) {
+        options.target = value
+        settings.changed()
+      }
+    }
+  }
+
   private def saveExecutableArguments(): Unit = context.root.foreach { path =>
     val options = settings.options(path)
     val value = executableArguments.getText.trim
+    loadedArguments = value
     if (options.executableArguments != value) {
       options.executableArguments = value;
       settings.changed()
@@ -286,27 +331,29 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val (snapshot, next) = result
         val changedRoot = context.root != next.root
         val changedSelection = context.selection.map(_.path) != next.selection.map(_.path) || changedRoot
-        val changedChoices = context.choices != next.choices
+        val changedTargets = context.targets != next.targets
+        val pendingTarget = targetText
+        val targetEdited = pendingTarget != loadedTarget
         context = next
-        if (changedRoot || !executableArguments.isFocusOwner)
-          executableArguments.setText(context.root.map(settings.options(_).executableArguments).getOrElse(""))
-        if (changedChoices || changedSelection) {
-          fillingSelection = true
-          runSelection.removeAllItems()
-          runSelection.addItem(DbtRunSelection.Prompt)
-          context.choices.foreach(runSelection.addItem)
-          runSelection.setSelectedItem(context.selection.getOrElse(DbtRunSelection.Prompt))
-          fillingSelection = false
+        if (changedRoot || executableArguments.getText == loadedArguments) {
+          loadedArguments = context.root.map(settings.options(_).executableArguments).getOrElse("")
+          executableArguments.setText(loadedArguments)
         }
         if (changedSelection || !context.incremental) fullRefresh.setSelected(false)
         fullRefresh.setVisible(context.incremental)
-        fillingTarget = true;
-        target.removeAllItems();
-        target.addItem("");
-        context.targets.foreach(target.addItem);
-        target.setSelectedItem(context.target);
+        fillingTarget = true
+        if (changedRoot || changedTargets) {
+          target.removeAllItems()
+          target.addItem("")
+          context.targets.foreach(target.addItem)
+        }
+        if (changedRoot || !targetEdited) target.setSelectedItem(context.target)
+        else if (changedTargets) target.setSelectedItem(pendingTarget)
+        loadedTarget = context.target
         fillingTarget = false
-        contextLabel.setText(context.selection.map(_.label).getOrElse("Choose a model or directory") + " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
+        contextLabel.setText(context.selection.map(_.label).getOrElse(if (runSelection.getText.trim.isEmpty)
+          "Choose a model or directory" else "Choose an available dbt model or directory") +
+          " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
         status.setText(context.status)
         val payload = snapshot.payload
         val nextFocus = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
@@ -353,9 +400,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   private def start(action: String): Unit = WriteIntentReadAction.run(() => {
+    saveTarget()
     saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
-    val selection = Option(runSelection.getSelectedItem).collect { case s: DbtRunSelection if s.path.nonEmpty => s }
+    val selection = context.selection.filter(_.path == selectionPath)
     val requestedRefresh = fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
       override def call(): Either[String, DbtCommand] =

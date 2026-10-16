@@ -58,7 +58,7 @@ final class DbtRunSelectionTest extends DbtCodeInsightTestCase {
     })
     assertTrue(DbtCommand.create(workspace, selected, "Run", fullRefresh = false).isLeft)
     assertTrue(DbtCommand.create(workspace, selected.copy(path = selected.root + "/../outside.sql"), "Run", fullRefresh = false).isLeft)
-    assertTrue(DbtCommand.create(workspace, DbtRunSelection.Prompt, "Run", fullRefresh = false).isLeft)
+    assertTrue(DbtCommand.create(workspace, selected.copy(path = ""), "Run", fullRefresh = false).isLeft)
   }
 
   def testFullRefreshDoesNotIncludeIncrementalModelsOutsideTheChosenDirectory(): Unit = {
