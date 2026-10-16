@@ -47,9 +47,9 @@ private[ide] object DbtClipboard {
         }.distinctBy(_.id)
         val tokens = block.tokens
         val calls = DbtSyntax.calls(block)
-        val isRelation = !block.tag && ((calls.size == 1 && tokens.headOption.exists(_.range.getStartOffset == calls.head.range.getStartOffset) &&
-          Set("ref", "source", "builtins.ref", "builtins.source")(calls.head.name) &&
-          tokens.lastOption.exists(_.image == ")")) || tokens.map(_.image) == Vector("this"))
+        val isRelation = !block.tag && block.range.substring(full).endsWith("}}") && ((calls.size == 1 && calls.head.closed &&
+          calls.head.expressionRange == new TextRange(tokens.head.range.getStartOffset, tokens.last.range.getEndOffset) &&
+          Set("ref", "source", "builtins.ref", "builtins.source")(calls.head.name)) || tokens.map(_.image) == Vector("this"))
         val physical = if (isRelation && candidates.size == 1) DbtResourceData.get(w, candidates.head).attributes.get("relation_name") else None
         new TextRange(block.range.getStartOffset - range.getStartOffset, block.range.getEndOffset - range.getStartOffset) ->
           physical.getOrElse(comment(block.range.substring(full)))
@@ -98,7 +98,8 @@ private[ide] object DbtClipboard {
 abstract class DbtClipboardAction(copying: Boolean) extends AnAction {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabled(event.getProject != null &&
-    event.getData(CommonDataKeys.PSI_FILE) != null && event.getData(CommonDataKeys.EDITOR) != null)
+    event.getData(CommonDataKeys.EDITOR) != null && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(file =>
+      Option(file.getVirtualFile).exists(f => DbtWorkspace.rootForFile(event.getProject, f).exists(r => !r.excluded(f)))))
 
   override def actionPerformed(event: AnActionEvent): Unit = {
     val project = event.getProject; val file = event.getData(CommonDataKeys.PSI_FILE); val editor = event.getData(CommonDataKeys.EDITOR)

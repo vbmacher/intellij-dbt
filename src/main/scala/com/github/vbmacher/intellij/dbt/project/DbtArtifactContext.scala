@@ -11,6 +11,7 @@ private[dbt] object DbtArtifactContext {
   private def textDigest(text: String): String = java.security.MessageDigest.getInstance("SHA-256")
     .digest(text.stripPrefix("\ufeff").replace("\r\n", "\n").getBytes(StandardCharsets.UTF_8)).map(b => f"${b & 0xff}%02x").mkString
   private def digest(path: Path): String = textDigest(Files.readString(path, StandardCharsets.UTF_8))
+  def fingerprint(directory: String): Option[String] = Try(digest(Paths.get(directory).resolve("manifest.json"))).toOption
   def record(directory: String, projectRoot: String, target: String): Unit = {
     val path = Paths.get(directory)
     val manifest = path.resolve("manifest.json")

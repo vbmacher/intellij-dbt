@@ -54,7 +54,8 @@ private[dbt] object DbtSyntax {
       tokens.last.range.getEndOffset))
   }
 
-  final case class Call(name: String, range: TextRange, arguments: Vector[Argument], block: Block, closed: Boolean = true) {
+  final case class Call(name: String, range: TextRange, arguments: Vector[Argument], block: Block,
+    expressionRange: TextRange, closed: Boolean = true) {
     def positional: Vector[Argument] = arguments.filter(_.keyword.isEmpty)
 
     def literal(index: Int): Option[String] = positional.lift(index).flatMap(_.literal)
@@ -221,6 +222,7 @@ private[dbt] object DbtSyntax {
       i += 1
     }
     val name = ts.slice(begin, callee + 1).map(_.image).mkString
-    Call(name, new TextRange(ts(begin).range.getStartOffset, ts(callee).range.getEndOffset), args.toVector, block, closed = finished)
+    Call(name, new TextRange(ts(begin).range.getStartOffset, ts(callee).range.getEndOffset), args.toVector, block,
+      new TextRange(ts(begin).range.getStartOffset, ts(i - 1).range.getEndOffset), closed = finished)
   }
 }

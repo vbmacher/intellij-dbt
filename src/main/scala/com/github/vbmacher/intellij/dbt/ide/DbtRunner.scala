@@ -102,6 +102,7 @@ final class DbtRunner(project: Project) extends Disposable {
           busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled"))
         }
         else try {
+          val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
           val line = new GeneralCommandLine(command.arguments.asJava).withWorkDirectory(command.directory)
             .withEnvironment(command.environment.asJava).withCharset(StandardCharsets.UTF_8)
           val process = new ColoredProcessHandler(line)
@@ -117,7 +118,8 @@ final class DbtRunner(project: Project) extends Disposable {
               val preview = if (success && command.action == "Preview") Some(DbtPreview.format(output.synchronized(output.toString))) else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
-                Try(DbtArtifactContext.record(command.artifactDirectory, command.directory, command.target))
+                if (DbtArtifactContext.fingerprint(command.artifactDirectory) != manifestBefore)
+                  Try(DbtArtifactContext.record(command.artifactDirectory, command.directory, command.target))
                 LocalFileSystem.getInstance.refreshIoFiles(java.util.List.of(new java.io.File(command.artifactDirectory)), true, true, null)
               }
               onUi {

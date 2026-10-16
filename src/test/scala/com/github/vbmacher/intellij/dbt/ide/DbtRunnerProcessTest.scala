@@ -5,6 +5,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.google.gson.JsonParser
+import com.github.vbmacher.intellij.dbt.project.DbtArtifactContext
 import org.junit.Assert._
 import java.nio.file.{Files, Path}
 import scala.collection.mutable.ArrayBuffer
@@ -19,6 +20,10 @@ with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'cwd':os.g
 print('\x1b[31mstreamed output\x1b[0m',flush=True)
 if '--hold' in sys.argv:
  while not os.path.exists('release'): time.sleep(.02)
+if '--write-manifest' in sys.argv:
+ os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
+ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
+  json.dump({'target':sys.argv[sys.argv.index('--target')+1],'generated_at':time.time_ns()},f)
 if 'show' in sys.argv: print(json.dumps({'preview':json.dumps([{'id':1,'name':None}])}),flush=True)
 sys.exit(7 if '--fail' in sys.argv else 0)
 """)
@@ -98,6 +103,43 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val count = delivered.size
     DbtNotifications.publish(getProject, enabled.copy(notifySystem = false), "Run finished (exit 0)", success = true, wasCancelled = false, system)
     assertEquals(count, delivered.size)
+  }
+
+  def testSuccessfulNoWriteCommandNeverCertifiesOldManifestForAnotherTarget(): Unit = {
+    val (runner, directory, executable, _) = setup()
+    val artifact = Files.createDirectories(directory.resolve("target"))
+    Files.writeString(artifact.resolve("manifest.json"), "{\"target\":\"dev\"}")
+    DbtArtifactContext.record(artifact.toString, directory.toString, "dev")
+    val marker = artifact.resolve(".dbt-workspace-context")
+    val before = Files.readString(marker)
+    val run = command(directory, executable, Vector("compile", "--target", "prod")).copy(action = "Compile", target = "prod")
+    assertTrue(runner.start(run))
+    await("No-write command completes") { !runner.isRunning }
+    assertEquals("The old target must retain its provenance", before, Files.readString(marker))
+    Files.delete(marker)
+    assertTrue(runner.start(run))
+    await("Unverified no-write command completes") { !runner.isRunning }
+    assertFalse("Unchanged artifacts must remain unverified", Files.exists(marker))
+  }
+
+  def testOnlySuccessfulManifestWritesUpdateArtifactProvenance(): Unit = {
+    val (runner, directory, executable, _) = setup()
+    val artifact = Files.createDirectories(directory.resolve("target"))
+    Files.writeString(artifact.resolve("manifest.json"), "{\"target\":\"dev\"}")
+    DbtArtifactContext.record(artifact.toString, directory.toString, "dev")
+    val marker = artifact.resolve(".dbt-workspace-context")
+    val before = Files.readString(marker)
+    val run = command(directory, executable, Vector("compile", "--target", "prod", "--write-manifest"))
+      .copy(action = "Compile", target = "prod", environment = Map("DBT_TARGET_PATH" -> artifact.toString))
+    assertTrue(runner.start(run.copy(arguments = run.arguments :+ "--fail")))
+    await("Failed artifact write completes") { !runner.isRunning }
+    assertEquals("A failed command must not certify its manifest", before, Files.readString(marker))
+    assertTrue(runner.start(run))
+    await("Successful artifact write completes") { !runner.isRunning }
+    val recorded = Files.readAllLines(marker).asScala.toVector
+    assertEquals(Vector(directory.toString, "prod"), recorded.take(2))
+    assertEquals(DbtArtifactContext.fingerprint(artifact.toString), recorded.lastOption)
+    assertEquals("prod", JsonParser.parseString(Files.readString(artifact.resolve("manifest.json"))).getAsJsonObject.get("target").getAsString)
   }
 
 }

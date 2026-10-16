@@ -137,4 +137,42 @@ final class DbtClipboardActionTest extends DbtCodeInsightTestCase {
     assertTrue(DbtClipboard.ready(root).isLeft)
   }
 
+  def testCompoundJinjaExpressionsRemainRecoverableAcrossCopyAndPaste(): Unit = {
+    setupRelations()
+    for (expression <- Vector("ref('orders') ~ ('_suffix')", "ref('orders') if execute else (none)",
+      "ref('orders') | string", "ref('orders') ~ ')'", "source('raw', 'events') ~ ('_suffix')")) {
+      val sql = "select * from {{ " + expression + " }}"
+      val file = configure("models/report.sql", sql + "<caret>")
+      val copied = DbtClipboard.copy(file, new TextRange(0, file.getTextLength)).toOption.get
+      assertTrue(copied, copied.contains("dbt-workspace-jinja:"))
+      val w = DbtWorkspace.get(getProject)
+      assertEquals(sql, DbtClipboard.paste(w, w.root(file).get, copied).toOption.get)
+    }
+  }
+
+  def testClipboardActionsOnlyEnableInNonExcludedDbtFiles(): Unit = {
+    def enabled(action: DbtClipboardAction, file: com.intellij.psi.PsiFile): Boolean = {
+      val context = com.intellij.openapi.actionSystem.impl.SimpleDataContext.builder()
+        .add(com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT, getProject)
+        .add(com.intellij.openapi.actionSystem.CommonDataKeys.EDITOR, myFixture.getEditor)
+        .add(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE, file).build()
+      val event = com.intellij.openapi.actionSystem.AnActionEvent.createEvent(context, null, "test",
+        com.intellij.openapi.actionSystem.ActionUiKind.NONE, null)
+      action.update(event)
+      event.getPresentation.isEnabled
+    }
+    val outside = configure("notes.sql", "select 1<caret>")
+    val actions = Vector(new DbtCopyForTargetAction, new DbtPasteAsRefsAction)
+    actions.foreach(a => assertFalse(enabled(a, outside)))
+    val config = add("analytics/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
+    val model = add("analytics/models/orders.sql", "select 1")
+    val excluded = add("analytics/target/compiled/orders.sql", "select 1")
+    actions.foreach { a =>
+      assertFalse(enabled(a, outside))
+      assertTrue("Available without requiring loaded artifacts", enabled(a, model))
+      assertTrue(enabled(a, config))
+      assertFalse(enabled(a, excluded))
+    }
+  }
+
 }

@@ -28,6 +28,8 @@ Source/YAML descriptions and columns take precedence; compatible manifest/catalo
 metadata fills gaps. Compiled SQL is shown only when available. Keys, constraints
 and tests are labeled as declarations, never as verified warehouse constraints or
 passing results. Resources without SQL/columns show explicit empty states.
+Descriptions support static `doc()` calls joined with `~` and literal text; unresolved
+or unsupported expressions remain visible without dropping their content.
 
 Settings control depth, direction, connectors and exposures.
 Theme, source and artifact updates refresh the view; the same graph focus preserves
@@ -123,6 +125,8 @@ that the bundled parser cannot read are left unchanged.
 
 Run **Generate Docs** for the selected project/target before clipboard conversion.
 The Runner records provenance for the exact manifest bytes in `.dbt-workspace-context`
-beside the manifest. Changed targets or externally replaced manifests require regeneration;
+beside the manifest after a successful command writes changed manifest content.
+Commands that leave the manifest unchanged do not certify it for another target.
+Changed targets or externally replaced manifests require regeneration;
 conversion warns before modifying clipboard/document when provenance is unavailable.
 Shortcuts can conflict with IDE keymaps; remap the named actions under **Settings → Keymap**.

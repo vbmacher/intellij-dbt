@@ -52,14 +52,30 @@ private[dbt] object DbtResourceData {
     val enriched = DbtDeclarationSource.EP.getExtensionList.asScala.foldLeft(source) { (data, adapter) =>
       adapter.documentation(w, s).fold(data)(data.enrich)
     }
-    def docs(text: String): String = DbtSyntax.blocks(text).flatMap(DbtSyntax.calls).filter(_.name == "doc").foldLeft(text) { (result, call) =>
+    def docBody(call: DbtSyntax.Call): Option[String] = {
       val bodies = w.owner(s).toVector.flatMap(r => w.definitions(call, Set("doc"), r)).map { d =>
         val blocks = DbtSyntax.inFile(d.file)
         val start = blocks.find(b => b.isTag("docs") && b.range.contains(d.range)).map(_.range.getEndOffset)
         val end = start.flatMap(a => blocks.find(b => b.isTag("enddocs") && b.range.getStartOffset >= a).map(_.range.getStartOffset))
         (for (a <- start; b <- end) yield d.file.getText.substring(a, b).trim).getOrElse("")
       }
-      if (bodies.size == 1) result.replace(call.block.range.substring(text), bodies.head) else result
+      if (bodies.size == 1) bodies.headOption else None
+    }
+    // Resolve complete string concatenations only; unsupported or unresolved expressions stay intact.
+    def docs(text: String): String = DbtSyntax.blocks(text).filterNot(_.tag).reverse.foldLeft(text) { (result, block) =>
+      val calls = DbtSyntax.calls(block).filter(c => c.name == "doc" && c.closed)
+      val resolved = calls.flatMap(c => docBody(c).map(c.expressionRange -> _))
+      val tokens = block.tokens.filterNot(t => resolved.exists { case (range, _) =>
+        range.contains(t.range) && range.getStartOffset != t.range.getStartOffset
+      }).map(t => resolved.find(_._1.getStartOffset == t.range.getStartOffset)
+        .fold(t) { case (range, body) => DbtSyntax.Token(body, range, string = true) })
+      val literal = block.range.substring(text).endsWith("}}") && tokens.nonEmpty && tokens.size % 2 == 1 && tokens.zipWithIndex.forall { case (t, i) =>
+        if (i % 2 == 0) t.string else !t.string && t.image == "~"
+      }
+      if (calls.nonEmpty && literal) {
+        val body = tokens.zipWithIndex.collect { case (t, i) if i % 2 == 0 => t.image }.mkString
+        result.substring(0, block.range.getStartOffset) + body + result.substring(block.range.getEndOffset)
+      } else result
     }
     enriched.copy(description = docs(enriched.description), columns = enriched.columns.map(c => c.copy(description = docs(c.description))))
   }

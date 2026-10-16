@@ -361,4 +361,26 @@ select * from {{ source('raw', 'missing_table') }}
     assertFalse(workspace.symbols.exists(s => s.isCode && s.name == "shadow"))
   }
 
+  def testCombinedDocExpressionsPreserveAllContentAndUnsupportedExpressions(): Unit = {
+    project()
+    add("docs/descriptions.md", "{% docs one %}First{% enddocs %}\n{% docs two %}Second{% enddocs %}")
+    add("models/orders.sql", "select 1")
+    val properties = add("models/schema.yml", "models: [{name: orders}]\n")
+    val cases = Vector(
+      "{{ doc('one') ~ doc('two') }}" -> "FirstSecond",
+      "Before {{ doc('one') ~ ' / ' ~ doc('two') }} after" -> "Before First / Second after",
+      "{{ doc('one') }} and {{ doc('two') }}" -> "First and Second",
+      "{{- doc('one') ~ doc('two') -}}" -> "FirstSecond",
+      "{{ doc('one') ~ doc('missing') }}" -> "{{ doc('one') ~ doc('missing') }}",
+      "{{ doc('one') | upper }}" -> "{{ doc('one') | upper }}",
+      "{{ doc('one')" -> "{{ doc('one')",
+      "{{ doc('one') if execute else doc('two') }}" -> "{{ doc('one') if execute else doc('two') }}")
+    cases.foreach { case (input, expected) =>
+      edit(properties, "models: [{name: orders, description: \"" + input + "\", columns: [{name: id, description: \"" + input + "\"}]}]\n")
+      val data = DbtResourceData.get(workspace, resource("orders"))
+      assertEquals(input, expected, data.description)
+      assertEquals(input, expected, data.columns.head.description)
+    }
+  }
+
 }
