@@ -33,7 +33,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val downstream = new JSpinner(new SpinnerNumberModel(5, 1, 20, 1))
   private val direction = new JComboBox[String](Array("LR", "TB", "RL", "BT"))
   private val edges = new JComboBox[String](Array("bezier", "taxi", "round-taxi", "segments", "straight", "unbundled-bezier", "haystack"))
-  private val exposures = new JBCheckBox("Show exposures")
+  private val exposures = new JBCheckBox("Show dbt exposures in lineage")
   private var selectedRoot: String = ""
   private var drafts = Map.empty[String, DbtRunOptions]
   private var baseline = ""
@@ -65,6 +65,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       .withTitle("Select dbt profiles directory")
       .withDescription("Choose the directory containing profiles.yml."))
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
+    exposures.setToolTipText("Show dashboards, notebooks, and other downstream consumers defined as dbt exposures, with their dependency links in the lineage graph.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream depth" -> upstream,
