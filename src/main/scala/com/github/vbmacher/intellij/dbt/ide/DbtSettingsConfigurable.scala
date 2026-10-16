@@ -16,13 +16,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val root = new JComboBox[String]()
   private val executable = new TextFieldWithBrowseButton
   private val executableArguments = new JBTextField
-  private val projectRoot = new JBTextField
+  private val projectRoot = new TextFieldWithBrowseButton
   private val profiles = new JBTextField
   private val artifacts = new JBTextField
   private val target = new JBTextField
   private val limit = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1))
   private val colors = new JBCheckBox("Colored output")
-  private val notifications = new JBCheckBox("Native OS completion notifications")
+  private val notifications = new JBCheckBox("Desktop notifications when dbt commands finish")
   private val upstream = new JSpinner(new SpinnerNumberModel(5, 1, 20, 1))
   private val downstream = new JSpinner(new SpinnerNumberModel(5, 1, 20, 1))
   private val direction = new JComboBox[String](Array("LR", "TB", "RL", "BT"))
@@ -53,6 +53,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       .withTitle("Select dbt executable")
       .withDescription("Choose a dbt executable, wrapper script, or custom tool."))
     executable.getButton.setToolTipText("Choose a dbt executable, script, or custom tool")
+    projectRoot.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
+      .withTitle("Select dbt project root")
+      .withDescription("Choose the directory containing dbt_project.yml."))
+    projectRoot.getButton.setToolTipText("Choose a dbt project root directory")
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
@@ -147,7 +151,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
 
   override def isModified: Boolean = snapshot() != baseline
 
-  override def disposeUIResources(): Unit = executable.dispose()
+  override def disposeUIResources(): Unit = {
+    executable.dispose()
+    projectRoot.dispose()
+  }
 
   override def apply(): Unit = {
     if (executable.getText.trim.isEmpty || artifacts.getText.trim.isEmpty) throw new ConfigurationException("Executable and artifact directory must not be blank.")
