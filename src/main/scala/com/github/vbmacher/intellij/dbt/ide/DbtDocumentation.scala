@@ -26,7 +26,7 @@ private[ide] final class DbtDocumentationTarget(file: PsiFile, offset: Int, symb
     (fresh: PsiFile, range: TextRange) => new DbtDocumentationTargetProvider().documentationTargets(fresh, range.getStartOffset)
       .asScala.headOption.orNull)
 
-  override def computePresentation(): TargetPresentation = TargetPresentation.builder(symbol.presentableText)
+  override def computePresentation(): TargetPresentation = TargetPresentation.builder(DbtDocumentation.displayName(symbol))
     .icon(symbol.element.getIcon(0)).presentation()
 
   override def getNavigatable: com.intellij.pom.Navigatable = symbol.element
@@ -42,13 +42,16 @@ private[ide] final class DbtDocumentationTarget(file: PsiFile, offset: Int, symb
 }
 
 private[ide] object DbtDocumentation {
+  def displayName(s: DbtSymbol): String =
+    s"${s.namespace}.${s.relationName}${s.version.map(" v" + _).getOrElse("")}${s.metadataSuffix}"
+
   /** Documentation follows resource and macro dependencies, not navigation to config keys or source groups. */
   def dependencies(w: DbtWorkspace, s: DbtSymbol): (Vector[String], Vector[String]) = {
     def documented(symbol: DbtSymbol): Boolean = DbtResourceData.GraphKinds(symbol.kind) || symbol.kind == "macro"
     val edges = DbtLineage.edges(w).filter(e => documented(e.from) && documented(e.to))
     def same(a: DbtSymbol): Boolean = w.owner(a) == w.owner(s) && a.uniqueId == s.uniqueId
-    edges.filter(e => same(e.from)).map(_.to.presentableText).distinct ->
-      edges.filter(e => same(e.to)).map(_.from.presentableText).distinct
+    edges.filter(e => same(e.from)).map(e => displayName(e.to)).distinct ->
+      edges.filter(e => same(e.to)).map(e => displayName(e.from)).distinct
   }
 
   def escape(text: String): String = text.flatMap {
@@ -70,12 +73,17 @@ private[ide] object DbtDocumentation {
     val columnLimit = if (bounded) 15 else Int.MaxValue
     val dependencyLimit = if (bounded) 8 else Int.MaxValue
     val relation = data.attributes.get("relation_name").orElse(data.attributes.get("identifier")).getOrElse("")
+    val metadata = Vector("Package" -> s.namespace) ++ s.version.map("Version" -> _) ++
+      Vector("Database" -> "database", "Schema" -> "schema", "Materialization" -> "materialized").flatMap { case (label, key) =>
+        data.attributes.get(key).filter(_.nonEmpty).map(label -> _)
+      } ++ Option(relation).filter(_.nonEmpty).map("Relation" -> _)
     val signature = if (s.kind == "macro") {
       val names = if (data.arguments.nonEmpty) data.arguments.map(_.name) else w.symbols.filter(p => p.kind == "parameter" && p.owner == s.name && p.file == s.file).map(_.name)
       s"<pre>${e(s.name + names.mkString("(", ", ", ")"))}</pre>" + data.arguments.map(a => s"<p>${e(a.name)}: ${e(a.dataType)} ${e(a.description)}</p>").mkString
     } else ""
-    s"<div class='definition'><b>${e(s.presentableText)}</b> — ${e(s.kind)}</div>" + signature +
-      s"<p>${e(data.attributes.getOrElse("materialized", ""))} ${e(relation)}</p><div class='content'>${e(data.description).replace("\n", "<br>")}</div>" +
+    s"<div class='definition'><b>${e(displayName(s))}</b> — ${e(s.kind)}</div>" + signature +
+      "<table>" + metadata.map { case (label, value) => s"<tr><td>$label</td><td>${e(value)}</td></tr>" }.mkString + "</table>" +
+      s"<div class='content'>${e(data.description).replace("\n", "<br>")}</div>" +
       s"<p>Tags: ${e(data.tags.mkString(", "))}</p><h3>Columns (${data.columns.size})</h3>" +
       (if (data.columns.isEmpty) "<p>No columns documented</p>" else "<table>" + data.columns.take(columnLimit).map(c =>
         s"<tr><td><b>${e(c.name)}</b></td><td>${e(c.dataType)}</td><td>${e(c.description)}</td></tr>").mkString + "</table>") +

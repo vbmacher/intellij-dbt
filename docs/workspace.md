@@ -52,6 +52,8 @@ Hover a `ref()` model argument, `source()` table argument, or macro name, or inv
 Show quick documentation on hover**. Existing Ctrl+hover still navigates the exact
 reference name. Popups show at most 15 columns and eight entries in each dependency
 direction, with counts; the sidebar has the full lists.
+Source headings retain the logical source/table identity (for example, `analytics.raw.events`).
+Known database, schema and physical relation fields are listed separately; unavailable fields are omitted.
 
 Unresolved static `ref()` / `source()` calls have warning ranges on their arguments.
 Unknown sources and unknown tables are distinguished. Dynamic names, incomplete
@@ -88,6 +90,8 @@ an aligned table beneath the log; nulls and empty results are explicit. Ordinary
 text can soft-wrap using the console's normal soft-wrap control; preview tables stay
 unwrapped. Success/failure produces IDE notifications and, when enabled and supported
 by the OS, native notifications. Cancellation is reported separately.
+Native delivery also requires IntelliJ's **Appearance & Behavior → Notifications → Enable system notifications**
+setting, an inactive IDE window, and an available desktop notification service (such as a Linux notification daemon).
 
 Successful Run/Build/Compile/Generate Docs refreshes artifacts. **Status** shows the
 executable, available manifest CLI version, target/adapter, model, resource count,

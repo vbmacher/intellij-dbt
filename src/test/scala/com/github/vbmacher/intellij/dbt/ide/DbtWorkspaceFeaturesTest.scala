@@ -55,7 +55,7 @@ sources:
     assertEquals("A test declared in YAML and its manifest must be counted once", 2, data.tests.size)
     assertTrue(data.compiledSql.exists(_.startsWith("select")))
     val doc = DbtGraphData.documentation(workspace, s)
-    assertEquals(Vector("analytics.events"), doc.getAsJsonArray("upstream").asScala.map(_.getAsString).toVector)
+    assertEquals(Vector("analytics.raw.events"), doc.getAsJsonArray("upstream").asScala.map(_.getAsString).toVector)
     assertEquals(Vector("analytics.report"), doc.getAsJsonArray("downstream").asScala.map(_.getAsString).toVector)
     val html = DbtDocumentation.render(workspace, s)
     assertTrue(html.contains("Orders &lt;strong&gt; &amp; details"))
@@ -193,6 +193,32 @@ select * from {{ source('raw', 'missing_table') }}
     assertEquals("Raw events", data.description)
     assertEquals("actual_events", data.attributes("identifier"))
     assertEquals("warehouse.landing.actual_events", data.attributes("relation_name"))
+    val file = configure("models/source_hover.sql", "select * from {{ source('raw', 'ev<caret>ents') }}")
+    val targets = new DbtDocumentationTargetProvider().documentationTargets(file, myFixture.getCaretOffset)
+    assertEquals(1, targets.size())
+    assertEquals("analytics.raw.events", targets.get(0).computePresentation().getPresentableText)
+    val html = DbtDocumentation.render(workspace, source)
+    assertTrue(html.contains("<b>analytics.raw.events</b>"))
+    assertTrue(html.contains("<td>Database</td><td>warehouse</td>"))
+    assertTrue(html.contains("<td>Schema</td><td>landing</td>"))
+    assertTrue(html.contains("warehouse.landing.actual_events"))
+    assertEquals("analytics.raw.events", DbtGraphData.documentation(workspace, source).get("name").getAsString)
+  }
+
+  def testSourceHoverDistinguishesLogicalSourcesWithoutPhysicalMetadata(): Unit = {
+    project()
+    add("models/sources.yml", "sources: [{name: raw, tables: [{name: events}]}, {name: archive, tables: [{name: events}]}]\n")
+    for (name <- Vector("raw", "archive")) {
+      val file = configure(s"models/${name}_hover.jinja", s"{{ source('$name', 'ev<caret>ents') }}")
+      val target = new DbtDocumentationTargetProvider().documentationTargets(file, myFixture.getCaretOffset).get(0)
+      assertEquals(s"analytics.$name.events", target.computePresentation().getPresentableText)
+      val source = workspace.symbols.find(s => s.kind == "source_table" && s.owner == name && s.name == "events").get
+      val html = DbtDocumentation.render(workspace, source)
+      assertTrue(html.contains(s"<b>analytics.$name.events</b>"))
+      assertFalse(html.contains("<td>Database</td>"))
+      assertFalse(html.contains("<td>Schema</td>"))
+      assertFalse(html.contains("<td>Relation</td>"))
+    }
   }
   def testDocsBlocksAndMacroArgumentsRefreshInNativeDocumentation(): Unit = {
     project()

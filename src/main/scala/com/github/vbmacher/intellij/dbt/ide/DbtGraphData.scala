@@ -83,7 +83,7 @@ private[ide] object DbtGraphData {
   def documentation(w: DbtWorkspace, s: DbtSymbol): JsonObject = {
     val data = DbtResourceData.get(w, s)
     val doc = new JsonObject
-    doc.addProperty("name", s.presentableText); doc.addProperty("kind", s.kind); doc.addProperty("description", data.description)
+    doc.addProperty("name", DbtDocumentation.displayName(s)); doc.addProperty("kind", s.kind); doc.addProperty("description", data.description)
     doc.addProperty("source", s.file.getVirtualFile.getPath); doc.addProperty("logical", s.relationName)
     doc.addProperty("rawSql", data.rawSql.orNull); doc.addProperty("compiledSql", data.compiledSql.orNull)
     doc.add("tags", gson.toJsonTree(data.tags.asJava)); doc.add("attributes", gson.toJsonTree(data.attributes.asJava))
