@@ -26,7 +26,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 private[ide] final case class DbtCommand(arguments: Vector[String], directory: String, environment: Map[String, String],
-  action: String, target: String, notifySystem: Boolean, artifactDirectory: String)
+  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String])
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs")
@@ -63,7 +63,7 @@ private[ide] object DbtCommand {
       Right(DbtCommand(prefix ++ command ++ select ++ refresh ++ preview ++
         (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
         directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
-        action, target, options.notifications, artifact.toString))
+        action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root)))
     }
   }
 }
@@ -119,7 +119,7 @@ final class DbtRunner(project: Project) extends Disposable {
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
                 if (DbtArtifactContext.fingerprint(command.artifactDirectory) != manifestBefore)
-                  Try(DbtArtifactContext.record(command.artifactDirectory, command.directory, command.target))
+                  Try(DbtArtifactContext.record(command.artifactDirectory, command.artifactContext))
                 LocalFileSystem.getInstance.refreshIoFiles(java.util.List.of(new java.io.File(command.artifactDirectory)), true, true, null)
               }
               onUi {

@@ -57,6 +57,8 @@ lazy val root = (project in file("."))
       ("com.jetbrains.intellij.platform" % "test-framework-common" % intellijVersion % Test).notTransitive()
     ),
     Test / parallelExecution := false,
+    // Use the SDK's JetBrains Runtime so IDE tests load its matching native JCEF.
+    Test / javaHome := Some(org.jetbrains.sbtidea.download.jbr.JbrInstaller.getJbrHome(intellijBaseDirectory.value.toPath).toFile),
     // Optional Python integration has a separate suite; the default suite proves it is not required.
     Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"),
     Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.metadata.DbtPackagedRuntimeTest"),

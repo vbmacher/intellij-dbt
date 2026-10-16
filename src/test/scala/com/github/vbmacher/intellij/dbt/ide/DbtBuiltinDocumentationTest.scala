@@ -3,11 +3,14 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.DbtSymbolElement
 import com.intellij.lang.documentation.impl.TargetsKt
-import com.intellij.lang.documentation.ide.impl.DocumentationToolWindowManager
+import com.intellij.lang.documentation.ide.impl.{DocumentationManager, DocumentationToolWindowManager}
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.actionSystem.{ActionManager, CommonDataKeys}
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.platform.backend.documentation.DocumentationTarget
-import com.intellij.testFramework.{PlatformTestUtil, ServiceContainerUtil}
+import com.intellij.testFramework.{PlatformTestUtil, ServiceContainerUtil, TestActionEvent}
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.junit.Assert._
 import java.awt.{Component, Container}
@@ -18,6 +21,7 @@ import scala.jdk.CollectionConverters._
 
 final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
   private val requested = new ConcurrentLinkedQueue[String]()
+  private var autoUpdate = false
   private val page = """<html><head><style>unwanted css</style></head><body><nav>Website menu</nav><article>
     <nav>Breadcrumbs</nav><div class="markdown"><h1>ref</h1><p>Returns a relation and records a model dependency.</p>
     <pre><code>{{ ref('orders') }}</code></pre><table><tr><th>Argument</th><td>model_name</td></tr></table>
@@ -27,6 +31,8 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
 
   override protected def setUp(): Unit = {
     super.setUp()
+    autoUpdate = DocumentationToolWindowManager.Companion.getAutoUpdate
+    DocumentationToolWindowManager.Companion.setAutoUpdate(false)
     ServiceContainerUtil.replaceService(getProject, classOf[DbtBuiltinDocumentationSource], new DbtBuiltinDocumentationSource {
       override def html(url: String): String = {
         assertFalse("Documentation must load off the EDT", ApplicationManager.getApplication.isDispatchThread)
@@ -36,6 +42,12 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
       }
     }, getTestRootDisposable)
   }
+
+  override protected def tearDown(): Unit = try {
+    Option(ToolWindowManager.getInstance(getProject).getToolWindow(DocumentationToolWindowManager.TOOL_WINDOW_ID))
+      .foreach(_.getContentManager.removeAllContents(true))
+    DocumentationToolWindowManager.Companion.setAutoUpdate(autoUpdate)
+  } finally super.tearDown()
 
   private def targets: Vector[DocumentationTarget] = TargetsKt.documentationTargets(myFixture.getFile, myFixture.getCaretOffset).asScala.toVector
 
@@ -105,6 +117,15 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
       assertNull(handler.resolveLink(target, url))
   }
 
+  def testOnRunEndVariablesUseTheOfficialHyphenatedDocumentationPage(): Unit = {
+    val file = configure("dbt_project.yml", "name: analytics\nconfig-version: 2\non-run-end: \"{{ res<caret>ults }} {{ schemas }} {{ selected_resources }}\"\n")
+    for (name <- Vector("results", "schemas", "selected_resources")) {
+      myFixture.getEditor.getCaretModel.moveToOffset(file.getText.indexOf(name) + 1)
+      assertEquals("https://docs.getdbt.com/reference/dbt-jinja-functions/on-run-end-context?version=1.10",
+        targets.head.asInstanceOf[DbtBuiltinDocumentationTarget].url)
+    }
+  }
+
   def testUnavailableDocumentationStaysInTheInternalPaneWithAnActionableMessage(): Unit = {
     ServiceContainerUtil.replaceService(getProject, classOf[DbtBuiltinDocumentationSource], new DbtBuiltinDocumentationSource {
       override def html(url: String): String = throw new IOException("Offline <untrusted>")
@@ -127,16 +148,30 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
     def displayed(text: String): Boolean =
       Option(manager.getToolWindow(DocumentationToolWindowManager.TOOL_WINDOW_ID)).exists(window =>
         window.getContentManager.getContents.exists(content => children(content.getComponent).exists {
-          case pane: JEditorPane => pane.getText.contains(text)
+          case pane: JEditorPane => org.jsoup.Jsoup.parse(pane.getText).text().contains(text)
           case _ => false
         }))
     myFixture.performEditorAction("GotoDeclaration")
     PlatformTestUtil.waitWithEventsDispatching("Builtin navigation displays native documentation", () => displayed("Returns a relation"), 15)
     assertEquals("models/report.sql", myFixture.getFile.getVirtualFile.getPath.takeRight("models/report.sql".length))
     assertTrue(requested.asScala.exists(_.contains("/ref?version=1.10")))
+    manager.getToolWindow(DocumentationToolWindowManager.TOOL_WINDOW_ID).getContentManager.removeAllContents(true)
     configure("models/source.sql", "{{ sou<caret>rce('raw', 'events') }}")
-    myFixture.performEditorAction("QuickJavaDoc")
-    PlatformTestUtil.waitWithEventsDispatching("Ctrl+Q requests builtin documentation through the native API", () =>
-      requested.asScala.exists(_.contains("/source?version=1.10")), 15)
+    // The light fixture has no showing editor component to position a popup against. Use the native tool-window preference.
+    val skipPopup = DocumentationManager.Companion.getSkipPopup
+    try {
+      DocumentationManager.Companion.setSkipPopup(true)
+      val action = ActionManager.getInstance().getAction("QuickJavaDoc")
+      val context = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject)
+        .add(CommonDataKeys.EDITOR, myFixture.getEditor).add(CommonDataKeys.PSI_FILE, myFixture.getFile)
+        .add(com.intellij.platform.ide.documentation.ActionsKt.DOCUMENTATION_TARGETS, targets.asJava).build()
+      val event = TestActionEvent.createTestEvent(action, context)
+      ActionUtil.updateAction(action, event)
+      assertTrue("Quick Documentation is enabled for the configured editor", event.getPresentation.isEnabled)
+      ActionUtil.performAction(action, event)
+      PlatformTestUtil.waitWithEventsDispatching("Ctrl+Q renders builtin documentation in the native tool window", () =>
+        displayed("dbt.source") && displayed("Returns a relation"), 15)
+      assertTrue(requested.asScala.exists(_.contains("/source?version=1.10")))
+    } finally DocumentationManager.Companion.setSkipPopup(skipPopup)
   }
 }

@@ -121,6 +121,12 @@ print('started from the Run button',flush=True)
 
   def testRunnerEditsSharedPrefixAndGeneratesRenderableDocs(): Unit = {
     setupEditor()
+    val editorOptions = com.intellij.openapi.editor.ex.EditorSettingsExternalizable.getInstance()
+    val ensureNewline = editorOptions.isEnsureNewLineAtEOF
+    editorOptions.setEnsureNewLineAtEOF(true)
+    Disposer.register(ui, () => editorOptions.setEnsureNewLineAtEOF(ensureNewline))
+    val config = DbtWorkspace.get(getProject).roots.head.config.getContainingFile
+    edit(config, config.getText.stripSuffix("\n"))
     val runner = new DbtRunner(getProject)
     Disposer.register(ui, runner)
     ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
@@ -158,6 +164,8 @@ pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
         DbtDocumentation.render(workspace, symbol).contains("Generated for analytics context"))
     }
     await("Docs command returns to idle")(!runner.isRunning)
+    assertTrue("Save actions must be committed before capturing the command's artifact context",
+      com.github.vbmacher.intellij.dbt.project.DbtArtifactContext.matches(DbtWorkspace.get(getProject).roots.head))
   }
 
   def testAddingAReferencedDefinitionInvalidatesOpenEditorHighlighting(): Unit = {

@@ -147,7 +147,8 @@ private[dbt] object DbtWorkspace {
 
   /** Nearest project configuration, without parsing the file or scanning all workspace resources. */
   def rootForFile(project: Project, file: VirtualFile): Option[DbtRoot] =
-    Iterator.iterate(file.getParent)(_.getParent).takeWhile(_ != null)
+    if (project.isDisposed || !file.isValid) None
+    else Iterator.iterate(file.getParent)(_.getParent).takeWhile(directory => directory != null && directory.isValid)
       .flatMap(directory => loadRoot(project, directory)).nextOption()
 
   /** Local declarations for file presentation, without building the entire workspace. */

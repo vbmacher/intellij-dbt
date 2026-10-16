@@ -127,9 +127,10 @@ comments from Copy are restored; ordinary SQL comments are preserved. SQL dialec
 that the bundled parser cannot read are left unchanged.
 
 Run **Generate Docs** for the selected project/target before clipboard conversion.
-The Runner records provenance for the exact manifest bytes in `.dbt-workspace-context`
+The Runner records provenance for the exact manifest bytes and execution configuration
+(including profiles, project configuration and wrapper arguments) in `.dbt-workspace-context`
 beside the manifest after a successful command writes changed manifest content.
 Commands that leave the manifest unchanged do not certify it for another target.
-Changed targets or externally replaced manifests require regeneration;
+Changed execution configuration or externally replaced manifests require regeneration;
 conversion warns before modifying clipboard/document when provenance is unavailable.
 Shortcuts can conflict with IDE keymaps; remap the named actions under **Settings → Keymap**.

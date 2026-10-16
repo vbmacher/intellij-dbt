@@ -77,6 +77,7 @@ private[navigation] object DbtResolution {
       case "data-tests" => "reference/resource-properties/data-tests"
       case "function" => "docs/build/udfs"
       case "statement" | "load-result" => "reference/dbt-jinja-functions/statement-blocks"
+      case "on-run-end-context" => "reference/dbt-jinja-functions/on-run-end-context"
       case _ => "reference/dbt-jinja-functions/" + page.replace('-', '_')
     }
     DbtSymbol("documentation", name, "dbt", file, new TextRange(0, 0), attributes = Map("url" ->

@@ -15,6 +15,18 @@ final class DbtWorkspaceFeaturesTest extends DbtCodeInsightTestCase {
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def workspace = DbtWorkspace.get(getProject)
   private def resource(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
+  def testDeletedFilesAreIgnoredByBackgroundPresentation(): Unit = {
+    project()
+    val file = add("models/removed.sql", "select 1").getVirtualFile
+    assertTrue(DbtWorkspace.rootForFile(getProject, file).nonEmpty)
+    com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = file.getParent.delete(this)
+    })
+    assertFalse(file.isValid)
+    assertEquals(None, DbtWorkspace.rootForFile(getProject, file))
+    assertNull(new com.github.vbmacher.intellij.dbt.ide.textmate.DbtSqlFileTypeOverrider().getOverriddenFileType(file))
+  }
+
   private def documentedProject(): Unit = {
     project("profile: analytics\n")
     add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {type: duckdb, schema: main}\n    prod: {type: duckdb, schema: prod}\n")

@@ -42,7 +42,7 @@ sys.exit(7 if '--fail' in sys.argv else 0)
   }
   private def command(directory: Path, executable: Path, args: Vector[String]): DbtCommand =
     DbtCommand(executable.toString +: args, directory.toString, Map("DBT_TARGET_PATH" -> directory.resolve("artifacts with spaces").toString,
-      "DBT_PROFILES_DIR" -> directory.resolve("profiles with spaces").toString), if (args.contains("show")) "Preview" else "Run", "dev", notifySystem = false, directory.resolve("target").toString)
+      "DBT_PROFILES_DIR" -> directory.resolve("profiles with spaces").toString), if (args.contains("show")) "Preview" else "Run", "dev", notifySystem = false, directory.resolve("target").toString, Vector(directory.toString, "dev", "configuration"))
 
   def testProcessStreamsAnsiBeforeExitAndKeepsArgumentVectorCwdAndEnvironment(): Unit = {
     val (runner, directory, executable, events) = setup()
@@ -109,10 +109,10 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val (runner, directory, executable, _) = setup()
     val artifact = Files.createDirectories(directory.resolve("target"))
     Files.writeString(artifact.resolve("manifest.json"), "{\"target\":\"dev\"}")
-    DbtArtifactContext.record(artifact.toString, directory.toString, "dev")
+    DbtArtifactContext.record(artifact.toString, command(directory, executable, Vector("run")).artifactContext)
     val marker = artifact.resolve(".dbt-workspace-context")
     val before = Files.readString(marker)
-    val run = command(directory, executable, Vector("compile", "--target", "prod")).copy(action = "Compile", target = "prod")
+    val run = command(directory, executable, Vector("compile", "--target", "prod")).copy(action = "Compile", target = "prod", artifactContext = Vector(directory.toString, "prod", "configuration"))
     assertTrue(runner.start(run))
     await("No-write command completes") { !runner.isRunning }
     assertEquals("The old target must retain its provenance", before, Files.readString(marker))
@@ -126,11 +126,12 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val (runner, directory, executable, _) = setup()
     val artifact = Files.createDirectories(directory.resolve("target"))
     Files.writeString(artifact.resolve("manifest.json"), "{\"target\":\"dev\"}")
-    DbtArtifactContext.record(artifact.toString, directory.toString, "dev")
+    DbtArtifactContext.record(artifact.toString, command(directory, executable, Vector("run")).artifactContext)
     val marker = artifact.resolve(".dbt-workspace-context")
     val before = Files.readString(marker)
     val run = command(directory, executable, Vector("compile", "--target", "prod", "--write-manifest"))
-      .copy(action = "Compile", target = "prod", environment = Map("DBT_TARGET_PATH" -> artifact.toString))
+      .copy(action = "Compile", target = "prod", environment = Map("DBT_TARGET_PATH" -> artifact.toString),
+        artifactContext = Vector(directory.toString, "prod", "configuration"))
     assertTrue(runner.start(run.copy(arguments = run.arguments :+ "--fail")))
     await("Failed artifact write completes") { !runner.isRunning }
     assertEquals("A failed command must not certify its manifest", before, Files.readString(marker))

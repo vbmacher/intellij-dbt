@@ -328,7 +328,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           DbtCommand.forFile(w, file, action, selectedSql, refreshModel)
         }
       }
-    }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
+    }).expireWith(this).inSmartMode(project).withDocumentsCommitted(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
       case Right(command) => WriteIntentReadAction.run(() => {
         FileDocumentManager.getInstance().saveAllDocuments()
         runner.start(command)

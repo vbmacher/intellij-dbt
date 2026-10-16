@@ -49,7 +49,7 @@ final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
     TextMateCachingSelectorWeigherKt.caching(new TextMateSelectorWeigherImpl)))
 
   override def create(fileType: FileType, project: Project, file: VirtualFile): SyntaxHighlighter = {
-    if (project == null || project.isDisposed || file == null || file.isDirectory) return null
+    if (project == null || project.isDisposed || file == null || !file.isValid || file.isDirectory) return null
     val supportedTypes = Set("DBT_SQL", "SQL", "PLAIN_TEXT", "YAML", "Markdown", TextMateFileType.INSTANCE.getName)
     if (!supportedTypes(fileType.getName)) return null
     val extension = Option(file.getExtension).getOrElse("")
@@ -74,7 +74,7 @@ final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
 /** Community's custom SQL file type cannot use TextMate editor storage; keep its plain-text PSI. */
 final class DbtSqlFileTypeOverrider extends FileTypeOverrider {
   override def getOverriddenFileType(file: VirtualFile): FileType = {
-    if (file.isDirectory || file.getExtension != "sql") return null
+    if (!file.isValid || file.isDirectory || file.getExtension != "sql") return null
     val original = FileTypeManager.getInstance.getFileTypeByFileName(file.getName)
     if (original.isInstanceOf[LanguageFileType]) return null
     val project = ProjectLocator.getInstance.guessProjectForFile(file)

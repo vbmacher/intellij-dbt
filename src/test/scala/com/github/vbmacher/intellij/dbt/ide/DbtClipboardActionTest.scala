@@ -4,6 +4,7 @@ import com.github.vbmacher.intellij.dbt.project._
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestFixture}
 import com.intellij.testFramework.PlatformTestUtil
 import org.junit.Assert._
@@ -23,13 +24,18 @@ final class DbtClipboardActionTest extends DbtCodeInsightTestCase {
       "model.analytics.orders":{"unique_id":"model.analytics.orders","resource_type":"model","name":"orders","package_name":"analytics","original_file_path":"models/orders.sql","database":"db","schema":"mart","alias":"physical_orders","relation_name":"\"db\".\"mart\".\"physical_orders\""},
       "seed.analytics.countries":{"unique_id":"seed.analytics.countries","resource_type":"seed","name":"countries","package_name":"analytics","relation_name":"db.lookups.country_codes"}
       },"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","resource_type":"source","source_name":"raw","name":"events","package_name":"analytics","relation_name":"db.landing.actual_events"}}}""")
-    FileDocumentManager.getInstance().saveAllDocuments()
+    save()
     CopyPasteManager.getInstance().setContents(new StringSelection(""))
     val root = DbtWorkspace.get(getProject).roots.head
-    DbtArtifactContext.record(root.directory.getPath + "/target", root.directory.getPath, "")
+    DbtArtifactContext.record(root.directory.getPath + "/target", DbtArtifactContext.identity(root))
   }
   private def await(condition: => Boolean): Unit = PlatformTestUtil.waitWithEventsDispatching("Clipboard action completed", () => condition, 10)
   private def clipboard: String = Option(CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor)).getOrElse("")
+  private def save(): Unit = {
+    FileDocumentManager.getInstance().saveAllDocuments()
+    // Save actions can change a document (for example, adding an EOF newline) after the edit was committed.
+    PsiDocumentManager.getInstance(getProject).commitAllDocuments()
+  }
 
   def testCopyWholeDocumentPreservesSourceAndCommentsJinjaForRoundTrip(): Unit = {
     setupRelations()
@@ -109,31 +115,82 @@ final class DbtClipboardActionTest extends DbtCodeInsightTestCase {
     root.runOptions.target = ""
     val manifest = root.psiFile("target/manifest.json").get
     edit(manifest, manifest.getText.replace("physical_orders", "new_orders"))
-    FileDocumentManager.getInstance().saveAllDocuments()
+    save()
     assertTrue(DbtClipboard.ready(root).isLeft)
   }
 
-  def testAmbiguousTwoPartRelationStaysUnchanged(): Unit = {
+  def testProfilesDirectoryAndUnsavedProfileChangesInvalidatePhysicalConversion(): Unit = {
     setupRelations()
-    val w = DbtWorkspace.get(getProject); val root = w.roots.head
-    val manifest = root.psiFile("target/manifest.json").get
-    edit(manifest, manifest.getText.replace("db.lookups.country_codes", "another.mart.physical_orders"))
-    FileDocumentManager.getInstance().saveAllDocuments()
-    DbtArtifactContext.record(root.directory.getPath + "/target", root.directory.getPath, "")
-    val current = DbtWorkspace.get(getProject)
-    assertEquals("select * from mart.physical_orders", DbtClipboard.paste(current, current.roots.head, "select * from mart.physical_orders").toOption.get)
+    val w = DbtWorkspace.get(getProject)
+    val root = w.roots.head
+    val first = add("profiles_one/profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {type: postgres, dbname: warehouse_one, schema: public}\n")
+    add("profiles_two/profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {type: postgres, dbname: warehouse_two, schema: public}\n")
+    root.runOptions.target = "dev"
+    root.runOptions.profilesDirectory = "profiles_one"
+    save()
+    val artifact = root.artifactDirectory.toString
+    DbtArtifactContext.record(artifact, DbtArtifactContext.identity(root))
+    assertEquals(Right(()), DbtClipboard.ready(root))
+    root.runOptions.profilesDirectory = "profiles_two"
+    assertTrue("Another profiles directory cannot reuse physical relations", DbtClipboard.ready(root).isLeft)
+    root.runOptions.profilesDirectory = "profiles_one"
+    assertEquals(Right(()), DbtClipboard.ready(root))
+    edit(first, first.getText.replace("schema: public", "schema: another_schema"))
+    assertTrue("Unsaved profile changes also invalidate conversion", DbtClipboard.ready(root).isLeft)
+  }
+
+  def testCommandRecordsTheConfigurationCapturedBeforeDbtWasLaunched(): Unit = {
+    setupRelations()
+    val w = DbtWorkspace.get(getProject)
+    val root = w.roots.head
+    val command = DbtCommand.create(root, None, "Generate Docs", "", fullRefresh = false).toOption.get
+    root.runOptions.executableArguments = "--another-warehouse"
+    DbtArtifactContext.record(command.artifactDirectory, command.artifactContext)
+    assertTrue("An in-flight command cannot certify later configuration changes", DbtClipboard.ready(root).isLeft)
+  }
+
+  def testProjectAndVarsChangesInvalidateConversionAndLegacyMarkersAreRejected(): Unit = {
+    setupRelations()
+    val root = DbtWorkspace.get(getProject).roots.head
+    val artifact = root.artifactDirectory
+    val config = root.config.getContainingFile
+    edit(config, config.getText + "vars: {schema_suffix: another}\n")
+    assertTrue(DbtClipboard.ready(root).isLeft)
+    DbtArtifactContext.record(artifact.toString, DbtArtifactContext.identity(root))
+    assertEquals(Right(()), DbtClipboard.ready(root))
+    add("vars.yml", "vars: {schema_suffix: changed}\n")
+    assertTrue(DbtClipboard.ready(root).isLeft)
+    java.nio.file.Files.write(artifact.resolve(".dbt-workspace-context"),
+      Vector(root.executionDirectory.toString, "", DbtArtifactContext.fingerprint(artifact.toString).get).asJava)
+    assertFalse("The old target-only marker must not be accepted", DbtArtifactContext.matches(root))
+  }
+
+  def testAmbiguousTwoPartRelationStaysUnchanged(): Unit = {
+    val settings = com.intellij.openapi.editor.ex.EditorSettingsExternalizable.getInstance()
+    val ensureNewline = settings.isEnsureNewLineAtEOF
+    try {
+      settings.setEnsureNewLineAtEOF(true)
+      setupRelations()
+      val w = DbtWorkspace.get(getProject); val root = w.roots.head
+      val manifest = root.psiFile("target/manifest.json").get
+      edit(manifest, manifest.getText.replace("db.lookups.country_codes", "another.mart.physical_orders"))
+      save()
+      DbtArtifactContext.record(root.directory.getPath + "/target", DbtArtifactContext.identity(root))
+      val current = DbtWorkspace.get(getProject)
+      assertEquals(Right("select * from mart.physical_orders"), DbtClipboard.paste(current, current.roots.head, "select * from mart.physical_orders"))
+    } finally settings.setEnsureNewLineAtEOF(ensureNewline)
   }
   def testMalformedAndRelationFreeManifestsWarnBeforeConversion(): Unit = {
     setupRelations()
     val root = DbtWorkspace.get(getProject).roots.head
     val manifest = root.psiFile("target/manifest.json").get
     edit(manifest, "{malformed")
-    FileDocumentManager.getInstance().saveAllDocuments()
-    DbtArtifactContext.record(root.directory.getPath + "/target", root.directory.getPath, "")
+    save()
+    DbtArtifactContext.record(root.directory.getPath + "/target", DbtArtifactContext.identity(root))
     assertTrue(DbtClipboard.ready(root).isLeft)
     edit(manifest, """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{}}""")
-    FileDocumentManager.getInstance().saveAllDocuments()
-    DbtArtifactContext.record(root.directory.getPath + "/target", root.directory.getPath, "")
+    save()
+    DbtArtifactContext.record(root.directory.getPath + "/target", DbtArtifactContext.identity(root))
     assertTrue(DbtClipboard.ready(root).isLeft)
   }
 
