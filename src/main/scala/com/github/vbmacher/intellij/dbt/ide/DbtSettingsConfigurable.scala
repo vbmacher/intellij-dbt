@@ -21,7 +21,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val projectRoot = new TextFieldWithBrowseButton {
     override protected def getIconTooltip: String = "Choose a dbt project root directory"
   }
-  private val profiles = new JBTextField
+  private val profiles = new TextFieldWithBrowseButton {
+    override protected def getIconTooltip: String = "Choose a dbt profiles directory"
+  }
   private val artifacts = new JBTextField
   private val target = new JBTextField
   private val limit = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1))
@@ -59,6 +61,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     projectRoot.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
       .withTitle("Select dbt project root")
       .withDescription("Choose the directory containing dbt_project.yml."))
+    profiles.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
+      .withTitle("Select dbt profiles directory")
+      .withDescription("Choose the directory containing profiles.yml."))
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
@@ -156,6 +161,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   override def disposeUIResources(): Unit = {
     executable.dispose()
     projectRoot.dispose()
+    profiles.dispose()
   }
 
   override def apply(): Unit = {
