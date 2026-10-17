@@ -30,8 +30,7 @@ private[dbt] object DbtResourceData {
   def get(w: DbtWorkspace, s: DbtSymbol): DbtResourceData = w.resourceData(s) {
     ProgressManager.checkCanceled()
     val properties = if (s.isProperty || s.mapping.nonEmpty) Vector(s) else w.properties(s)
-    val declared = w.symbols.filter(c => c.kind == "column" && c.namespace == s.namespace && c.owner == s.relationName &&
-      c.version == s.version && w.owner(c) == w.owner(s)).distinctBy(_.name)
+    val declared = w.columns(s).distinctBy(_.name)
     val columns = declared.map(c => DbtColumnData(c.name, c.attributes.getOrElse("data_type", ""), c.attributes.getOrElse("description", ""),
       c.mapping.toVector.flatMap(m => DbtYaml.items(m, "constraints").flatMap(DbtYaml.string(_, "type")) ++ testData(m, c.name).map(_.name))))
     val declaredTests = declared.flatMap(c => c.mapping.toVector.flatMap(testData(_, c.name)))

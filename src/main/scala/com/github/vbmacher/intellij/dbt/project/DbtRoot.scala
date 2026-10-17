@@ -45,6 +45,9 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   def runtimeSetting(key: String): Option[String] = setting(key).orElse(runConfiguration.flatMap(DbtYaml.string(_, key)))
 
+  /** The target chosen in the IDE or the run configuration, before the profile default. */
+  def selectedTarget: Option[String] = Option(runOptions.target).filter(_.nonEmpty).orElse(runtimeSetting("target"))
+
   def profilesFile: String = runtimeSetting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
@@ -63,7 +66,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
       else settings.flatMap(DbtYaml.keyValue(_, "target")).orElse(runConfiguration.flatMap(DbtYaml.keyValue(_, "target")))
         .orElse(DbtYaml.keyValue(p, "target")).toVector
     }
-    else Option(runOptions.target).filter(_.nonEmpty).orElse(runtimeSetting("target")).orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
+    else selectedTarget.orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
       .flatMap(t => DbtYaml.map(p, "outputs").flatMap(DbtYaml.map(_, t)).flatMap(DbtYaml.keyValue(_, key)))
   }
 
@@ -87,10 +90,20 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
       case _ => false
     })
 
+  /** Whether the configured engine supports a resource kind. */
+  def supportsKind(kind: String): Boolean = kind match {
+    case "function" => supports(11)
+    case "check" => engine == "v2"
+    case "semantic_model" | "metric" => supports(6)
+    case "saved_query" => supports(7)
+    case "unit_test" => supports(8)
+    case _ => true
+  }
+
   val pathKinds: Vector[(String, String)] = Vector(
     "model" -> "models", "seed" -> "seeds", "snapshot" -> "snapshots", "analysis" -> "analyses",
     "macro" -> "macros", "test" -> "tests", "doc" -> "docs", "function" -> "functions", "check" -> "checks")
-    .filter { case (k, _) => (k != "function" || supports(11)) && (k != "check" || engine == "v2") }
+    .filter { case (k, _) => supportsKind(k) }
     .flatMap { case (kind, default) =>
       val key = Map("model" -> "model-paths", "analysis" -> "analysis-paths", "doc" -> "docs-paths").getOrElse(kind, s"$kind-paths")
       DbtYaml.strings(config, key, Vector(default)).map(kind -> _)

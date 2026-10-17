@@ -71,15 +71,9 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
     }
     val local = candidates.filter(_.namespace == from.name)
     val selected = if (namespace.isEmpty && local.nonEmpty) local else candidates
-    selected.filter(s => s.kind match {
-      case "function" => functionSupported(s, from)
-      case "check" => from.engine == "v2"
-      case "semantic_model" | "metric" => from.supports(6)
-      case "saved_query" => from.supports(7)
-      case "unit_test" => from.supports(8)
-      case _ => true
-    }).filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
-      t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
+    selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
+      .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
+        t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
       .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
   }
 
@@ -94,7 +88,7 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
         !(from.engine == "v2" && a == "postgres"))
       case _ => false
     }
-    from.supports(11) && languages && (!symbol.attributes.contains("overload") || from.supports(12) &&
+    languages && (!symbol.attributes.contains("overload") || from.supports(12) &&
       adapter.forall(a => a == "snowflake" || a == "postgres" && language.forall(_ == "sql")))
   }
 
@@ -102,6 +96,14 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
     symbols.filter(s => s.isProperty && s.sameResource(symbol) && root(s.file) == root(symbol.file))
 
   def symbolAt(file: PsiFile, offset: Int): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.range.containsOffset(offset))
+
+  /** Declarations of a kind whose YAML entry encloses an offset. */
+  def enclosing(kind: String, file: PsiFile, offset: Int): Vector[DbtSymbol] =
+    symbols.filter(s => s.kind == kind && s.file == file && s.mapping.exists(_.getTextRange.containsOffset(offset)))
+
+  /** Columns declared for a relation, including its version. */
+  def columns(relation: DbtSymbol): Vector[DbtSymbol] = symbols.filter(c => c.kind == "column" && c.namespace == relation.namespace &&
+    c.owner == relation.relationName && c.version == relation.version && owner(c) == owner(relation))
 
   /** Symbols of the resources defined by a file itself, rather than by blocks or properties inside it. */
   def codeSymbols(file: PsiFile): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.isCode)

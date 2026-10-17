@@ -16,6 +16,13 @@ import scala.jdk.CollectionConverters._
  * A dbt declaration. Kinds and attributes follow dbt names; notable attributes are `code` (the resource file itself),
  * `property` (a YAML properties entry), and `stale` (metadata older than the sources).
  */
+private[dbt] object DbtSymbol {
+  /** Kinds addressable by `ref()`. */
+  val RefKinds: Set[String] = Set("model", "seed", "snapshot")
+  /** Kinds materialized as warehouse relations. */
+  val RelationKinds: Set[String] = RefKinds + "source_table"
+}
+
 private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: String, file: PsiFile,
   range: TextRange, owner: String = "", version: Option[String] = None,
   attributes: Map[String, String] = Map.empty, mapping: Option[YAMLMapping] = None, metadata: Boolean = false) {
@@ -28,7 +35,7 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def isProperty: Boolean = attributes.contains("property")
 
   /** A properties entry dedicated to attached data tests, without other resource or column metadata. */
-  def isTestOnlyProperty: Boolean = isProperty && Set("model", "seed", "snapshot")(kind) && mapping.exists { m =>
+  def isTestOnlyProperty: Boolean = isProperty && DbtSymbol.RefKinds(kind) && mapping.exists { m =>
     val testKeys = Set("data_tests", "tests")
     def onlyKeys(mapping: YAMLMapping, keys: Set[String]): Boolean =
       mapping.getKeyValues.asScala.forall(k => keys(k.getKeyText))

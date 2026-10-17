@@ -17,7 +17,8 @@ private[sql] final class DbtFunctionParameters extends DbtReferenceProvider {
     if (functions.isEmpty) return Vector.empty
     val params = functions.flatMap(f => w.symbols.filter(p => p.kind == "parameter" && p.owner == f.name && p.namespace == f.namespace && w.root(p.file) == w.root(f.file) &&
       p.attributes.get("overload") == f.attributes.get("overload")))
-    val expression = try CCJSqlParserUtil.parseExpression(file.getText) catch {
+    val text = file.getText
+    val expression = try CCJSqlParserUtil.parseExpression(text) catch {
       case _: JSQLParserException => return Vector.empty
     }
     val result = ArrayBuffer.empty[DbtNavigationReference]
@@ -26,11 +27,9 @@ private[sql] final class DbtFunctionParameters extends DbtReferenceProvider {
         val node = Option(column.getASTNode)
         node.foreach { n =>
           val t = n.jjtGetLastToken()
-          val start = file.getText.linesWithSeparators.take(t.beginLine - 1).map(_.length).sum + t.beginColumn - 1
-          val end = file.getText.linesWithSeparators.take(t.endLine - 1).map(_.length).sum + t.endColumn
           val matches = params.filter(_.name == column.getUnquotedColumnName)
           if (matches.nonEmpty && Option(column.getTable).forall(_.getName == null)) result += new DbtNavigationReference(file,
-            new TextRange(start, end), matches.map(_.element), column.getUnquotedColumnName)
+            new TextRange(DbtSqlRelations.offset(text, t), DbtSqlRelations.offset(text, t, end = true)), matches.map(_.element), column.getUnquotedColumnName)
         }
         null
       }

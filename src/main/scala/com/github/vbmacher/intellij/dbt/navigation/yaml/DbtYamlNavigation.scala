@@ -91,7 +91,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                   ancestry.filter(n => w.declarations(Set("model"), n, r).nonEmpty) else Vector.empty)
                 add(scalar, w.symbols.filter(s => s.kind == "column" && s.name == name && w.owner(s).contains(r) && owners.contains(s.owner)).map(_.element), name)
               case "expr" if ancestry.contains("metrics") =>
-                val metrics = w.symbols.filter(s => s.kind == "metric" && s.file == file && s.mapping.exists(_.getTextRange.containsOffset(scalar.getTextOffset)))
+                val metrics = w.enclosing("metric", file, scalar.getTextOffset)
                 val aliases = w.symbols.filter(s => s.kind == "metric_alias" && w.owner(s).contains(r) && metrics.exists(_.name == s.owner))
                 DbtYaml.decoded(scalar).toVector.flatMap { case (text, offset) => DbtSyntax.tokens(text, offset) }.foreach { token =>
                   val defs = if (token.string) Vector.empty else aliases.filter(_.name == token.image) ++
@@ -99,7 +99,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                   if (defs.nonEmpty) result += new DbtNavigationReference(file, token.range, defs.map(_.element), token.image)
                 }
               case "expr" if DbtSyntax.isIdentifier(name) =>
-                val semantic = w.symbols.filter(s => s.kind == "semantic_model" && s.file == file && s.mapping.exists(_.getTextRange.containsOffset(scalar.getTextOffset)))
+                val semantic = w.enclosing("semantic_model", file, scalar.getTextOffset)
                 val modelNames = semantic.flatMap(s => if (s.attributes.contains("embedded")) Vector(s.owner) else s.mapping.toVector
                   .flatMap(m => DbtYaml.string(m, "model")).flatMap(t => DbtSyntax.blocks("{{" + t + "}}").flatMap(DbtSyntax.calls).flatMap(_.arguments.flatMap(_.literal))))
                 add(scalar, w.symbols.filter(s => s.kind == "column" && s.name == name && s.namespace == r.name && modelNames.contains(s.owner)).map(_.element), name)

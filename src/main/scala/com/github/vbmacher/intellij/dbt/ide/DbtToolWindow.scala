@@ -17,7 +17,7 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.{VirtualFile, VirtualFileManager}
 import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
-import com.intellij.psi.{PsiDocumentManager, PsiManager}
+import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
 import com.intellij.ui.{DocumentAdapter, JBColor, OnePixelSplitter}
@@ -97,8 +97,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     case Some(view) => lineagePanel.add(view.component, BorderLayout.CENTER)
     case None =>
       val unavailable = new JBTextArea("The lineage graph requires the IDE's embedded JCEF browser. Use the bundled JetBrains Runtime with JCEF and enable the JCEF module. dbt Dependencies and the Runner remain available.")
-      unavailable.setEditable(false);
-      unavailable.setLineWrap(true);
+      unavailable.setEditable(false)
+      unavailable.setLineWrap(true)
       unavailable.setWrapStyleWord(true)
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
@@ -151,35 +151,35 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "Preview" => AllIcons.Actions.Preview -> "Preview a single selected model"
       case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation for the selected execution project and target"
     }
-    val button = new JButton(name, icon);
+    val button = new JButton(name, icon)
     button.setToolTipText(tooltip)
-    commands(name) = button;
-    button.addActionListener(_ => start(name));
+    commands(name) = button
+    button.addActionListener(_ => start(name))
     toolbar.add(button)
     if (name == "Build") toolbar.add(fullRefresh)
   }
-  val clear = new JButton("Clear", AllIcons.Actions.GC);
+  val clear = new JButton("Clear", AllIcons.Actions.GC)
   clear.setToolTipText("Clear the command log and preview")
   clear.addActionListener(_ => {
-    runner.console.clear();
+    runner.console.clear()
     preview.setText("")
-  });
+  })
   toolbar.add(clear)
   stop.setToolTipText("Cancel the running dbt command")
-  stop.addActionListener(_ => runner.stop());
-  stop.setEnabled(false);
+  stop.addActionListener(_ => runner.stop())
+  stop.setEnabled(false)
   toolbar.add(stop)
-  val configure = new JButton("Settings", AllIcons.General.Settings);
+  val configure = new JButton("Settings", AllIcons.General.Settings)
   configure.setToolTipText("Configure dbt Workspace settings")
-  configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"));
+  configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"))
   toolbar.add(configure)
-  val north = new JPanel(new BorderLayout);
-  north.add(configuration, BorderLayout.NORTH);
-  north.add(toolbar, BorderLayout.CENTER);
+  val north = new JPanel(new BorderLayout)
+  north.add(configuration, BorderLayout.NORTH)
+  north.add(toolbar, BorderLayout.CENTER)
   north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
-  preview.setEditable(false);
-  preview.setLineWrap(false);
+  preview.setEditable(false)
+  preview.setLineWrap(false)
   preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
   val output = new OnePixelSplitter(true, .75f)
   output.setFirstComponent(runner.console.getComponent)
@@ -189,9 +189,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     case _ => ()
   }
   runnerPanel.add(output, BorderLayout.CENTER)
-  status.setEditable(false);
-  status.setLineWrap(true);
-  status.setWrapStyleWord(true);
+  status.setEditable(false)
+  status.setLineWrap(true)
+  status.setWrapStyleWord(true)
   statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
   fullRefresh.setVisible(false)
   runSelection.addDocumentListener(new DocumentAdapter {
@@ -212,7 +212,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   target.addActionListener(_ => if (!fillingTarget) saveTarget())
   runner.listen(this, event => {
-    updateButtons();
+    updateButtons()
     browser.foreach(_.runnerState(event.running, event.message))
     event.preview.foreach(preview.setText)
     if (event.refresh) schedule(follow = false)
@@ -270,17 +270,17 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val value = executableArguments.getText.trim
     loadedArguments = value
     if (options.executableArguments != value) {
-      options.executableArguments = value;
+      options.executableArguments = value
       settings.changed()
     }
   }
 
   private def schedule(follow: Boolean): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed) {
     followPending ||= follow
-    alarm.cancelAllRequests();
+    alarm.cancelAllRequests()
     alarm.addRequest(() => {
-      val next = followPending;
-      followPending = false;
+      val next = followPending
+      followPending = false
       refresh(next)
     }, 180)
   })
@@ -294,8 +294,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val state = settings.getState
     val selectedPath = state.runnerSelection
     val selectedRoot = state.runnerRoot
-    val up = state.upstreamDepth.max(1).min(20) + upstreamExtra
-    val down = state.downstreamDepth.max(1).min(20) + downstreamExtra
+    val up = state.upstream + upstreamExtra
+    val down = state.downstream + downstreamExtra
     ReadAction.nonBlocking(new Callable[(DbtGraphSnapshot, DbtViewContext)] {
       override def call(): (DbtGraphSnapshot, DbtViewContext) = {
         val w = DbtWorkspace.get(project)
@@ -306,8 +306,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val owner = selection.flatMap(DbtRunSelection.owner(w, _)).map(w.executionRoot)
         val models = selection.toVector.flatMap(DbtRunSelection.selectedModels(w, _))
         val nextFocus = if (follow || oldFocus.isEmpty) editorModel.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
-        val graph = DbtGraphData.build(w, nextFocus, if (nextFocus != oldFocus) state.upstreamDepth.max(1).min(20) else up,
-          if (nextFocus != oldFocus) state.downstreamDepth.max(1).min(20) else down, state.exposures)
+        val graph = DbtGraphData.build(w, nextFocus, if (nextFocus != oldFocus) state.upstream else up,
+          if (nextFocus != oldFocus) state.downstream else down, state.exposures)
         val data = models.headOption.map(DbtResourceData.get(w, _))
         val profile = owner.map(DbtExecutionContext.profiles(_))
         val selectedTarget = owner.flatMap(DbtExecutionContext.activeTarget).getOrElse("")
@@ -358,13 +358,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val payload = snapshot.payload
         val nextFocus = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
         if (nextFocus != focus) {
-          upstreamExtra = 0;
+          upstreamExtra = 0
           downstreamExtra = 0
         }
         focus = nextFocus
-        payload.addProperty("direction", settings.getState.direction);
+        payload.addProperty("direction", settings.getState.direction)
         payload.addProperty("edgeStyle", settings.getState.edgeStyle)
-        payload.addProperty("docsVisible", settings.getState.docsVisible);
+        payload.addProperty("docsVisible", settings.getState.docsVisible)
         payload.addProperty("docsWidth", settings.getState.docsWidth)
         payload.addProperty("running", runner.isRunning)
         payload.addProperty("canGenerateDocs", context.root.nonEmpty)
@@ -379,7 +379,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
 
         val scheme = EditorColorsManager.getInstance().getGlobalScheme
-        theme.addProperty("bg", color(scheme.getDefaultBackground));
+        theme.addProperty("bg", color(scheme.getDefaultBackground))
         theme.addProperty("fg", color(scheme.getDefaultForeground))
         theme.addProperty("panel", color(javax.swing.UIManager.getColor("Panel.background")))
         payload.add("theme", theme)
@@ -393,8 +393,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty &&
       context.selection.exists(s => name != "Preview" || !s.directory)) }
     runSelection.setEnabled(!runner.isRunning)
-    stop.setEnabled(runner.isRunning);
-    target.setEnabled(!runner.isRunning && context.root.nonEmpty);
+    stop.setEnabled(runner.isRunning)
+    target.setEnabled(!runner.isRunning && context.root.nonEmpty)
     fullRefresh.setEnabled(!runner.isRunning)
     executableArguments.setEnabled(!runner.isRunning && context.root.nonEmpty)
   }
@@ -424,13 +424,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
 
     def field(name: String): String = Option(message.get(name)).map(_.getAsString).getOrElse("")
 
-    val kind = field("type");
+    val kind = field("type")
     val id = field("id")
     kind match {
       case "ready" => refresh(follow = true)
       case "select" | "focus" =>
         val request = docGeneration.incrementAndGet()
-        browser.foreach(_.clearDoc())
         ReadAction.nonBlocking(new Callable[Option[(JsonObject, DbtSymbolElement)]] {
           override def call(): Option[(JsonObject, DbtSymbolElement)] = {
             val w = DbtWorkspace.get(project)
@@ -441,10 +440,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           if (!disposed && request == docGeneration.get()) result.foreach { case (doc, targetElement) =>
             browser.foreach(_.showDoc(id, doc))
             if (kind == "focus") {
-              focus = Some(id);
-              upstreamExtra = 0;
-              downstreamExtra = 0;
-              targetElement.navigate(true);
+              focus = Some(id)
+              upstreamExtra = 0
+              downstreamExtra = 0
+              targetElement.navigate(true)
               refresh(follow = false)
             }
           }
@@ -458,9 +457,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   override def dispose(): Unit = {
-    disposed = true;
-    generation.incrementAndGet();
-    docGeneration.incrementAndGet();
+    disposed = true
+    generation.incrementAndGet()
+    docGeneration.incrementAndGet()
     ()
   }
 }
@@ -512,8 +511,6 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
   }
 
   def showDoc(id: String, data: JsonObject): Unit = browser.runJavaScript("window.dbtShowDoc&&window.dbtShowDoc(" + new Gson().toJson(id) + "," + decode(data.toString) + ")")
-
-  def clearDoc(): Unit = () // The browser clears immediately when selection changes, before requesting fresh data.
 
   def runnerState(running: Boolean, message: String): Unit = browser.runJavaScript("window.dbtRunnerState&&window.dbtRunnerState(" + running + "," + new Gson().toJson(message) + ")")
 }

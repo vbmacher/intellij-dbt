@@ -20,7 +20,7 @@ private[dbt] object DbtExecutionContext {
     val outputs = profile.flatMap(DbtYaml.map(_, "outputs"))
     val targets = outputs.toVector.flatMap(_.getKeyValues.asScala.map(_.getKeyText))
     val default = profile.flatMap(DbtYaml.string(_, "target")).filterNot(_.contains("{{"))
-    val selected = Option(root.runOptions.target).filter(_.nonEmpty).orElse(root.runtimeSetting("target")).orElse(default)
+    val selected = root.selectedTarget.orElse(default)
     val adapter = selected.flatMap(t => outputs.flatMap(DbtYaml.map(_, t))).flatMap(DbtYaml.string(_, "type"))
     DbtProfileContext(directory, targets, default, adapter)
   }
@@ -42,5 +42,5 @@ private[dbt] object DbtExecutionContext {
     Map("PATH" -> (executable.getParent.toString + java.io.File.pathSeparator + inheritedPath))
   }.getOrElse(Map.empty)
 
-  def activeTarget(root: DbtRoot): Option[String] = Option(root.runOptions.target).filter(_.nonEmpty).orElse(root.runtimeSetting("target")).orElse(profiles(root).defaultTarget)
+  def activeTarget(root: DbtRoot): Option[String] = root.selectedTarget.orElse(profiles(root).defaultTarget)
 }

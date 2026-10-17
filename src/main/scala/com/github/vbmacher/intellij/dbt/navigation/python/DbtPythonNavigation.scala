@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.navigation.python
 
 import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigationContext, DbtNavigationReference, DbtReferenceProvider, DbtResolution}
-import com.github.vbmacher.intellij.dbt.project.DbtConfiguration
+import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtSymbol}
 import com.github.vbmacher.intellij.dbt.syntax.DbtPython
 import com.github.vbmacher.intellij.dbt.syntax.DbtPython.{invoke, psi}
 import com.intellij.openapi.progress.ProgressManager
@@ -57,7 +57,7 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
           case "ref" if literals.nonEmpty && literals.forall(_.nonEmpty) =>
             val ns = if (literals.size == 2) literals.head.map(_._2) else None
             val selected = literals.last.get
-            val defs = workspace.declarations(Set("model", "seed", "snapshot"), selected._2, root, ns)
+            val defs = workspace.declarations(DbtSymbol.RefKinds, selected._2, root, ns)
             add(selected._1, selected._2, DbtResolution.versioned(defs, version).map(_.element))
           case "source" if literals.size == 2 && literals.forall(_.nonEmpty) =>
             val source = literals.head.get

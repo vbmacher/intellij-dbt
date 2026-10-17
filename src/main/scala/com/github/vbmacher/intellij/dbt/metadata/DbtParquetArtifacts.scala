@@ -49,6 +49,7 @@ private object DbtParquetArtifacts {
     "data_tests" -> "test", "unit_tests" -> "unit_test", "macros" -> "macro", "docs_blocks" -> "doc",
     "groups" -> "group", "exposures" -> "exposure", "metrics" -> "metric", "saved_queries" -> "saved_query",
     "semantic_models" -> "semantic_model")
+  private val tableNames = kinds.keys.toVector.sorted ++ Vector("node_columns", "edges")
   private val fields = Set("unique_id", "name", "resource_type", "package_name", "original_file_path",
     "source_name", "version", "latest_version", "enabled", "access", "ingested_at",
     "node_unique_id", "column_name", "parent_unique_id", "child_unique_id")
@@ -67,12 +68,11 @@ private object DbtParquetArtifacts {
     .filter(d => d.isDirectory && d.getName == "v1" && d.isInLocalFileSystem)
 
   def files(workspace: DbtWorkspace): Vector[VirtualFile] = workspace.roots.flatMap { root =>
-    directory(root).toVector.flatMap(d => (kinds.keys.toVector ++ Vector("node_columns", "edges"))
-      .flatMap(n => Option(d.findChild(s"dbt.$n.parquet"))))
+    directory(root).toVector.flatMap(d => tableNames.flatMap(n => Option(d.findChild(s"dbt.$n.parquet"))))
   }
 
   private def tables(workspace: DbtWorkspace, root: DbtRoot): Vector[Table] = directory(root).toVector.flatMap { d =>
-    (kinds.keys.toVector.sorted ++ Vector("node_columns", "edges")).flatMap { name =>
+    tableNames.flatMap { name =>
       DbtYaml.psiFile(workspace.project, d.findChild(s"dbt.$name.parquet")).flatMap { binary =>
         CachedValuesManager.getManager(workspace.project).getCachedValue(binary, cache, () =>
           CachedValueProvider.Result.create(read(binary, name), binary), false)

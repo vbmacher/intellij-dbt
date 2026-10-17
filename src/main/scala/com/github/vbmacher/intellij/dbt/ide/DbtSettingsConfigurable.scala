@@ -72,15 +72,15 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures)
     rows.zipWithIndex.foreach { case ((label, field), index) =>
       field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
-      val c = new GridBagConstraints;
-      c.gridy = index;
-      c.gridx = 0;
-      c.anchor = GridBagConstraints.WEST;
+      val c = new GridBagConstraints
+      c.gridy = index
+      c.gridx = 0
+      c.anchor = GridBagConstraints.WEST
       c.insets = new Insets(4, 5, 4, 10)
-      panel.add(new JLabel(label), c);
-      c.gridx = 1;
-      c.weightx = 1;
-      c.fill = GridBagConstraints.HORIZONTAL;
+      panel.add(new JLabel(label), c)
+      c.gridx = 1
+      c.weightx = 1
+      c.fill = GridBagConstraints.HORIZONTAL
       panel.add(field, c)
     }
     root.addActionListener(_ => {
@@ -88,53 +88,39 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
       fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
     })
-    reset();
+    reset()
     panel
   }
 
-  private def copyOptions(o: DbtRunOptions): DbtRunOptions = {
-    val c = new DbtRunOptions
-    c.executable = o.executable;
-    c.executableArguments = o.executableArguments;
-    c.projectRoot = o.projectRoot;
-    c.profilesDirectory = o.profilesDirectory
-    c.artifactDirectory = o.artifactDirectory;
-    c.target = o.target;
-    c.previewLimit = o.previewLimit;
-    c.colors = o.colors;
-    c.notifications = o.notifications;
-    c
-  }
-
   private def fill(o: DbtRunOptions): Unit = {
-    executable.setText(o.executable);
-    executableArguments.setText(o.executableArguments);
-    projectRoot.setText(o.projectRoot);
+    executable.setText(o.executable)
+    executableArguments.setText(o.executableArguments)
+    projectRoot.setText(o.projectRoot)
     profiles.setText(o.profilesDirectory)
-    artifacts.setText(o.artifactDirectory);
-    target.setText(o.target);
+    artifacts.setText(o.artifactDirectory)
+    target.setText(o.target)
     limit.setValue(Int.box(o.previewLimit.max(1).min(1000)))
-    colors.setSelected(o.colors);
+    colors.setSelected(o.colors)
     notifications.setSelected(o.notifications)
   }
 
   private def readOptions(): DbtRunOptions = {
     val o = new DbtRunOptions
-    o.executable = executable.getText.trim;
-    o.executableArguments = executableArguments.getText.trim;
-    o.projectRoot = projectRoot.getText.trim;
+    o.executable = executable.getText.trim
+    o.executableArguments = executableArguments.getText.trim
+    o.projectRoot = projectRoot.getText.trim
     o.profilesDirectory = profiles.getText.trim
-    o.artifactDirectory = artifacts.getText.trim;
-    o.target = target.getText.trim;
+    o.artifactDirectory = artifacts.getText.trim
+    o.target = target.getText.trim
     o.previewLimit = limit.getValue.asInstanceOf[Number].intValue()
-    o.colors = colors.isSelected;
-    o.notifications = notifications.isSelected;
+    o.colors = colors.isSelected
+    o.notifications = notifications.isSelected
     o
   }
 
   private def snapshot(): String = {
     val options = drafts.updated(selectedRoot, readOptions()).toVector.sortBy(_._1).map { case (p, o) =>
-      Vector(p, o.executable, o.executableArguments, o.projectRoot, o.profilesDirectory, o.artifactDirectory, o.target, o.previewLimit, o.colors, o.notifications).mkString("\u0000")
+      (p +: o.values).mkString("\u0000")
     }
     (options ++ Vector(upstream.getValue, downstream.getValue, direction.getSelectedItem, edges.getSelectedItem,
       exposures.isSelected).map(_.toString)).mkString("\u0001")
@@ -142,18 +128,18 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
 
   override def reset(): Unit = {
     selectedRoot = ""
-    drafts = settings.getState.projects.asScala.toMap.view.mapValues(copyOptions).toMap
+    drafts = settings.getState.projects.asScala.toMap.view.mapValues(_.copy()).toMap
     // Root paths are recorded by normal workspace discovery, so opening Settings never scans the project on the EDT.
     root.removeAllItems()
     val paths = (drafts.keys.toVector ++ Option(project.getBasePath)).distinct.sorted
     paths.foreach(root.addItem)
     selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
     fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
-    upstream.setValue(Int.box(settings.getState.upstreamDepth.max(1).min(20)));
-    downstream.setValue(Int.box(settings.getState.downstreamDepth.max(1).min(20)))
-    direction.setSelectedItem(settings.getState.direction);
+    upstream.setValue(Int.box(settings.getState.upstream))
+    downstream.setValue(Int.box(settings.getState.downstream))
+    direction.setSelectedItem(settings.getState.direction)
     edges.setSelectedItem(settings.getState.edgeStyle)
-    exposures.setSelected(settings.getState.exposures);
+    exposures.setSelected(settings.getState.exposures)
     baseline = snapshot()
   }
 
@@ -171,10 +157,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     settings.getState.projects = new java.util.TreeMap[String, DbtRunOptions](drafts.asJava)
     settings.getState.upstreamDepth = upstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.downstreamDepth = downstream.getValue.asInstanceOf[Number].intValue()
-    settings.getState.direction = direction.getSelectedItem.toString;
+    settings.getState.direction = direction.getSelectedItem.toString
     settings.getState.edgeStyle = edges.getSelectedItem.toString
     settings.getState.exposures = exposures.isSelected
-    settings.changed();
+    settings.changed()
     baseline = snapshot()
   }
 }

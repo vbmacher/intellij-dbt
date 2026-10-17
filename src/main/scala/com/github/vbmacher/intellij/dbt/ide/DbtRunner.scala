@@ -17,7 +17,7 @@ import com.intellij.util.execution.ParametersListUtil
 import com.intellij.ui.SystemNotifications
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Paths}
+import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
@@ -156,7 +156,7 @@ final class DbtRunner(project: Project) extends Disposable {
 private[ide] object DbtNotifications {
   def publish(project: Project, command: DbtCommand, message: String, success: Boolean, wasCancelled: Boolean,
     system: SystemNotifications = SystemNotifications.getInstance()): Unit = {
-    val kind = if (wasCancelled) NotificationType.INFORMATION else if (success) NotificationType.INFORMATION else NotificationType.ERROR
+    val kind = if (success || wasCancelled) NotificationType.INFORMATION else NotificationType.ERROR
     NotificationGroupManager.getInstance().getNotificationGroup("dbt Workspace").createNotification(message, kind).notify(project)
     if (command.notifySystem) system.notify("dbt Workspace", "dbt " + command.action, message)
   }

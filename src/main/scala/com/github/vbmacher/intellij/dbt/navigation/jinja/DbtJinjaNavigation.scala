@@ -19,7 +19,7 @@ private[jinja] final class DbtJinjaNavigation extends DbtReferenceProvider {
 private object DbtJinjaNavigation {
   private val StaticReference = "static reference"
 
-  private val Resources = Set("model", "seed", "snapshot")
+  private val Resources = DbtSymbol.RefKinds
   private val BuiltinFunctions = Set("ref", "source", "var", "config", "doc", "env_var", "function", "return", "log", "print", "run_query",
     "statement", "load_result", "local_md5", "tojson", "fromjson", "toyaml", "fromyaml", "as_bool", "as_number", "as_native", "zip")
   private val BuiltinNamespaces = Set("adapter", "exceptions", "modules", "flags", "graph", "config")
@@ -196,7 +196,7 @@ private object DbtJinjaNavigation {
 
     private def contextTargets(t: DbtSyntax.Token): Vector[PsiElement] = t.image match {
       case "this" | "model" =>
-        val tested = workspace.symbols.filter(s => s.kind == "unit_test" && s.file == file && s.mapping.exists(_.getTextRange.containsOffset(t.range.getStartOffset)))
+        val tested = workspace.enclosing("unit_test", file, t.range.getStartOffset)
           .flatMap(_.mapping.toVector.flatMap(DbtYaml.string(_, "model")))
         workspace.codeSymbols(file).map(_.element) ++ tested.flatMap(lookup(Set("model"), _))
       case "project_name" => DbtYaml.keyValue(r.config, "name").toVector

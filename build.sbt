@@ -7,6 +7,8 @@ val generatePackagedFixtures = taskKey[Unit]("Write Parquet fixtures using the t
 val pythonTestSdk = settingKey[File]("IntelliJ SDK containing the Python Community plugin")
 val pythonTestPlugins = settingKey[Seq[File]]("Installed Python test plugins and their dependencies")
 val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin"
+val pythonNavigationTest = "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"
+val packagedRuntimeTest = "com.github.vbmacher.intellij.dbt.metadata.DbtPackagedRuntimeTest"
 lazy val PythonTest = config("python") extend Test
 lazy val PackagedTest = config("packaged") extend Test
 lazy val Minimize = config("minimize").hide
@@ -60,8 +62,7 @@ lazy val root = (project in file("."))
     // Use the SDK's JetBrains Runtime so IDE tests load its matching native JCEF.
     Test / javaHome := Some(org.jetbrains.sbtidea.download.jbr.JbrInstaller.getJbrHome(intellijBaseDirectory.value.toPath).toFile),
     // Optional Python integration has a separate suite; the default suite proves it is not required.
-    Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"),
-    Test / testOptions += Tests.Filter(_ != "com.github.vbmacher.intellij.dbt.metadata.DbtPackagedRuntimeTest"),
+    Test / testOptions += Tests.Filter(name => name != pythonNavigationTest && name != packagedRuntimeTest),
     Test / javaOptions += "-Didea.load.plugins.id=" + testPluginIds,
     Test / javaOptions := (Test / javaOptions).value.filterNot(_.startsWith("-Dplugin.path=")) :+
       "-Dplugin.path=" + (target.value / "unminimized-plugin").getAbsolutePath,
@@ -81,7 +82,7 @@ lazy val root = (project in file("."))
         s"Missing Python test plugins: ${missing.mkString(", ")}. Install Python Community Edition in the development IDE, or set pythonTestSdk.")
       (PackagedTest / fullClasspath).value ++ plugins.flatMap(p => (p / "lib" ** "*.jar").get).map(Attributed.blank)
     },
-    PythonTest / testOptions := Seq(Tests.Filter(_ == "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest")),
+    PythonTest / testOptions := Seq(Tests.Filter(_ == pythonNavigationTest)),
     PythonTest / parallelExecution := false,
     PythonTest / javaOptions := {
       val pluginPaths = (packageOutputDir.value +: pythonTestPlugins.value).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
@@ -99,10 +100,9 @@ lazy val root = (project in file("."))
         compiledProducts(entry.data) || originals(entry.data.getName) || entry.data.getName.startsWith("hadoop-client-runtime-")
       } ++ (artifact / "lib" ** "*.jar").get.map(Attributed.blank)
     },
-    PackagedTest / testOptions := Seq(Tests.Filter(name =>
-      name != "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest" &&
-        name != "com.github.vbmacher.intellij.dbt.metadata.DbtParquetNavigationTest" &&
-        name != "com.github.vbmacher.intellij.dbt.metadata.DbtParquetCodecsTest")),
+    PackagedTest / testOptions := Seq(Tests.Filter(name => !Set(pythonNavigationTest,
+      "com.github.vbmacher.intellij.dbt.metadata.DbtParquetNavigationTest",
+      "com.github.vbmacher.intellij.dbt.metadata.DbtParquetCodecsTest")(name))),
     PackagedTest / parallelExecution := false,
     PackagedTest / javaOptions := (Test / javaOptions).value.filterNot(_.startsWith("-Dplugin.path=")) ++ Seq(
       "-Dplugin.path=" + packageOutputDir.value.getAbsolutePath,

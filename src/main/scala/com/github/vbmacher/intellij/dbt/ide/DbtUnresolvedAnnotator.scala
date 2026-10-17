@@ -21,6 +21,10 @@ import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.util.Alarm
 import scala.jdk.CollectionConverters._
 
+private[ide] object DbtUnresolvedAnnotator {
+  val Extensions: Set[String] = Set("sql", "jinja", "jinja2")
+}
+
 private[ide] final case class DbtDiagnostic(range: TextRange, message: String)
 private[ide] final case class DbtAnnotationInput(pointer: SmartPsiElementPointer[PsiFile], stamp: Long)
 private[ide] final case class DbtAnnotationResult(stamp: Long, diagnostics: Vector[DbtDiagnostic])
@@ -29,7 +33,7 @@ private[ide] final case class DbtAnnotationResult(stamp: Long, diagnostics: Vect
 final class DbtUnresolvedAnnotator extends ExternalAnnotator[DbtAnnotationInput, DbtAnnotationResult] {
   override def getPairedBatchInspectionShortName: String = "DbtUnresolvedReference"
   override def collectInformation(file: PsiFile): DbtAnnotationInput =
-    if (Set("sql", "jinja", "jinja2")(Option(file.getVirtualFile).flatMap(f => Option(f.getExtension)).getOrElse(""))) {
+    if (DbtUnresolvedAnnotator.Extensions(Option(file.getVirtualFile).flatMap(f => Option(f.getExtension)).getOrElse(""))) {
       file.getProject.getService(classOf[DbtHighlightingRefresh])
       DbtAnnotationInput(SmartPointerManager.getInstance(file.getProject).createSmartPsiElementPointer(file), file.getModificationStamp)
     }
@@ -82,7 +86,7 @@ final class DbtHighlightingRefresh(project: Project) extends Disposable {
       val psi = PsiManager.getInstance(project)
       val daemon = com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project)
       FileEditorManager.getInstance(project).getOpenFiles
-        .filter(f => f.isValid && Set("sql", "jinja", "jinja2")(Option(f.getExtension).getOrElse("")))
+        .filter(f => f.isValid && DbtUnresolvedAnnotator.Extensions(Option(f.getExtension).getOrElse("")))
         .flatMap(f => Option(psi.findFile(f))).foreach(file => daemon.restart(file, "dbt workspace changed"))
     }), 200)
   })

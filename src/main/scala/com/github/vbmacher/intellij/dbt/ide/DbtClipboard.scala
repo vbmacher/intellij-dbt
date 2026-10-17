@@ -29,7 +29,7 @@ private[ide] object DbtClipboard {
     else if (!DbtDeclarationSource.EP.getExtensionList.asScala.forall(_.canReportMissing(w, root)))
       Left("The manifest is malformed or unsupported. Generate Docs with a supported dbt version before converting SQL.")
     else if (!DbtArtifactContext.matches(root)) Left("The manifest has no verified context for the selected project/target. Generate Docs with the dbt Runner before converting SQL.")
-    else if (!w.symbols.exists(s => Set("model", "seed", "snapshot", "source_table")(s.kind) &&
+    else if (!w.symbols.exists(s => DbtSymbol.RelationKinds(s.kind) &&
       w.owner(s).exists(r => w.executionRoot(r) == root) && DbtResourceData.get(w, s).attributes.get("relation_name").exists(_.nonEmpty)))
       Left("The manifest contains no usable physical relations for this project. Generate Docs before converting SQL.")
     else Right(())
@@ -43,7 +43,7 @@ private[ide] object DbtClipboard {
       val text = range.substring(full)
       val changes = DbtSyntax.blocks(full).filter(b => range.contains(b.range) && !DbtSqlText.inactive(full, b.range.getStartOffset)).map { block =>
         val candidates = refs.filter(r => block.range.contains(r.getRangeInElement)).flatMap(_.candidates).collect {
-          case e: DbtSymbolElement if Set("model", "seed", "snapshot", "source_table")(e.symbol.kind) => e.symbol
+          case e: DbtSymbolElement if DbtSymbol.RelationKinds(e.symbol.kind) => e.symbol
         }.distinctBy(_.id)
         val tokens = block.tokens
         val calls = DbtSyntax.calls(block)
@@ -68,7 +68,7 @@ private[ide] object DbtClipboard {
         }
       else Vector(value.toLowerCase(java.util.Locale.ROOT))
     })
-    val resources = w.symbols.filter(s => Set("model", "seed", "snapshot", "source_table")(s.kind) && !s.isProperty &&
+    val resources = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && !s.isProperty &&
       w.declarations(Set(s.kind), s.name, root, Some(s.namespace)).exists(_.id == s.id)).distinctBy(_.id)
     val relations = resources.flatMap(s => DbtResourceData.get(w, s).attributes.get("relation_name").map(r => (parts(r), s)))
     val changes = DbtNavigation.relationRanges(text).flatMap { range =>

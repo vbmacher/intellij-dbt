@@ -185,6 +185,14 @@ final class DbtNavigationTest extends BasePlatformTestCase {
     assertEquals("sql_projection", target(file, "id", 3).asInstanceOf[DbtSymbolElement].symbol.kind)
   }
 
+  def testSqlRangesAfterTabs(): Unit = {
+    root()
+    val file = add("models/tabs.sql", "with\trecent as (select 1 as id)\nselect\tr.id from\trecent r")
+    val reference = refs(file, "recent", 1).find(_.candidates.nonEmpty).get
+    assertEquals("recent", reference.getRangeInElement.substring(file.getText))
+    assertEquals(file.getText.indexOf("recent"), target(file, "recent", 1).getTextRange.getStartOffset)
+  }
+
   def testUnsavedEditsAndSearchScope(): Unit = {
     root()
     add("models/orders.sql", "select 1")

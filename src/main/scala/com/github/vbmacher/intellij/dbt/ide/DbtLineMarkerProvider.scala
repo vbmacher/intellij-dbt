@@ -1,12 +1,10 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtLineage}
+import com.github.vbmacher.intellij.dbt.lineage.DbtLineage
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.{DbtIcons, DbtSymbolElement, DbtWorkspace}
 import com.intellij.codeInsight.daemon.{LineMarkerInfo, LineMarkerProviderDescriptor}
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.editor.markup.GutterIconRenderer
@@ -43,13 +41,7 @@ final class DbtLineMarkerProvider extends LineMarkerProviderDescriptor {
 private[ide] object DbtLineMarkerProvider {
   private[ide] final case class Marker(range: TextRange, choices: Vector[DbtNavigationItem], tooltip: String)
   private val MarkerCache = Key.create[CachedValue[Vector[Marker]]]("dbt.gutter.markers")
-  private val EdgeCache = Key.create[CachedValue[Vector[DbtDependency]]]("dbt.gutter.dependencies")
   private val BlockKinds = Set("macro", "generic_test", "doc", "materialization")
-
-  private def edges(project: Project): Vector[DbtDependency] =
-    CachedValuesManager.getManager(project).getCachedValue(project, EdgeCache,
-      () => CachedValueProvider.Result.create(DbtLineage.edges(DbtWorkspace.get(project)),
-        PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS), false)
 
   private[ide] def markers(file: PsiFile): Vector[Marker] =
     if (!file.isPhysical || file.getVirtualFile == null) Vector.empty
@@ -59,8 +51,7 @@ private[ide] object DbtLineMarkerProvider {
 
   private def targets(symbols: Vector[DbtSymbolElement], heading: String): Vector[DbtNavigationItem] =
     symbols.distinct.zipWithIndex.map { case (target, index) =>
-      DbtNavigationItem(target, s"${target.getPresentation.getPresentableText} — ${DbtNavigationItem.location(target.symbol.file, target.getTextOffset)}",
-        separator = if (index == 0) Some(heading) else None)
+      DbtNavigationItem.declaration(target, if (index == 0) Some(heading) else None)
     }
 
   private def compute(file: PsiFile): Vector[Marker] = {
@@ -70,7 +61,7 @@ private[ide] object DbtLineMarkerProvider {
     if (workspace.root(file).forall(_.excluded(file.getVirtualFile))) return Vector.empty
     val root = workspace.root(file)
     val references = DbtNavigation.inFile(file)
-    lazy val dependencies = edges(file.getProject)
+    lazy val dependencies = DbtLineage.edges(workspace)
     val declarations = workspace.symbols.filter(s => s.file == file && !s.metadata && s.isEnabled &&
       (s.isCode || s.isProperty || BlockKinds(s.kind) || s.kind == "source_table") &&
       (!s.isCode || root.exists(r => workspace.declarations(Set(s.kind), s.name, r, Some(s.namespace)).exists(_.id == s.id))))
@@ -109,9 +100,6 @@ private[ide] object DbtLineMarkerProvider {
 
   private def show(event: MouseEvent, marker: Marker): Unit = {
     val valid = marker.choices.filter(_.target.isValid)
-    if (valid.nonEmpty) JBPopupFactory.getInstance.createPopupChooserBuilder(valid.asJava).setTitle("dbt navigation")
-      .setRenderer(new DbtNavigationItemRenderer).setNamerForFiltering((item: DbtNavigationItem) => item.text)
-      .setItemChosenCallback((item: DbtNavigationItem) => item.target.navigate(true))
-      .createPopup().show(new RelativePoint(event))
+    if (valid.nonEmpty) DbtNavigationItem.popup("dbt navigation", valid).show(new RelativePoint(event))
   }
 }

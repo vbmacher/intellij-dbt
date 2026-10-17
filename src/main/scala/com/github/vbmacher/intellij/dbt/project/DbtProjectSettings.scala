@@ -16,6 +16,23 @@ final class DbtRunOptions {
   @BeanProperty var previewLimit: Int = 10
   @BeanProperty var colors: Boolean = true
   @BeanProperty var notifications: Boolean = true
+
+  def values: Vector[Any] =
+    Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications)
+
+  def copy(): DbtRunOptions = {
+    val c = new DbtRunOptions
+    c.executable = executable
+    c.executableArguments = executableArguments
+    c.projectRoot = projectRoot
+    c.profilesDirectory = profilesDirectory
+    c.artifactDirectory = artifactDirectory
+    c.target = target
+    c.previewLimit = previewLimit
+    c.colors = colors
+    c.notifications = notifications
+    c
+  }
 }
 
 final class DbtSettingsState {
@@ -29,6 +46,13 @@ final class DbtSettingsState {
   @BeanProperty var exposures: Boolean = true
   @BeanProperty var docsVisible: Boolean = true
   @BeanProperty var docsWidth: Int = 360
+
+  def upstream: Int = DbtSettingsState.depth(upstreamDepth)
+  def downstream: Int = DbtSettingsState.depth(downstreamDepth)
+}
+
+private[dbt] object DbtSettingsState {
+  def depth(value: Int): Int = value.max(1).min(20)
 }
 
 @Service(Array(Service.Level.PROJECT))

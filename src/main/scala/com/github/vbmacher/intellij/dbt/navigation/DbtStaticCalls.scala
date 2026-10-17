@@ -80,7 +80,7 @@ private[navigation] object DbtStaticCalls {
     if (!call.name.startsWith("builtins.") && w.declarations(Set("macro"), base, root).nonEmpty) return Vector.empty
     base match {
       case "ref" | "function" | "doc" =>
-        val kinds = if (base == "ref") Set("model", "seed", "snapshot") else Set(base)
+        val kinds = if (base == "ref") DbtSymbol.RefKinds else Set(base)
         val qualified = args.size >= 2
         val names = args.lift(if (qualified) 1 else 0).getOrElse(Vector.empty)
         val namespaces = if (qualified) args.head.map(Some(_)) else Vector(None)
@@ -112,8 +112,10 @@ private[navigation] object DbtStaticCalls {
     val env = bindings.view.mapValues(_._2).toMap
     val result = ArrayBuffer.empty[(DbtSyntax.Argument, Vector[PsiElement])]
     body.flatMap(DbtSyntax.calls).foreach { delegated =>
-      val reassigned = this.constants(body, delegated.block.range.getStartOffset).keySet
-      val local = constantsForBody(body, delegated, env)
+      // An assignment before the delegated call overrides a parameter, including unknown runtime values.
+      val assigned = this.constants(body, delegated.block.range.getStartOffset)
+      val reassigned = assigned.keySet
+      val local = env ++ assigned
       val targets = this.targets(w, root, delegated, local)
       if (targets.isEmpty) missing(w, root, delegated, local).foreach { case (argument, message) =>
         argument.tokens.filterNot(_.string).flatMap(t => bindings.get(t.image)).foreach { case (original, _) => onMissing(original, message) }
@@ -155,10 +157,5 @@ private[navigation] object DbtStaticCalls {
         else call.positional.lift(1).map(_ -> s"Unresolved source table: '$source.$table'")
       case _ => None
     }
-  }
-  private def constantsForBody(body: Vector[DbtSyntax.Block], call: DbtSyntax.Call, parameters: Map[String, Vector[String]]): Map[String, Vector[String]] = {
-    // An assignment before the delegated call overrides a parameter, including unknown runtime values.
-    val assignments = constants(body, call.block.range.getStartOffset)
-    parameters ++ assignments
   }
 }

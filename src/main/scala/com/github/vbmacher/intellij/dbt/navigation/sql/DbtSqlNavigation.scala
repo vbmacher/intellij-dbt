@@ -65,24 +65,6 @@ private object DbtSqlNavigation {
   private def parse(sql: String): Option[Statement] =
     try Some(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch { case _: JSQLParserException => None }
 
-  private def offset(text: String, t: Token, end: Boolean = false): Int = {
-    val line = if (end) t.endLine else t.beginLine
-    val column = if (end) t.endColumn else t.beginColumn
-    var p = 0
-    var l = 1
-    var c = 1
-    while (p < text.length && (l < line || c < column)) {
-      if (text(p) == '\n') {
-        l += 1
-        c = 1
-      }
-      else if (text(p) == '\t') c += 8 - ((c - 1) % 8)
-      else c += 1
-      p += 1
-    }
-    if (end) math.min(text.length, p + 1) else p
-  }
-
   def projections(resource: DbtSymbol): Vector[DbtSymbol] = {
     val file = resource.file
     if (!sqlFile(file)) return Vector.empty
@@ -104,9 +86,7 @@ private object DbtSqlNavigation {
         })
         val token = Option(item.getASTNode).map(_.jjtGetLastToken())
         for (n <- name.toVector; t <- token.toVector if !n.startsWith("_dbt")) yield {
-          val start = offset(source, t)
-          val end = offset(source, t, end = true)
-          n -> new TextRange(start, end)
+          n -> new TextRange(DbtSqlRelations.offset(source, t), DbtSqlRelations.offset(source, t, end = true))
         }
       }
       case _ => Vector.empty
@@ -124,7 +104,7 @@ private object DbtSqlNavigation {
     val templateRelations = blocks.zipWithIndex.collect { case (b, i) if !b.tag => marker(i) -> templateRelation(file, w, root, b, jinja) }.toMap
     val refs = ArrayBuffer.empty[DbtNavigationReference]
 
-    def offset(t: Token, end: Boolean = false): Int = DbtSqlNavigation.offset(text, t, end)
+    def offset(t: Token, end: Boolean = false): Int = DbtSqlRelations.offset(text, t, end)
 
     def range(t: Token): TextRange = new TextRange(offset(t), offset(t, end = true))
 
@@ -257,10 +237,9 @@ private object DbtSqlNavigation {
     info.map(view => Relation(Vector(DbtResolution.documentation(file, view, "info-schema", root)), DbtInfoSchema.columns(file, root, view), Some(view)))
       .getOrElse {
         val candidates = jinja.filter(ref => b.range.contains(ref.getRangeInElement)).flatMap(_.candidates).collect {
-          case e: DbtSymbolElement if Set("model", "seed", "snapshot", "source_table").contains(e.symbol.kind) => e.symbol
+          case e: DbtSymbolElement if DbtSymbol.RelationKinds(e.symbol.kind) => e.symbol
         }.distinct
-        val columns = candidates.flatMap(s => w.symbols.filter(c => c.kind == "column" && c.namespace == s.namespace && w.owner(c) == w.owner(s) &&
-          c.owner == s.relationName && c.version == s.version)).groupBy(_.name.toLowerCase).view.mapValues(_.map(_.element: PsiElement)).toMap
+        val columns = candidates.flatMap(w.columns).groupBy(_.name.toLowerCase).view.mapValues(_.map(_.element: PsiElement)).toMap
         Relation(candidates.map(_.element), columns)
       }
   }

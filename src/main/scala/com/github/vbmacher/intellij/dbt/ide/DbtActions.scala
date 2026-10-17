@@ -7,7 +7,7 @@ import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnAction
 import com.intellij.openapi.application.{ModalityState, ReadAction}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.popup.{JBPopupFactory, ListItemDescriptor}
+import com.intellij.openapi.ui.popup.{JBPopup, JBPopupFactory, ListItemDescriptor}
 import com.intellij.psi.PsiFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -28,6 +28,17 @@ private[ide] object DbtNavigationItem {
     val line = Option(file.getViewProvider.getDocument).map(d => d.getLineNumber(math.min(offset, d.getTextLength)) + 1).getOrElse(1)
     s"${file.getName}:$line"
   }
+
+  /** A declaration labelled with its location. */
+  def declaration(target: DbtSymbolElement, separator: Option[String] = None): DbtNavigationItem =
+    DbtNavigationItem(target, s"${target.getPresentation.getPresentableText} — ${location(target.symbol.file, target.getTextOffset)}",
+      separator = separator)
+
+  def popup(title: String, items: Vector[DbtNavigationItem]): JBPopup =
+    JBPopupFactory.getInstance.createPopupChooserBuilder(items.asJava).setTitle(title)
+      .setRenderer(new DbtNavigationItemRenderer).setNamerForFiltering((item: DbtNavigationItem) => item.text)
+      .setItemChosenCallback((item: DbtNavigationItem) => item.target.navigate(true))
+      .createPopup()
 }
 
 /** Shows resource icons with their references indented below them. */
@@ -73,10 +84,7 @@ abstract class DbtPopupAction(title: String) extends AnAction {
       override def call(): Vector[DbtNavigationItem] = items(DbtWorkspace.get(project), file, offset)
     }).inSmartMode(project).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (choices: Vector[DbtNavigationItem]) =>
       if (choices.isEmpty) nothingFound(project)
-      else JBPopupFactory.getInstance.createPopupChooserBuilder(choices.asJava).setTitle(title)
-        .setRenderer(new DbtNavigationItemRenderer).setNamerForFiltering((item: DbtNavigationItem) => item.text)
-        .setItemChosenCallback((item: DbtNavigationItem) => item.target.navigate(true))
-        .createPopup().showInBestPositionFor(editor)
+      else DbtNavigationItem.popup(title, choices).showInBestPositionFor(editor)
     ).submit(AppExecutorUtil.getAppExecutorService)
   }
 }
@@ -85,8 +93,7 @@ abstract class DbtPopupAction(title: String) extends AnAction {
 final class DbtPropertiesAction extends DbtPopupAction("dbt Properties") {
   override private[ide] def items(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtNavigationItem] = {
     val at = resolvedAt(file, offset)
-    (if (at.nonEmpty) at else w.codeSymbols(file)).flatMap(w.properties).distinct.map(s =>
-      DbtNavigationItem(s.element, s"${s.element.getPresentation.getPresentableText} — ${DbtNavigationItem.location(s.file, s.range.getStartOffset)}"))
+    (if (at.nonEmpty) at else w.codeSymbols(file)).flatMap(w.properties).distinct.map(s => DbtNavigationItem.declaration(s.element))
   }
 }
 

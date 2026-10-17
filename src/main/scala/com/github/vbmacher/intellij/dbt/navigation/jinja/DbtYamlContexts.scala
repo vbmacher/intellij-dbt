@@ -1,14 +1,12 @@
 package com.github.vbmacher.intellij.dbt.navigation.jinja
 
-import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtDeclarations, DbtRoot, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.{YAMLFile, YAMLScalar}
 
 /** dbt renders these hosts with different contexts, including deferred hooks and descriptions. */
 private[jinja] object DbtYamlContexts {
-  private val resources = Set("models", "seeds", "snapshots", "analyses", "macros", "sources", "exposures", "groups",
-    "metrics", "semantic_models", "saved_queries", "functions", "unit_tests", "checks")
   private val hooks = Set("pre-hook", "post-hook", "pre_hook", "post_hook", "on-run-start", "on-run-end", "loaded_at_query", "sql")
 
   def scalar(file: PsiFile, offset: Int): Option[YAMLScalar] = Option(file.findElementAt(offset)).flatMap(e =>
@@ -18,20 +16,13 @@ private[jinja] object DbtYamlContexts {
     if (!file.isInstanceOf[YAMLFile]) return "runtime"
     val keys = scalar(file, offset).map(DbtYaml.ancestors).getOrElse(Vector.empty).map(_.stripPrefix("+"))
     val relative = root.relative(file.getVirtualFile)
-    val unsupported = keys.lastOption.exists {
-      case "unit_tests" => !root.supports(8)
-      case "semantic_models" | "metrics" => !root.supports(6)
-      case "saved_queries" => !root.supports(7)
-      case "functions" => !root.supports(11)
-      case "checks" => root.engine != "v2"
-      case _ => false
-    }
+    val unsupported = keys.lastOption.flatMap(DbtDeclarations.ResourceKeys.get).exists(!root.supportsKind(_))
     if (unsupported || keys.contains("vars") || relative.contains("dependencies.yml") || relative.contains("package-lock.yml") ||
       relative.contains("vars.yml") || relative == root.setting("run-config")) "none"
     else if (relative.contains(root.profilesFile) || relative.contains("packages.yml")) "profile"
     else if (relative.contains("selectors.yml")) if (keys.headOption.contains("default")) "project" else "none"
     else if (relative.contains("dbt_project.yml")) if (keys.exists(hooks)) "runtime" else "project"
-    else if (!keys.lastOption.exists(resources)) "none"
+    else if (!keys.lastOption.exists(DbtDeclarations.ResourceKeys.contains)) "none"
     else if (keys.contains("meta")) "properties"
     else if (keys.exists(Set("tests", "data_tests")) && keys.contains("arguments") && !root.supports(10, 5)) "none"
     else if (keys.contains("description") && !keys.exists(Set("meta", "config"))) "description"

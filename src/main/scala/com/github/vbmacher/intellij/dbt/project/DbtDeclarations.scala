@@ -6,8 +6,9 @@ import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.YAMLMapping
 
 /** Declarations of a single file, read from Jinja blocks and YAML properties without evaluating anything. */
-private[project] object DbtDeclarations {
-  private val resourceKeys = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "analyses" -> "analysis",
+private[dbt] object DbtDeclarations {
+  /** Top-level keys of YAML property files and the kinds of the resources they declare. */
+  val ResourceKeys: Map[String, String] = Map("models" -> "model", "seeds" -> "seed", "snapshots" -> "snapshot", "analyses" -> "analysis",
     "macros" -> "macro", "sources" -> "source", "exposures" -> "exposure", "groups" -> "group", "metrics" -> "metric",
     "semantic_models" -> "semantic_model", "saved_queries" -> "saved_query", "functions" -> "function",
     "unit_tests" -> "unit_test", "checks" -> "check")
@@ -88,17 +89,10 @@ private[project] object DbtDeclarations {
     }
   }
 
-  private def supported(root: DbtRoot, kind: String): Boolean = kind match {
-    case "function" => root.supports(11)
-    case "check" => root.engine == "v2"
-    case "unit_test" => root.supports(8)
-    case "semantic_model" => root.supports(6)
-    case _ => true
-  }
-
   /** Resources and their children declared in YAML property files. */
   private def resources(symbol: Builder, root: DbtRoot, top: YAMLMapping): Vector[DbtSymbol] =
-    resourceKeys.toVector.filter { case (_, kind) => supported(root, kind) }.flatMap { case (key, kind) =>
+    // Legacy metrics and saved queries stay declared; resolution gates them by version.
+    ResourceKeys.toVector.filter { case (_, kind) => Set("metric", "saved_query")(kind) || root.supportsKind(kind) }.flatMap { case (key, kind) =>
       DbtYaml.items(top, key).flatMap(m => DbtYaml.string(m, "name").toVector.flatMap { name =>
         (if (kind == "model" && root.supports(12)) modelSemantics(symbol, m, name) else Vector.empty) ++
           (if (kind == "function" && root.supports(12)) functionOverloads(symbol, m, name) else Vector.empty) ++
