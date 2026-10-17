@@ -3,9 +3,8 @@ package com.github.vbmacher.intellij.dbt.ide.textmate
 import com.github.vbmacher.intellij.dbt.project.DbtWorkspace
 import com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator
 import com.intellij.codeInsight.TargetElementEvaluatorEx2
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.extensions.{PluginAware, PluginDescriptor}
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.highlighter.{EditorHighlighter, EditorHighlighterFactory}
@@ -25,10 +24,11 @@ import org.jetbrains.plugins.textmate.regex.{CaffeineCachingRegexProvider, Remem
 
 import scala.jdk.CollectionConverters._
 
-final class DbtTextMateBundleProvider extends TextMateBundleProvider {
+final class DbtTextMateBundleProvider extends TextMateBundleProvider with PluginAware {
+  private var descriptor: PluginDescriptor = _
+  override def setPluginDescriptor(value: PluginDescriptor): Unit = descriptor = value
   override def getBundles: java.util.List[TextMateBundleProvider.PluginBundle] = {
-    val plugin = PluginManagerCore.getPlugin(PluginId.getId("com.github.vbmacher.intellij-dbt"))
-    java.util.List.of(new TextMateBundleProvider.PluginBundle("dbt", plugin.getPluginPath.resolve("textmate/dbt")))
+    java.util.List.of(new TextMateBundleProvider.PluginBundle("dbt", descriptor.getPluginPath.resolve("textmate/dbt")))
   }
 }
 

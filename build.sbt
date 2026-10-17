@@ -29,6 +29,11 @@ lazy val root = (project in file("."))
     ThisBuild / intellijPlatform := IntelliJPlatform.IdeaCommunity,
     ThisBuild / autoRemoveOldCachedIntelliJSDK := true,
     ThisBuild / autoRemoveOldCachedDownloads := true,
+    // Public experimental Symbol APIs are supported; private APIs must never reach Marketplace.
+    pluginVerifierOptions := pluginVerifierOptions.value.copy(
+      failureLevels = pluginVerifierOptions.value.failureLevels - org.jetbrains.sbtidea.verifier.FailureLevel.EXPERIMENTAL_API_USAGES,
+      overrideIDEs = Seq(intellijBaseDirectory.value.getAbsolutePath)
+    ),
     intellijPlugins ++= Seq(
       "org.jetbrains.plugins.yaml".toPlugin,
       "org.jetbrains.plugins.textmate".toPlugin,

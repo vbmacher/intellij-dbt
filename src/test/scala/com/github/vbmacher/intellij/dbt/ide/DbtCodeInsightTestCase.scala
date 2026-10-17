@@ -1,6 +1,5 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.intellij.model.psi.PsiSymbolService
 import com.intellij.model.psi.impl.TargetsKt
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile, PsiReference}
@@ -33,7 +32,7 @@ abstract class DbtCodeInsightTestCase extends BasePlatformTestCase {
 
   protected def declarationTargets: Vector[PsiElement] =
     TargetsKt.targetDeclarationAndReferenceSymbols(myFixture.getFile, myFixture.getCaretOffset).getSecond.asScala
-      .map(PsiSymbolService.getInstance().extractElementFromSymbol).toVector
+      .map(_.asInstanceOf[DbtPsiSymbol].element).toVector
 
   protected def assertTarget(file: PsiFile, offset: Int = 0): PsiElement = {
     val targets = declarationTargets

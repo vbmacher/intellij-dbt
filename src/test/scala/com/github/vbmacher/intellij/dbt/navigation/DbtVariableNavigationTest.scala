@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.navigation
 
 import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
 import com.intellij.json.JsonFileType
-import com.intellij.model.psi.PsiSymbolService
+import com.github.vbmacher.intellij.dbt.ide.DbtPsiSymbol
 import com.intellij.model.psi.impl.TargetsKt
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileTypes.FileTypeManager
@@ -49,7 +49,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
     // Exercise the registered navigation extension, not just the resolver.
     myFixture.configureFromExistingVirtualFile(model.getVirtualFile)
     val offset = model.getText.indexOf("start_date") + 3
-    assertSame(expected, PsiSymbolService.getInstance().extractElementFromSymbol(TargetsKt.targetSymbols(model, offset).asScala.head))
+    assertSame(expected, TargetsKt.targetSymbols(model, offset).asScala.head.asInstanceOf[DbtPsiSymbol].element)
     assertSame(expected, model.findReferenceAt(offset).resolve())
 
     val found = usages("start_date")
@@ -231,7 +231,7 @@ final class DbtVariableNavigationTest extends BasePlatformTestCase {
       val offset = file.getText.indexOf("start_date") + 2
       myFixture.configureFromExistingVirtualFile(file.getVirtualFile)
       assertSame(declaration("start_date"),
-        PsiSymbolService.getInstance().extractElementFromSymbol(TargetsKt.targetSymbols(file, offset).asScala.head))
+        TargetsKt.targetSymbols(file, offset).asScala.head.asInstanceOf[DbtPsiSymbol].element)
       assertEquals(1, usages("start_date").size)
     } finally {
       WriteCommandAction.runWriteCommandAction(getProject, new Runnable {

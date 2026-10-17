@@ -4,7 +4,7 @@ import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.DbtSymbolElement
 import com.intellij.lang.documentation.impl.TargetsKt
 import com.intellij.lang.documentation.ide.impl.{DocumentationManager, DocumentationToolWindowManager}
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.{ApplicationManager, ReadAction}
 import com.intellij.openapi.actionSystem.{ActionManager, CommonDataKeys}
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters._
 final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
   private val requested = new ConcurrentLinkedQueue[String]()
   private var autoUpdate = false
+  private var skipPopup = false
   private val page = """<html><head><style>unwanted css</style></head><body><nav>Website menu</nav><article>
     <nav>Breadcrumbs</nav><div class="markdown"><h1>ref</h1><p>Returns a relation and records a model dependency.</p>
     <pre><code>{{ ref('orders') }}</code></pre><table><tr><th>Argument</th><td>model_name</td></tr></table>
@@ -32,6 +33,8 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
   override protected def setUp(): Unit = {
     super.setUp()
     autoUpdate = DocumentationToolWindowManager.Companion.getAutoUpdate
+    skipPopup = DocumentationManager.Companion.getSkipPopup
+    DocumentationManager.Companion.setSkipPopup(true)
     DocumentationToolWindowManager.Companion.setAutoUpdate(false)
     ServiceContainerUtil.replaceService(getProject, classOf[DbtBuiltinDocumentationSource], new DbtBuiltinDocumentationSource {
       override def html(url: String): String = {
@@ -47,9 +50,16 @@ final class DbtBuiltinDocumentationTest extends DbtCodeInsightTestCase {
     Option(ToolWindowManager.getInstance(getProject).getToolWindow(DocumentationToolWindowManager.TOOL_WINDOW_ID))
       .foreach(_.getContentManager.removeAllContents(true))
     DocumentationToolWindowManager.Companion.setAutoUpdate(autoUpdate)
+    DocumentationManager.Companion.setSkipPopup(skipPopup)
   } finally super.tearDown()
 
-  private def targets: Vector[DocumentationTarget] = TargetsKt.documentationTargets(myFixture.getFile, myFixture.getCaretOffset).asScala.toVector
+  private def targets: Vector[DocumentationTarget] = {
+    val file = myFixture.getFile
+    val offset = myFixture.getCaretOffset
+    ReadAction.nonBlocking(new Callable[Vector[DocumentationTarget]] {
+      override def call(): Vector[DocumentationTarget] = TargetsKt.documentationTargets(file, offset).asScala.toVector
+    }).submit(AppExecutorUtil.getAppExecutorService).get(10, TimeUnit.SECONDS)
+  }
 
   private def html(target: DocumentationTarget): String = {
     val pointer = target.createPointer()

@@ -73,7 +73,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
-        <platform.backend.documentation.targetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtDocumentationTargetProvider"/>
+        <platform.backend.documentation.symbolTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtSymbolDocumentationTargetProvider"/>
         <platform.backend.documentation.psiTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinPsiDocumentationTargetProvider"/>
         <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLinkHandler"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtDocumentationNavigation" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationNavigation"/>
@@ -87,6 +87,8 @@
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
         <psi.implicitReferenceProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtImplicitReferenceProvider"/>
+        <lang.symbolSearchTarget forClass="com.github.vbmacher.intellij.dbt.ide.DbtPsiSymbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSymbolSearchTargetFactory"/>
+        <searcher forClass="com.intellij.find.usages.api.UsageSearchParameters" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSymbolUsageSearcher"/>
         <lang.findUsagesProvider language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesProvider"/>
         <targetElementEvaluator language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>
         <targetElementEvaluator language="Markdown" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator"/>

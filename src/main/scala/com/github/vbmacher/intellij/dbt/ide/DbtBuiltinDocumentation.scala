@@ -1,12 +1,12 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtDocumentationNavigation, DbtSymbol, DbtSymbolElement}
-import com.intellij.lang.documentation.ide.impl.DocumentationToolWindowManager
 import com.intellij.model.Pointer
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.actionSystem.{ActionManager, ActionPlaces, ActionUiKind, AnActionEvent, CommonDataKeys}
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.project.Project
 import com.intellij.platform.backend.documentation._
-import com.intellij.platform.backend.documentation.impl.{DocumentationRequest, ImplKt}
 import com.intellij.platform.backend.presentation.TargetPresentation
 import com.intellij.psi.{PsiElement, PsiFile}
 import com.intellij.util.containers.ContainerUtil
@@ -90,8 +90,11 @@ final class DbtBuiltinDocumentationLinkHandler extends DocumentationLinkHandler 
 
 final class DbtBuiltinDocumentationNavigation(project: Project) extends DbtDocumentationNavigation {
   override def show(element: DbtSymbolElement): Unit = {
-    val request = ReadAction.computeBlocking[DocumentationRequest, RuntimeException](() =>
-      ImplKt.documentationRequest(new DbtBuiltinDocumentationTarget(element.symbol)))
-    DocumentationToolWindowManager.Companion.getInstance(project).showInToolWindow(java.util.List.of(request))
+    val action = ActionManager.getInstance().getAction("QuickJavaDoc")
+    val context = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, project)
+      .add(com.intellij.platform.ide.documentation.ActionsKt.DOCUMENTATION_TARGETS,
+        java.util.List.of[DocumentationTarget](new DbtBuiltinDocumentationTarget(element.symbol))).build()
+    val event = AnActionEvent.createEvent(action, context, null, ActionPlaces.UNKNOWN, ActionUiKind.NONE, null)
+    ActionUtil.performAction(action, event)
   }
 }

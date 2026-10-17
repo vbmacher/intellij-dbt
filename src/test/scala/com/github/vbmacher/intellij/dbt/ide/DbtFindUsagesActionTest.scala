@@ -1,5 +1,8 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.json.JsonFileType
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.PsiFile
 import com.intellij.usages.UsageInfo2UsageAdapter
 import org.junit.Assert._
@@ -134,5 +137,31 @@ final class DbtFindUsagesActionTest extends DbtCodeInsightTestCase {
 
     open(first, first.getText.indexOf("orders") + 2)
     assertUsages(location(first, "orders"), location(second, "orders"))
+  }
+
+  def testFindUsagesWithAnExistingLanguageParserUsesThePublicSymbolSearch(): Unit = {
+    project()
+    val fileTypes = FileTypeManager.getInstance
+    val original = fileTypes.getFileTypeByExtension("sql")
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = fileTypes.associateExtension(JsonFileType.INSTANCE, "sql")
+    })
+    try {
+      add("models/orders.sql", "{}")
+      val first = configure("models/first.sql", "{\"value\": \"{{ ref('or<caret>ders') }}\"}")
+      val second = add("models/second.sql", "{\"value\": \"{{ ref('orders') }}\"}")
+      val offset = first.getText.indexOf("orders") + 2
+      assertTrue(first.isInstanceOf[com.intellij.json.psi.JsonFile])
+      assertNull("This parser does not expose a legacy PSI reference", first.findReferenceAt(offset))
+      open(first, offset)
+      assertUsages(location(first, "orders"), location(second, "orders"))
+    } finally {
+      WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+        override def run(): Unit = {
+          fileTypes.removeAssociatedExtension(JsonFileType.INSTANCE, "sql")
+          fileTypes.associateExtension(original, "sql")
+        }
+      })
+    }
   }
 }

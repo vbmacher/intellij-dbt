@@ -5,7 +5,8 @@ import com.github.vbmacher.intellij.dbt.project.{DbtEnvironment, DbtSymbolElemen
 import com.intellij.codeInsight.{TargetElementEvaluatorEx2, TargetElementUtil}
 import com.intellij.find.findUsages.{FindUsagesHandler, FindUsagesHandlerFactory}
 import com.intellij.lang.findUsages.FindUsagesProvider
-import com.intellij.model.psi.{ImplicitReferenceProvider, PsiSymbolReference, PsiSymbolService}
+import com.intellij.model.Symbol
+import com.intellij.model.psi.{ImplicitReferenceProvider, PsiSymbolReference}
 import com.intellij.openapi.application.QueryExecutorBase
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -16,6 +17,7 @@ import com.intellij.psi.search.PsiSearchScopeUtil
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.util.{ProcessingContext, Processor}
 import org.jetbrains.yaml.psi.YAMLKeyValue
+import scala.jdk.CollectionConverters._
 
 // IDE extension points registered in plugin.xml; all of them delegate to DbtNavigation and DbtWorkspace.
 
@@ -26,8 +28,11 @@ final class DbtImplicitReferenceProvider extends ImplicitReferenceProvider {
       val references = DbtNavigation.at(file, offsetInElement)
       val candidates = references.flatMap(_.candidates).distinct
       references.headOption.filter(_ => candidates.nonEmpty).map { first =>
-        val reference = new DbtNavigationReference(file, first.getRangeInElement, candidates, first.label)
-        PsiSymbolService.getInstance().asSymbolReference(reference)
+        new PsiSymbolReference {
+          override def getElement: PsiElement = file
+          override def getRangeInElement: com.intellij.openapi.util.TextRange = first.getRangeInElement
+          override def resolveReference(): java.util.Collection[_ <: Symbol] = candidates.map(new DbtPsiSymbol(_, file, offsetInElement)).asJava
+        }
       }.orNull
     case _ => null
   }

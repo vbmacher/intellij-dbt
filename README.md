@@ -76,10 +76,11 @@ To use another SDK containing the Python plugin:
 sbt 'set pythonTestSdk := file("/path/to/sdk")' testPython
 ```
 
-Plugin Verifier reports are written to `target/verifier/reports`. The task treats
-API warnings as failures. Native Ctrl-hover currently uses IntelliJ's experimental
-symbol API and its internal `PsiSymbolService` adapter; review those warnings
-separately from the binary compatibility verdict.
+Plugin Verifier reports are written to `target/verifier/reports`. CI verifies the
+packaged plugin against the development SDK and fails on Internal API usage,
+compatibility problems and other API warnings. Public experimental Symbol APIs
+used for native navigation, documentation and Find Usages are reported without
+failing the build.
 
 To verify another installed IDE, pass its directory:
 
