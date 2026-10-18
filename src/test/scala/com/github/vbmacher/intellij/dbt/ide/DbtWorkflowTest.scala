@@ -66,6 +66,21 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertEquals("select customer_key from {{ ref('orders') }}", report.getText)
     assertTrue(yaml.getText.contains("events, columns: [{name: customer_id}]"))
   }
+  def testCreationRespectsConfiguredPathAndExtendsExistingSource(): Unit = {
+    project("model-paths: [transforms]\n")
+    val file = configure("transforms/report.sql", "select * from {{ ref('new_<caret>model') }}")
+    val proposal = DbtCreateResourceFix.proposal(file, myFixture.getCaretOffset).get
+    assertEquals("transforms/new_model.sql", proposal.path)
+    assertTrue(DbtCreateResourceFix.create(proposal, "../outside.sql").isLeft)
+    assertTrue(DbtCreateResourceFix.create(proposal, proposal.path).isRight)
+    assertTrue(com.github.vbmacher.intellij.dbt.navigation.DbtNavigation.at(file, myFixture.getCaretOffset).exists(_.candidates.nonEmpty))
+    val source = add("transforms/sources.yml", "# retain\nsources: [{name: raw, tables: [{name: old_table, meta: {owner: Finance}}]}]\n")
+    val consumer = configure("transforms/source_report.sql", "select * from {{ source('raw', 'new_<caret>table') }}")
+    val table = DbtCreateResourceFix.proposal(consumer, myFixture.getCaretOffset).get
+    assertTrue(DbtCreateResourceFix.create(table, table.path).isRight)
+    assertTrue(source.getText.contains("# retain")); assertTrue(source.getText.contains("owner: Finance"))
+    assertTrue(w.symbols.exists(s => s.kind == "source_table" && s.name == "new_table"))
+  }
   def testPropertiesEditPreservesCommentsAndCustomFields(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id, 2 as amount")

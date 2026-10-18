@@ -61,7 +61,7 @@ final class DbtUnresolvedAnnotator extends ExternalAnnotator[DbtAnnotationInput,
     val severity = key.map(k => profile.getErrorLevel(k, file).getSeverity).getOrElse(HighlightSeverity.WARNING)
     if (file.getModificationStamp == result.stamp && key.forall(profile.isToolEnabled(_, file))) result.diagnostics
       .filter(d => Option(file.findElementAt(d.range.getStartOffset)).forall(e => !SuppressionUtil.isSuppressed(e, getPairedBatchInspectionShortName)))
-      .foreach(d => holder.newAnnotation(severity, d.message).range(d.range).create())
+      .foreach(d => holder.newAnnotation(severity, d.message).range(d.range).withFix(new DbtCreateResourceFix(d.range.getStartOffset)).create())
   }
 }
 
