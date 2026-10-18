@@ -97,3 +97,239 @@ private[ide] object DbtCteInspection {
   }
 }
 
+/** Query-driven inspection; cached results belong to one exact source/target context. */
+private[ide] final class DbtCteSession {
+  var position: Int = -1
+  var stopped: Boolean = false
+  var breakpoints: Set[String] = Set.empty
+  private var target = ""
+  private var signatures = Map.empty[String, String]
+  private var cache = Map.empty[String, DbtQueryResult]
+  def synchronize(frames: Vector[DbtCte], nextTarget: String): Unit = {
+    val next = frames.map(c => c.name -> c.sql).toMap
+    var invalid = (next.keySet ++ signatures.keySet).filter(k => next.get(k) != signatures.get(k))
+    var changed = true
+    while (changed) {
+      val expanded = invalid ++ frames.filter(_.dependencies.exists(invalid)).map(_.name)
+      changed = expanded != invalid; invalid = expanded
+    }
+    cache = if (target != nextTarget) Map.empty else cache -- invalid
+    signatures = next; target = nextTarget
+    position = position.min(frames.size - 1)
+  }
+  def result(frame: String): Option[DbtQueryResult] = cache.get(frame)
+  def record(frame: String, result: DbtQueryResult): Unit = if (!stopped) cache += frame -> result
+  def restart(): Unit = { position = -1; stopped = false; cache = Map.empty }
+  def invalidate(): Unit = { cache = Map.empty }
+  def stop(): Unit = { stopped = true }
+}
+
+final class DbtInspectCtesAction extends AnAction("Inspect dbt CTEs") {
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
+    event.getProject != null && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
+  override def actionPerformed(event: AnActionEvent): Unit = {
+    val project = event.getProject
+    val file = event.getData(CommonDataKeys.PSI_FILE)
+    if (project == null || file == null) return
+    ReadAction.nonBlocking(new Callable[Option[(String, Vector[DbtCte])]] {
+      override def call(): Option[(String, Vector[DbtCte])] = {
+        val w = DbtWorkspace.get(project)
+        for (model <- w.codeSymbols(file).find(_.kind == "model"); analysis <- DbtSqlAnalysis.get(w, file))
+          yield model.file.getVirtualFile.getPath -> analysis.ctes.filter(c => !analysis.ctes.exists(p => p.body.contains(c.range)))
+      }
+    }).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Option[(String, Vector[DbtCte])]) => result.foreach { case (path, frames) =>
+      val window = ToolWindowManager.getInstance(project).getToolWindow("dbt")
+      if (window != null) {
+        val panel = new DbtCtePanel(project, path, frames)
+        val content = ContentFactory.getInstance().createContent(panel, "Inspect: " + file.getName, true)
+        content.setDisposer(panel); window.getContentManager.addContent(content)
+        window.getContentManager.setSelectedContent(content); window.show()
+      }
+    }).submit(AppExecutorUtil.getAppExecutorService)
+  }
+}
+
+private[ide] final case class DbtCteContext(source: String, stamp: Long, execution: Vector[String],
+  dependencies: Vector[(String, Long)])
+private[ide] final case class DbtCtePrepared(context: DbtCteContext, frames: Vector[DbtCte], index: Int, command: DbtCommand)
+
+private[ide] final class DbtCtePanel(project: Project, path: String, initial: Vector[DbtCte]) extends JPanel(new BorderLayout) with Disposable {
+  private val session = new DbtCteSession
+  private val runner = project.getService(classOf[DbtRunner])
+  private val frames = new DefaultListModel[String]
+  private val frameList = new JBList[String](frames)
+  private val grid = new DbtResultGrid(value => run(count = false, rerunSelected = true, limitOverride = Some(value)))
+  private val status = new JBLabel("Each frame is a separate query and can use warehouse compute; nondeterministic values may change.")
+  private val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
+  private var generation = 0L
+  private var pending = Option.empty[Long]
+  private var disposed = false
+  private var observed = Option.empty[DbtCteContext]
+  private final class Active(val name: String, val command: DbtCommand, val context: DbtCteContext, val count: Boolean)
+  private var active = Option.empty[Active]
+  private var continuing = false
+  initial.foreach(c => frames.addElement(c.name))
+  private def button(label: String)(action: => Unit): Unit = {
+    val b = new JButton(label); b.addActionListener(_ => action); buttons.add(b)
+  }
+  button("Step") { run(count = false) }
+  button("Continue to breakpoint") { if (pending.isEmpty && !runner.isRunning) { continuing = true; run(count = false) } }
+  button("Step Back") {
+    invalidateIfChanged()
+    if (pending.isEmpty && !runner.isRunning && !session.stopped && session.position > 0) {
+      session.position -= 1; frameList.setSelectedIndex(session.position)
+      session.result(frames.get(session.position)).fold(grid.clear("Cached result unavailable; explicitly Step to query again."))(grid.showResult)
+    }
+  }
+  button("Count all rows") { run(count = true) }
+  button("Restart") {
+    cancelPreparation()
+    if (active.nonEmpty) runner.stop()
+    active = None; continuing = false; session.restart()
+    grid.clear("Restarted; Step explicitly to query.")
+  }
+  button("Stop") {
+    cancelPreparation(); continuing = false; session.stop()
+    if (active.nonEmpty) runner.stop()
+    active = None; grid.clear("Inspection stopped"); status.setText("Inspection stopped")
+  }
+  button("Step into referenced model") { stepInto() }
+  private val breakpoint = new JCheckBox("Break at selected CTE")
+  breakpoint.addActionListener(_ => Option(frameList.getSelectedValue).foreach { name =>
+    session.breakpoints = if (breakpoint.isSelected) session.breakpoints + name else session.breakpoints - name
+  })
+  frameList.addListSelectionListener(_ => breakpoint.setSelected(Option(frameList.getSelectedValue).exists(session.breakpoints)))
+  buttons.add(breakpoint)
+  private val north = new JPanel(new BorderLayout)
+  north.add(buttons, BorderLayout.NORTH); north.add(status, BorderLayout.SOUTH)
+  add(north, BorderLayout.NORTH); add(new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JBScrollPane(frameList), grid), BorderLayout.CENTER)
+  runner.listen(this, onRunnerEvent)
+  private[ide] def onRunnerEvent(event: DbtRunnerEvent): Unit = {
+    grid.setRunning(event.running)
+    active.filter(a => !event.running && event.command.exists(_ eq a.command)).foreach { finished =>
+      active = None
+      if (!disposed && !session.stopped && currentContext().contains(finished.context)) {
+        event.result.foreach { result =>
+          if (!finished.count) session.record(finished.name, result)
+          grid.showResult(result)
+        }
+        status.setText(event.message)
+        if (continuing && !finished.count && event.result.nonEmpty && !session.breakpoints(finished.name)) run(count = false)
+        else continuing = false
+      } else {
+        session.invalidate(); continuing = false
+        grid.clear("Source or execution settings changed; the completed query result was discarded.")
+      }
+    }
+  }
+  private def cancelPreparation(): Unit = { generation += 1; pending = None }
+  private def currentContext(): Option[DbtCteContext] =
+    if (disposed || project.isDisposed) None else ReadAction.computeBlocking[Option[DbtCteContext], RuntimeException](() => {
+      val w = DbtWorkspace.get(project)
+      w.symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == path).flatMap(DbtCteInspection.context(w, _))
+    })
+  private val connection = project.getMessageBus.connect(this)
+  connection.subscribe(com.intellij.psi.util.PsiModificationTracker.TOPIC, new com.intellij.psi.util.PsiModificationTracker.Listener {
+    override def modificationCountChanged(): Unit = invalidateIfChanged()
+  })
+  connection.subscribe(DbtProjectSettings.Changed, new DbtSettingsListener {
+    override def settingsChanged(): Unit = invalidateIfChanged()
+  })
+  com.intellij.openapi.editor.EditorFactory.getInstance.getEventMulticaster.addDocumentListener(
+    new com.intellij.openapi.editor.event.DocumentListener {
+      override def documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent): Unit =
+        if (FileDocumentManager.getInstance.getFile(event.getDocument) != null) invalidateIfChanged()
+    }, this)
+  private def invalidateIfChanged(): Unit = {
+    if (!com.intellij.openapi.application.ApplicationManager.getApplication.isDispatchThread)
+      com.intellij.openapi.application.ApplicationManager.getApplication.invokeLater(() => invalidateIfChanged())
+    else if (!disposed && observed.exists(old => !currentContext().contains(old))) {
+      cancelPreparation(); continuing = false; session.invalidate(); session.position = -1
+      if (active.nonEmpty) runner.stop()
+      active = None; observed = currentContext()
+      grid.clear("Source or execution settings changed. Step explicitly to refresh the CTE stack.")
+      status.setText("Source or execution settings changed. Step explicitly to refresh the CTE stack.")
+    }
+  }
+  private def stepInto(): Unit = if (!runner.isRunning && pending.isEmpty && !disposed) {
+    val index = frameList.getSelectedIndex
+    val expected = currentContext()
+    val token = generation
+    ReadAction.nonBlocking(new Callable[Option[(String, Vector[DbtCte])]] {
+      override def call(): Option[(String, Vector[DbtCte])] = {
+        val w = DbtWorkspace.get(project)
+        w.symbols.find(s => s.isCode && s.file.getVirtualFile.getPath == path).flatMap { model =>
+          DbtSqlAnalysis.get(w, model.file).flatMap(a => a.ctes.filter(c => !a.ctes.exists(p => p.body.contains(c.range))).lift(index))
+            .flatMap { cte =>
+              val models = DbtNavigation.inFile(model.file).filter(r => cte.body.contains(r.getRangeInElement)).flatMap(_.candidates)
+                .collect { case e: DbtSymbolElement if e.symbol.kind == "model" && e.symbol.isCode => e.symbol }.distinctBy(_.id)
+              if (models.size != 1) None else DbtSqlAnalysis.get(w, models.head.file).map(a => models.head.file.getVirtualFile.getPath ->
+                a.ctes.filter(c => !a.ctes.exists(p => p.body.contains(c.range))))
+            }
+        }
+      }
+    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (result: Option[(String, Vector[DbtCte])]) =>
+      if (!disposed && token == generation && expected == currentContext()) result match {
+        case None => status.setText("Select a CTE with one resolvable referenced source model.")
+        case Some((nextPath, nextFrames)) =>
+          val window = ToolWindowManager.getInstance(project).getToolWindow("dbt")
+          if (window != null) {
+            val panel = new DbtCtePanel(project, nextPath, nextFrames)
+            val content = ContentFactory.getInstance().createContent(panel, "Inspect: " + java.nio.file.Paths.get(nextPath).getFileName, true)
+            content.setDisposer(panel); window.getContentManager.addContent(content); window.getContentManager.setSelectedContent(content)
+          }
+      }).submit(AppExecutorUtil.getAppExecutorService)
+  }
+  private def run(count: Boolean, rerunSelected: Boolean = false, limitOverride: Option[Int] = None): Unit = if (!disposed && !runner.isRunning && pending.isEmpty && !session.stopped) WriteIntentReadAction.run(() => {
+    invalidateIfChanged()
+    FileDocumentManager.getInstance().saveAllDocuments()
+    com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
+    val expected = currentContext()
+    val selectedName = Option(frameList.getSelectedValue)
+    val nextIndex = session.position + 1
+    val token = generation + 1; generation = token; pending = Some(token); observed = expected
+    status.setText("Preparing CTE query…")
+    ReadAction.nonBlocking(new Callable[Either[String, DbtCtePrepared]] {
+      override def call(): Either[String, DbtCtePrepared] = {
+        val w = DbtWorkspace.get(project)
+        for {
+          model <- w.symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == path).toRight("The model source is unavailable.")
+          snapshot <- DbtCteInspection.context(w, model).toRight("The owning project is unavailable.")
+          analysis <- DbtSqlAnalysis.get(w, model.file).toRight("This SQL cannot be inspected.")
+          available = analysis.ctes.filter(c => !analysis.ctes.exists(p => p.body.contains(c.range)))
+          index = if (count || rerunSelected) selectedName.map(name => available.indexWhere(_.name == name)).getOrElse(0) else nextIndex
+          cte <- available.lift(index).toRight("End of CTE stack. Restart to query again.")
+          sql <- DbtCteInspection.sql(snapshot.source, analysis, cte, count)
+          command <- DbtCteInspection.command(w, model, sql)
+        } yield {
+          val limit = command.arguments.indexOf("--limit", command.commandOffset + 1)
+          val query = if (limit >= 0 && limitOverride.nonEmpty) command.copy(arguments =
+            command.arguments.updated(limit + 1, limitOverride.get.max(1).min(1000).toString)) else command
+          DbtCtePrepared(snapshot, available, index, query)
+        }
+      }
+    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCtePrepared]) => {
+      if (!disposed && generation == token && pending.contains(token) && !session.stopped) {
+        pending = None
+        result match {
+          case Left(error) => continuing = false; status.setText(error)
+          case Right(prepared) if !expected.contains(prepared.context) || !currentContext().contains(prepared.context) =>
+            continuing = false; session.invalidate(); grid.clear("Source or execution settings changed; no query was launched.")
+            status.setText("Source or execution settings changed; Step again.")
+          case Right(prepared) =>
+            session.synchronize(prepared.frames, prepared.context.execution.mkString("\u0000"))
+            frames.clear(); prepared.frames.foreach(c => frames.addElement(c.name))
+            session.position = prepared.index; frameList.setSelectedIndex(prepared.index)
+            val name = prepared.frames(prepared.index).name
+            active = Some(new Active(name, prepared.command, prepared.context, count)); grid.clear("Query running…")
+            if (!runner.start(prepared.command)) { active = None; continuing = false; status.setText("Another dbt command is already running.") }
+        }
+      }
+    }).submit(AppExecutorUtil.getAppExecutorService)
+  })
+  override def dispose(): Unit = {
+    disposed = true; cancelPreparation(); continuing = false
+    if (active.nonEmpty) runner.stop()
+    active = None; session.stop()
+  }
+}

@@ -126,6 +126,9 @@
         <action id="Dbt.ChangeImpact" class="com.github.vbmacher.intellij.dbt.ide.DbtImpactAction" text="dbt Change Impact">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <action id="Dbt.CopyForTarget" class="com.github.vbmacher.intellij.dbt.ide.DbtCopyForTargetAction" text="Copy for Target DB">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="EditMenu" anchor="last"/>

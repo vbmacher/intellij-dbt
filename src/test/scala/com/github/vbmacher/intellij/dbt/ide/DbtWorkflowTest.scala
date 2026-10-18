@@ -138,6 +138,20 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     val deferred = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
     assertTrue(deferred.arguments.contains("--defer")); assertTrue(deferred.arguments.contains(root.directory.getPath + "/baseline"))
   }
+  def testCteSessionInvalidatesDescendantsAndTargetButKeepsIndependentCache(): Unit = {
+    import com.github.vbmacher.intellij.dbt.navigation.DbtCte
+    import com.intellij.openapi.util.TextRange
+    def c(name: String, sql: String, deps: String*) = DbtCte(name, TextRange.EMPTY_RANGE, TextRange.EMPTY_RANGE, deps.toVector, sql)
+    val initial = Vector(c("a", "select 1"), c("b", "select * from a", "a"), c("independent", "select 7"))
+    val session = new DbtCteSession
+    session.synchronize(initial, "dev")
+    val result = DbtQueryResult.parse("{\"show\":[]}", "dev", 10, 3, "select 1").toOption.get
+    initial.foreach(frame => session.record(frame.name, result))
+    session.synchronize(initial.updated(0, c("a", "select 2")), "dev")
+    assertTrue(session.result("a").isEmpty); assertTrue(session.result("b").isEmpty); assertTrue(session.result("independent").nonEmpty)
+    session.synchronize(initial, "prod"); assertTrue(session.result("independent").isEmpty)
+    session.stop(); session.record("a", result); assertTrue(session.result("a").isEmpty)
+  }
   def testNativeCaretTargetsUnusedSqlDefinitionsBeforeTheModel(): Unit = {
     project()
     val file = configure("models/orders.sql", "with un<caret>used as (select 1 as id) select 2 as total")
