@@ -99,7 +99,9 @@ final class DbtTargetElementEvaluator extends TargetElementEvaluatorEx2 {
     val lexical = DbtNavigation.inFile(file).flatMap(_.candidates).collect {
       case e: DbtSymbolElement if e.symbol.file == file && !e.symbol.metadata && e.symbol.range.containsOffset(offset) => e.symbol
     }
-    ((workspace.symbolAt(file, offset) ++ lexical).distinct ++ workspace.codeSymbols(file)).headOption.map(_.element).orNull
+    val sqlDeclarations = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(workspace, file).toVector
+      .flatMap(_.declarations).filter(_.range.containsOffset(offset))
+    ((sqlDeclarations ++ workspace.symbolAt(file, offset) ++ lexical).distinct ++ workspace.codeSymbols(file)).headOption.map(_.element).orNull
   }
 }
 

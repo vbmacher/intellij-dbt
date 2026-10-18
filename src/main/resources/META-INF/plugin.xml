@@ -76,6 +76,7 @@
         <completion.contributor language="any" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtCompletionContributor"/>
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
         <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
+        <refactoring.safeDeleteProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtSafeDelete"/>
         <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
