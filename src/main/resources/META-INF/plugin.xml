@@ -78,6 +78,9 @@
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
         <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
         <refactoring.safeDeleteProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtSafeDelete"/>
+        <formattingService implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormattingService"/>
+        <fileDocumentManagerListener implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormatOnSave"/>
+        <localInspection language="" shortName="DbtSqlFluff" displayName="SQLFluff diagnostics (run Inspect dbt SQL)" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlFluffInspection"/>
         <localInspection language="" shortName="DbtStaticAnalysis" displayName="dbt SQL, macro arguments and contracts" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtStaticInspection"/>
         <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
@@ -110,6 +113,10 @@
         <JsonSchema.ProviderFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtYamlSchemaProvider"/>
     </extensions>
     <actions>
+        <action id="Dbt.InspectSql" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectSqlAction" text="Inspect dbt SQL">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="Dbt.ChangeImpact" class="com.github.vbmacher.intellij.dbt.ide.DbtImpactAction" text="dbt Change Impact">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>

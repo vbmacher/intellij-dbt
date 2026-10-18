@@ -21,10 +21,13 @@ final class DbtRunOptions {
   @BeanProperty var stateDirectory: String = ""
   @BeanProperty var defer: Boolean = false
   @BeanProperty var favorState: Boolean = false
+  @BeanProperty var formatter: String = "sqlfmt"
+  @BeanProperty var formatterExecutable: String = ""
+  @BeanProperty var formatOnSave: Boolean = false
 
   def values: Vector[Any] =
     Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications,
-      selection, exclude, stateDirectory, defer, favorState)
+      selection, exclude, stateDirectory, defer, favorState, formatter, formatterExecutable, formatOnSave)
 
   def copy(): DbtRunOptions = {
     val c = new DbtRunOptions
@@ -42,6 +45,9 @@ final class DbtRunOptions {
     c.stateDirectory = stateDirectory
     c.defer = defer
     c.favorState = favorState
+    c.formatter = formatter
+    c.formatterExecutable = formatterExecutable
+    c.formatOnSave = formatOnSave
     c
   }
 }

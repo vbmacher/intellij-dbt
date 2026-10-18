@@ -82,7 +82,7 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
         case browse: TextFieldWithBrowseButton => Vector(browse.getTextField)
         case _ => Vector.empty
       }
-      assertEquals(6, fields.size)
+      assertEquals(8, fields.size)
       for (width <- Vector(800, 500, 1000)) {
         scroll.setSize(width, 300); scroll.doLayout(); scroll.getViewport.doLayout()
         form.doLayout(); form.getComponents.collect { case container: Container => container }.foreach(_.doLayout())

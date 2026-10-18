@@ -29,6 +29,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val stateDirectory = new TextFieldWithBrowseButton
   private val defer = new JBCheckBox("Defer unselected upstream resources to baseline state")
   private val favorState = new JBCheckBox("Favor baseline relations (dbt Core 1.4+)")
+  private val formatter = new JComboBox[String](Array("sqlfmt", "sqlfluff"))
+  private val formatterExecutable = new TextFieldWithBrowseButton
+  private val formatOnSave = new JBCheckBox("Format dbt SQL on save")
   private val limit = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1))
   private val colors = new JBCheckBox("Colored output")
   private val notifications = new JBCheckBox("Desktop notifications when dbt commands finish")
@@ -69,11 +72,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       .withDescription("Choose the directory containing profiles.yml."))
     stateDirectory.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
       .withTitle("Select baseline state directory").withDescription("Choose a separate directory containing manifest.json."))
+    formatterExecutable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle("Select SQL formatter executable"))
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     exposures.setToolTipText("Show dashboards, notebooks, and other downstream consumers defined as dbt exposures, with their dependency links in the lineage graph.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
       "Baseline state directory" -> stateDirectory, "" -> defer, "" -> favorState,
+      "SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> formatOnSave,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream depth" -> upstream,
       "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures)
     rows.zipWithIndex.foreach { case ((label, field), index) =>
@@ -108,6 +113,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     stateDirectory.setText(o.stateDirectory)
     defer.setSelected(o.defer)
     favorState.setSelected(o.favorState)
+    formatter.setSelectedItem(o.formatter)
+    formatterExecutable.setText(o.formatterExecutable)
+    formatOnSave.setSelected(o.formatOnSave)
     limit.setValue(Int.box(o.previewLimit.max(1).min(1000)))
     colors.setSelected(o.colors)
     notifications.setSelected(o.notifications)
@@ -124,6 +132,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     o.stateDirectory = stateDirectory.getText.trim
     o.defer = defer.isSelected
     o.favorState = favorState.isSelected
+    o.formatter = formatter.getSelectedItem.toString
+    o.formatterExecutable = formatterExecutable.getText.trim
+    o.formatOnSave = formatOnSave.isSelected
     o.previewLimit = limit.getValue.asInstanceOf[Number].intValue()
     o.colors = colors.isSelected
     o.notifications = notifications.isSelected
@@ -162,6 +173,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     projectRoot.dispose()
     profiles.dispose()
     stateDirectory.dispose()
+    formatterExecutable.dispose()
   }
 
   override def apply(): Unit = {
