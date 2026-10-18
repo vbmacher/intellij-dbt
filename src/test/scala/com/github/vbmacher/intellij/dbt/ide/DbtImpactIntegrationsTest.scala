@@ -13,6 +13,7 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
   private def root = workspace.roots.find(_.name == "analytics").get
   private def model(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
   override protected def tearDown(): Unit = try {
+    getProject.getService(classOf[DbtAgent]).stop()
     getProject.getService(classOf[DbtConsumersSettings]).loadState(new DbtConsumersState)
   } finally super.tearDown()
 
@@ -208,5 +209,94 @@ tasks:
     assertTrue(tasks(1).problems.exists(_.contains("unknown")))
   }
 
+  def testAgentContractProvidesExactIdentitiesLocationsAndSourceFirstDocsWithoutRunningDbt(): Unit = {
+    project()
+    val code = add("models/orders.sql", "select 1 as amount")
+    add("models/schema.yml", "models: [{name: orders, description: Source documentation, columns: [{name: amount, data_type: int}]}]\n")
+    val args = DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.orders")
+    val docs = DbtAgentProtocol.call(workspace, "get_documentation", args)
+    assertEquals("ok", docs.get("status").getAsString)
+    assertEquals("Source documentation", docs.get("description").getAsString)
+    val identity = docs.getAsJsonObject("resource")
+    assertEquals(code.getVirtualFile.getPath, identity.get("path").getAsString)
+    assertEquals("current source", identity.get("provenance").getAsString)
+    assertEquals(1, identity.get("line").getAsInt)
+    val schema = DbtAgentProtocol.schemas.asScala.map(_.getAsJsonObject.get("name").getAsString).toSet
+    assertTrue(schema("get_column_lineage")); assertFalse(schema.exists(_.contains("execute")))
+    assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
+  }
 
+  def testAgentColumnPathsFollowOwningRelationsAcrossMultipleModels(): Unit = {
+    project()
+    add("models/sources.yml", "sources: [{name: raw, tables: [{name: orders, columns: [{name: amount}]}]}]\nmodels: [{name: staging, columns: [{name: amount}]}, {name: report, columns: [{name: gross_amount}]}]\n")
+    add("models/staging.sql", "select amount from {{ source('raw', 'orders') }}")
+    add("models/report.sql", "select amount * 1.2 as gross_amount from {{ ref('staging') }}")
+    val args = DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.report", "column" -> "gross_amount", "direction" -> "upstream")
+    val result = DbtAgentProtocol.call(workspace, "get_column_lineage", args)
+    val paths = result.getAsJsonArray("paths").asScala.map(_.getAsJsonObject)
+    assertTrue(paths.nonEmpty)
+    val columns = paths.head.getAsJsonArray("columns").asScala.map(_.getAsJsonObject).toVector
+    assertEquals(Vector("model.analytics.report", "model.analytics.staging", "source.analytics.raw.orders"), columns.map(_.get("resource_id").getAsString))
+    assertEquals(Vector("gross_amount", "amount", "amount"), columns.map(_.get("column").getAsString))
+    assertFalse(result.get("paths_truncated").getAsBoolean)
+  }
+
+  def testAgentAmbiguityMissingAndUnsupportedAreExplicit(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("other/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
+    add("other/models/orders.sql", "select 2")
+    val ambiguous = DbtAgentProtocol.call(workspace, "list_resources", DbtAgentProtocol.obj("project" -> "analytics"))
+    assertEquals("ambiguous", ambiguous.get("status").getAsString)
+    val missing = DbtAgentProtocol.call(workspace, "get_documentation", DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.absent"))
+    assertEquals("missing", missing.get("status").getAsString)
+    val unsupported = DbtAgentProtocol.call(workspace, "execute_sql", new JsonObject)
+    assertEquals("unsupported", unsupported.get("status").getAsString)
+  }
+
+  def testStoppingAgentCancelsStalledAuthenticatedRequestBody(): Unit = {
+    project()
+    val service = getProject.getService(classOf[DbtAgent])
+    getProject.getService(classOf[DbtConsumersSettings]).getState.agentEnabled = true
+    val endpoint = service.start().toOption.get
+    val uri = URI.create(endpoint._1)
+    val socket = new java.net.Socket("127.0.0.1", uri.getPort)
+    socket.setSoTimeout(2000)
+    try {
+      val request = "POST /tools HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + endpoint._2 + "\r\nContent-Length: 1000\r\n\r\n{"
+      socket.getOutputStream.write(request.getBytes(java.nio.charset.StandardCharsets.UTF_8)); socket.getOutputStream.flush()
+      val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+      while (service.activeRequestCount == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+      assertEquals(1, service.activeRequestCount)
+      service.stop()
+      try assertEquals(-1, socket.getInputStream.read()) catch { case _: java.net.SocketException => () }
+      assertTrue(service.endpoint.isEmpty)
+    } finally { socket.close(); service.stop() }
+  }
+
+  def testAgentRequiresOptInAndTransportIsAuthenticatedScopedAndStops(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    val service = getProject.getService(classOf[DbtAgent])
+    assertTrue(service.start().isLeft)
+    getProject.getService(classOf[DbtConsumersSettings]).getState.agentEnabled = true
+    val endpoint = service.start().toOption.get
+    val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
+    def send(token: String, body: String = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""") = client.send(HttpRequest.newBuilder(URI.create(endpoint._1)).timeout(Duration.ofSeconds(5))
+      .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+    assertEquals(403, send("wrong").statusCode())
+    val response = send(endpoint._2)
+    assertEquals(200, response.statusCode()); assertTrue(response.body().contains("get_documentation"))
+    assertFalse(response.body().contains(endpoint._2))
+    val invalid = send(endpoint._2, """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"resolve_reference","arguments":{"project":"analytics","reference":"orders","offset":1.5}}}""")
+    assertEquals(-32602, JsonParser.parseString(invalid.body()).getAsJsonObject.getAsJsonObject("error").get("code").getAsInt)
+    val impact = send(endpoint._2, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"suggest_validation_selection","arguments":{"baseline":"nonexistent-fixture-revision"}}}""")
+    assertEquals("error", JsonParser.parseString(impact.body()).getAsJsonObject.getAsJsonObject("result").getAsJsonObject("structuredContent").get("status").getAsString)
+    val docs = send(endpoint._2, """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_documentation","arguments":{"project":"analytics","resource_id":"model.analytics.orders"}}}""")
+    assertEquals("ok", JsonParser.parseString(docs.body()).getAsJsonObject.getAsJsonObject("result").getAsJsonObject("structuredContent").get("status").getAsString)
+    service.stop(); assertTrue(service.endpoint.isEmpty)
+    val restarted = service.start().toOption.get
+    assertNotEquals(endpoint._2, restarted._2)
+    service.stop()
+  }
 }

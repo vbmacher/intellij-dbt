@@ -154,3 +154,20 @@ final class DbtAirflowAction extends AnAction {
   }
 }
 
+final class DbtAgentAction extends AnAction {
+  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
+    val service = project.getService(classOf[DbtAgent]); val panel = DbtImpactUi.panel()
+    val details = new JTextArea; details.setEditable(false); details.setLineWrap(true); details.setWrapStyleWord(true)
+    def refresh(): Unit = details.setText(service.endpoint.map { case (url, token) =>
+      "Read-only local tools are running for this IDE project.\nEndpoint: " + url + "\nAuthorization: Bearer " + token +
+        "\nSchema: 1.0 · JSON-RPC initialize, tools/list, tools/call.\nToken is temporary; stop/restart rotates it. Do not publish it."
+    }.getOrElse("Local tools are stopped. Enable local agent tools in Settings > dbt Integrations, then Start.\nNo AI subscription or warehouse connection is required.\nOnly read tools are exposed. See docs/integrations.md for protocol examples."))
+    refresh(); panel.add(new JScrollPane(details), BorderLayout.CENTER)
+    val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
+    buttons.add(DbtImpactUi.button("Configure…") { com.intellij.openapi.options.ShowSettingsUtil.getInstance().editConfigurable(project, new DbtConsumersConfigurable(project)); refresh() })
+    buttons.add(DbtImpactUi.button("Start") { service.start().left.foreach(error => Messages.showInfoMessage(project, error, "Local dbt tools")); refresh() })
+    buttons.add(DbtImpactUi.button("Stop") { service.stop(); refresh() })
+    buttons.add(DbtImpactUi.button("Copy endpoint and authorization") { service.endpoint.foreach { case (url, token) => DbtImpactUi.copy(url + "\nAuthorization: Bearer " + token) } })
+    panel.add(buttons, BorderLayout.SOUTH); DbtImpactUi.show(project, "dbt Local Agent Tools", panel)
+  }
+}

@@ -137,6 +137,9 @@
         <action id="Dbt.AirflowContext" class="com.github.vbmacher.intellij.dbt.ide.DbtAirflowAction" text="dbt Airflow Context">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="Dbt.AgentTools" class="com.github.vbmacher.intellij.dbt.ide.DbtAgentAction" text="dbt Local Agent Tools">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
