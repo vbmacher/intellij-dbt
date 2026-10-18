@@ -103,6 +103,14 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     add("models/report.sql", "with a as (select id, amount * 2 as gross from {{ ref('orders') }}) select id as key, gross from a")
     assertEquals(Vector("key"), DbtColumnLineage.inherited(w, model("report")).map(_._1))
   }
+  def testCtePreviewUsesOnlyDependenciesAndKeepsJinja(): Unit = {
+    project()
+    val file = configure("models/report.sql", "with a as (select * from {{ ref('orders') }}), unused as (select 9), b as (select * from a) select * from b<caret>")
+    val analysis = DbtSqlAnalysis.get(w, file).get
+    val sql = DbtCteInspection.sql(file.getText, analysis, analysis.ctes.find(_.name == "b").get).toOption.get
+    assertTrue(sql.contains("ref('orders')")); assertFalse(sql.contains("unused")); assertTrue(sql.endsWith("select * from b"))
+    assertTrue(DbtCteInspection.sql(file.getText, analysis, analysis.ctes.find(_.name == "b").get, count = true).toOption.get.contains("count(*) as full_row_count"))
+  }
   def testGridPreservesTypesNullsUnicodeAndCsvQuoting(): Unit = {
     val result = DbtQueryResult.parse("{\"show\":[{\"id\":2,\"text\":\"a,b\\nž\",\"flag\":true,\"empty\":null},{\"id\":10}]}", "dev", 20, 23, "select *").toOption.get
     assertEquals(new java.math.BigDecimal("2"), result.value(0, 0))
@@ -225,5 +233,17 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertFalse(source.isValid)
     assertFalse(yaml.getText.contains("name: orders")); assertTrue(yaml.getText.contains("name: kept"))
   }
-
+  def testInlinePreviewAcceptsOnlyOneParsedSelectQuery(): Unit = {
+    assertTrue(com.github.vbmacher.intellij.dbt.navigation.DbtNavigation.projectedColumns("select * from orders").nonEmpty)
+    Vector("delete from orders", "drop table orders", "select 1; drop table orders", "update orders set id = 1",
+      "select * into copied from orders", "with deleted as (delete from orders returning *) select * from deleted", "select 'unterminated")
+      .foreach(sql => assertTrue(sql, com.github.vbmacher.intellij.dbt.navigation.DbtNavigation.projectedColumns(sql).isEmpty))
+  }
+  def testInlinePackagePreviewRefusesToLoseOriginalMacroAndRefContext(): Unit = {
+    project()
+    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\n")
+    add("dbt_packages/pkg/models/orders.sql", "select 1 as id")
+    val resource = w.symbols.find(s => s.isCode && s.namespace == "pkg" && s.name == "orders").get
+    assertTrue(DbtCteInspection.command(w, resource, "select 1").left.toOption.get.contains("installed-package context"))
+  }
 }
