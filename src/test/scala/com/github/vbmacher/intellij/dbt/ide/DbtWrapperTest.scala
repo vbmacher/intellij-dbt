@@ -25,11 +25,13 @@ final class DbtWrapperTest extends DbtCodeInsightTestCase {
     val root = setupWrapper()
     val file = root.psiFile("models/orders.sql").get
     DbtCommand.Actions.foreach { action =>
-      val command = DbtCommand.create(workspace, DbtRunSelection.available(workspace).find(_.path == file.getVirtualFile.getPath).get, action, fullRefresh = false).toOption.get
-      val subcommand = if (action == "Generate Docs") "docs" else if (action == "Preview") "show" else action.toLowerCase
+      val selectedPath = if (action == "Source Freshness") root.directory.getPath else file.getVirtualFile.getPath
+      val command = DbtCommand.create(workspace, DbtRunSelection.available(workspace).find(_.path == selectedPath).get, action, fullRefresh = false).toOption.get
+      val subcommand = if (action == "Generate Docs") "docs" else if (action == "Preview") "show" else if (action == "Source Freshness") "source" else action.toLowerCase
       assertEquals(Vector(root.executionDirectory.resolve("scripts/dbt-wrapper").toString, "analytics", subcommand), command.arguments.take(3))
       assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "dev")))
       if (action == "Generate Docs") assertEquals("generate", command.arguments(3))
+      else if (action == "Source Freshness") { assertEquals("freshness", command.arguments(3)); assertFalse(command.arguments.contains("--select")) }
       else assertTrue(command.arguments.sliding(2).exists(_ == Vector("--select", "fqn:analytics.orders")))
       assertEquals(root.directory.getPath, command.directory)
     }

@@ -158,6 +158,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "Test" => AllIcons.RunConfigurations.TestState.Run -> "Run tests for the selected model or directory"
       case "Preview" => AllIcons.Actions.Preview -> "Preview a single selected model"
       case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation for the selected execution project and target"
+      case "Source Freshness" => AllIcons.Actions.Refresh -> "Check freshness of all sources in the selected dbt project"
     }
     val button = new JButton(name, icon)
     button.setToolTipText(tooltip)

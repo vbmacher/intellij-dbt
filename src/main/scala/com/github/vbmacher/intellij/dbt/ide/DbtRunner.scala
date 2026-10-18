@@ -79,6 +79,7 @@ private[ide] object DbtCommand {
         if (!Actions.contains(action)) Left("Unknown dbt command.")
         else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
           Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
+        else if (action == "Source Freshness" && !all) Left("Choose the whole dbt project in the Runner to check source freshness.")
         else if (action == "Preview" && selection.directory) Left("Choose a single model to preview.")
         else if (action != "Generate Docs" && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {

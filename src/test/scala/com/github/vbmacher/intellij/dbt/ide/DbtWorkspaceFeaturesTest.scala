@@ -144,7 +144,8 @@ sources:
     val model = resource("orders")
     assertEquals(Some("2"), model.version)
     val selected = DbtRunSelection.available(w).find(_.path == model.file.getVirtualFile.getPath).get
-    DbtCommand.Actions.foreach { action =>
+    assertTrue(DbtCommand.create(w, selected, "Source Freshness", fullRefresh = false).isLeft)
+    DbtCommand.Actions.filterNot(_ == "Source Freshness").foreach { action =>
       val command = DbtCommand.create(w, selected, action, fullRefresh = true).toOption.get
       assertEquals(root.directory.getPath, command.directory)
       assertTrue(command.environment("DBT_PROFILES_DIR").endsWith(root.directory.getPath))
