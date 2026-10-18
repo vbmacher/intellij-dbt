@@ -78,6 +78,7 @@
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
         <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
         <refactoring.safeDeleteProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtSafeDelete"/>
+        <localInspection language="" shortName="DbtStaticAnalysis" displayName="dbt SQL, macro arguments and contracts" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtStaticInspection"/>
         <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>

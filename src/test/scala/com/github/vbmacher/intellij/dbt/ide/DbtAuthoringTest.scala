@@ -94,6 +94,15 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     add(".dbt-navigation.yml", "dbt-version: '1.7'\n")
     assertEquals(Vector("dbt properties (queries)"), providers.filter(_.isAvailable(properties.getVirtualFile)).map(_.getName).toVector)
   }
+  def testNativeStaticInspectionUsesExactMacroAndColumnRanges(): Unit = {
+    schema()
+    add("macros/money.sql", "{% macro money(amount, scale=2) %}{{ amount }}{% endmacro %}")
+    val file = configure("models/report.sql", "select o.missing<caret> from {{ ref('orders') }} o where {{ money(1, unknown_argument=2) }} = 1")
+    myFixture.enableInspections(new DbtStaticInspection)
+    val problems = myFixture.doHighlighting().asScala.filter(h => Option(h.getDescription).exists(d => d.startsWith("Unknown column") || d.startsWith("Unknown macro")))
+    assertEquals(Set("missing", "unknown_argument"), problems.map(h => file.getText.substring(h.getStartOffset, h.getEndOffset)).toSet)
+    assertTrue(problems.forall(_.getSeverity == com.intellij.lang.annotation.HighlightSeverity.WARNING))
+  }
   def testJoinAndFilterDependenciesAreSeparateFromValueDerivation(): Unit = {
     schema()
     val file = configure("models/report.sql", "select a.id from {{ ref('orders') }} a join {{ ref('orders') }} b on a.id = b.id where b.amount > 0<caret>")
@@ -112,6 +121,19 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     val analysis = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), file).get
     assertTrue(analysis.problems.exists(_.message.contains("amount")))
     assertFalse(analysis.columns.head.complete)
+  }
+  def testAggregatesWindowsAndContractNamesUseAuthoredOutputRanges(): Unit = {
+    schema()
+    val file = configure("models/report.sql", "select sum(o.amount) as total, row_number() over (partition by o.id order by o.amount) as position from {{ ref('orders') }} o<caret>")
+    add("models/report.yml", "models: [{name: report, config: {contract: {enforced: true}}, columns: [{name: total, data_type: decimal}]}]")
+    val analysis = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), file).get
+    assertEquals(Vector("total", "position"), analysis.columns.map(_.name))
+    assertEquals(Vector("amount"), analysis.columns.head.inputs.map(_.name))
+    assertEquals(Set("id", "amount"), analysis.columns(1).inputs.map(_.name).toSet)
+    assertTrue(analysis.columns.forall(c => c.complete && !c.direct))
+    myFixture.enableInspections(new DbtStaticInspection)
+    val problem = myFixture.doHighlighting().asScala.find(h => Option(h.getDescription).exists(_.contains("has no column declaration"))).get
+    assertEquals("position", file.getText.substring(problem.getStartOffset, problem.getEndOffset))
   }
   def testDynamicProjectionNamesDoNotAppearAsInventedSqlColumns(): Unit = {
     schema()
