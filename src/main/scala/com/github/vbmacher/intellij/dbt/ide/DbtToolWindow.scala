@@ -515,7 +515,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           }
         }).expireWith(this).inSmartMode(project).coalesceBy(docWork).finishOnUiThread(ModalityState.any(), (result: Option[(JsonObject, DbtSymbolElement)]) =>
           if (!disposed && request == docGeneration.get()) result.foreach { case (doc, targetElement) =>
-            browser.foreach(_.showDoc(id, doc))
+            if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), targetElement.symbol)
+            else if (kind == "column") {
+              browser.foreach(_.showColumn(id, doc))
+            } else browser.foreach(_.showDoc(id, doc))
             if (kind == "focus") {
               focus = Some(id)
               upstreamExtra = 0

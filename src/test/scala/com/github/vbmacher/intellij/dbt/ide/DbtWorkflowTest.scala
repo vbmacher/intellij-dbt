@@ -66,6 +66,21 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertEquals("select customer_key from {{ ref('orders') }}", report.getText)
     assertTrue(yaml.getText.contains("events, columns: [{name: customer_id}]"))
   }
+  def testPropertiesEditPreservesCommentsAndCustomFields(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id, 2 as amount")
+    val properties = add("models/schema.yml", "# preserve this\nmodels:\n  - name: orders\n    meta: {owner: Finance}\n    description: \"{{ doc('orders') }}\"\n    columns:\n      - name: id\n        tests: [unique]\n")
+    var editPlan: Either[String, DbtPropertyEdit] = Left("not calculated")
+    WriteAction.run(() => editPlan = DbtPropertiesEditor.plan(w, model("orders"), "{{ doc('orders') }}", Vector(
+      DbtColumnData("id", "int", "Identifier"), DbtColumnData("amount", "decimal", "Amount")), Vector.empty, Vector.empty))
+    val plan = editPlan.toOption.get
+    assertTrue(plan.after, plan.after.contains("# preserve this")); assertTrue(plan.after, plan.after.contains("owner: Finance"))
+    assertTrue(plan.after, plan.after.contains("tests: [unique]")); assertTrue(plan.after, plan.after.contains("doc('orders')"))
+    assertEquals(plan.before, properties.getText)
+    plan.apply(getProject)
+    assertEquals(Set("id", "amount"), w.columns(model("orders")).map(_.name).toSet)
+    assertEquals("Amount", DbtResourceData.get(w, model("orders")).columns.find(_.name == "amount").get.description)
+  }
   def testSelectionCommandsUseExactIdentitiesAndNeverOverwriteBaseline(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id")
@@ -127,6 +142,32 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertTrue(source.getText, source.getText.contains("macro other()"))
     assertTrue(yaml.getText, yaml.getText.contains("name: currency"))
     assertTrue(report.getText, report.getText.contains("currency(1)"))
+  }
+  def testPropertiesPreserveInlineCommentsAnchoredTypesAndInheritedVersionColumns(): Unit = {
+    project()
+    add("models/orders_v1.sql", "select 1 as id")
+    add("models/orders_v2.sql", "select 2 as id")
+    val source = add("models/schema.yml", "models:\n  - name: orders\n    description: Old description # preserve inline\n    columns:\n      - name: id\n        data_type: &identifier_type int\n        description: Identifier\n        tests: [unique]\n        meta: {owner: Finance}\n    versions: [{v: 1}, {v: 2}]\n")
+    val resource = w.symbols.find(s => s.isCode && s.name == "orders" && s.version.contains("2")).get
+    val columns = DbtResourceData.get(w, resource).columns
+    var planned: Either[String, DbtPropertyEdit] = Left("not planned")
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, resource, "Version two", columns, Vector.empty, Vector.empty))
+    val after = planned.toOption.get.after
+    assertEquals(1, "columns:".r.findAllIn(after).size)
+    assertTrue(after, after.contains("&identifier_type int")); assertTrue(after, after.contains("tests: [unique]"))
+    assertTrue(after, after.contains("# preserve inline")); assertTrue(after, after.contains("owner: Finance"))
+    assertEquals("Source must remain unchanged before Apply", source.getText, planned.toOption.get.before)
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, resource, "Version two", columns.map(_.copy(description = "Changed")), Vector.empty, Vector.empty))
+    assertTrue(planned.isLeft)
+  }
+  def testNewSeedPropertiesUseTheSeedSection(): Unit = {
+    project()
+    add("seeds/countries.csv", "code,name\nSK,Slovakia\n")
+    val seed = w.symbols.find(s => s.isCode && s.kind == "seed").get
+    var planned: Either[String, DbtPropertyEdit] = Left("not planned")
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, seed, "Countries", Vector.empty, Vector.empty, Vector.empty))
+    assertTrue(planned.toOption.get.after, planned.toOption.get.after.contains("seeds:"))
+    assertFalse(planned.toOption.get.after.contains("models:"))
   }
   def testUnsafePhysicalColumnsAndExplicitCteColumnListsHaveNativeConflicts(): Unit = {
     project()
