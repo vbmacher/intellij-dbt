@@ -97,3 +97,114 @@ test('mouse wheel zoom responds promptly in both directions and keeps the cursor
 test('boundary click expands without refocusing; double click focuses',async()=>{await page.locator('#fit').click();const p=await nodePosition('boundary:upstream');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.ok(await page.evaluate(()=>events.some(e=>e.type==='expand'&&e.id==='upstream')));const n=await nodePosition('report');await page.mouse.dblclick(n.x,n.y,{delay:80});await page.waitForTimeout(230);assert.ok(await page.evaluate(()=>events.some(e=>e.type==='focus'&&e.id==='report')))});
 test('drag moves a card without navigation and background clears dimming',async()=>{const p=await nodePosition('model');const before=await page.evaluate(()=>events.filter(e=>e.type==='focus').length);await page.mouse.move(p.x,p.y);await page.mouse.down();await page.mouse.move(p.x+45,p.y+70,{steps:8});await page.mouse.up();await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),before);await page.mouse.click(10,800);assert.equal(await page.locator('.card.dim').count(),0)});
 test('every direction and edge style renders without script errors',async()=>{for(const direction of ['LR','TB','RL','BT'])for(const edgeStyle of ['bezier','taxi','round-taxi','segments','straight','unbundled-bezier','haystack'])await page.evaluate(p=>dbtUpdate(p),{...fixture,direction,edgeStyle});assert.deepEqual(errors,[])});
+test('schema, folder and tag grouping collapse without changing canonical resource identities',async()=>{
+ const grouped={...fixture,nodes:fixture.nodes.map((n,i)=>({...n,folder:i<2?'models/staging':'models/marts',tags:i<2?['zebra','finance']:[]}))};
+ await page.evaluate(p=>dbtUpdate(p),grouped);
+ await page.locator('#group-by').selectOption('schema');
+ assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),3);
+ assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:schema:mart');
+ await page.evaluate(()=>select('model',false));
+ await page.getByRole('button',{name:'▾ mart (1)',exact:true}).click();
+ assert.equal(await page.evaluate(()=>cy.getElementById('model').length),0);
+ assert.equal(await page.locator('.card.collapsed').count(),1);
+ assert.match(await page.locator('#doc-name').innerText(),/Selection no longer visible/);
+ assert.ok(await page.evaluate(()=>cy.edges().some(e=>e.target().id()==='group:schema:mart')));
+ await page.getByRole('button',{name:'▸ mart (1)',exact:true}).focus();await page.keyboard.press('Enter');
+ assert.equal(await page.evaluate(()=>cy.getElementById('model').length),1);
+ await page.locator('#group-by').selectOption('folder');
+ assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:folder:models%2Fstaging');
+ await page.locator('#group-by').selectOption('tag');
+ assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:tag:finance');
+ assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.id()==='model').length),1);
+ await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);
+});
+test('selector filtering reuses backend resolution, marks adjacent boundaries and rejects stale results',async()=>{
+ await page.locator('#selector').fill('tag:finance+');await page.locator('#exclude').fill('tag:deprecated');
+ await page.getByRole('button',{name:'Apply filter',exact:true}).click();
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='filter'&&e.id==='tag:finance+'&&e.value==='tag:deprecated')));
+ await page.evaluate(()=>dbtShowFilter({expression:'old',exclude:'',ids:[]}));
+ assert.equal(await page.locator('.card:not(.boundary)').count(),4);
+ await page.evaluate(()=>dbtShowFilter({expression:'tag:finance+',exclude:'tag:deprecated',ids:['model'],diagnostics:[]}));
+ assert.equal(await page.locator('.card:not(.boundary)').count(),3);
+ assert.equal(await page.locator('.card.filtered-boundary').count(),2);
+ assert.match(await page.locator('#filter-status').innerText(),/1 matches · 2 boundary · 1 hidden/);
+ assert.equal(await page.evaluate(()=>cy.getElementById('other').length),0);
+ await page.getByRole('button',{name:'Clear filter',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),4);
+});
+test('pin focus sends the current identity and survives backend refresh',async()=>{
+ await page.locator('#pin-focus').click();assert.equal(await page.locator('#pin-focus').getAttribute('aria-pressed'),'true');
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='pin'&&e.id==='model'&&e.value==='true')));
+ await page.evaluate(p=>dbtUpdate({...p,pinned:true}),fixture);assert.equal(await page.locator('#pin-focus').innerText(),'Unpin focus');
+ await page.locator('#pin-focus').click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='pin'&&e.value==='false')));
+});
+test('minimap click, keyboard and toggle navigate the existing viewport',async()=>{
+ await page.waitForFunction(()=>document.querySelectorAll('#minimap rect').length>1);
+ const before=await page.evaluate(()=>cy.pan()),box=await page.locator('#minimap').boundingBox();
+ await page.mouse.click(box.x+20,box.y+20);assert.notDeepEqual(await page.evaluate(()=>cy.pan()),before);
+ await page.locator('#minimap').focus();const pan=await page.evaluate(()=>cy.pan());await page.keyboard.press('ArrowRight');assert.equal((await page.evaluate(()=>cy.pan())).x,pan.x-60);
+ await page.locator('#show-minimap').uncheck();assert.equal(await page.locator('#minimap').isVisible(),false);
+ await page.locator('#show-minimap').check();assert.equal(await page.locator('#minimap').isVisible(),true);await page.locator('#fit').click();
+});
+test('SVG, PNG and clipboard exports include local visible labels, Unicode, theme and optional legend',async()=>{
+ await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>n.id==='model'?{...n,name:'objednávky 日本語 & <orders>'}:n)}),fixture);
+ await page.locator('#selector').fill('orders');await page.evaluate(()=>dbtShowFilter({expression:'orders',exclude:'',ids:['model'],diagnostics:[]}));
+ await page.locator('#export-svg').click();
+ const svg=await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1]));
+ const decoded=Buffer.from(svg,'binary').toString('utf8');
+ assert.match(decoded,/objednávky 日本語 &amp; &lt;orders&gt;/);assert.doesNotMatch(decoded,/unrelated/);assert.match(decoded,/downstream dependency/);
+ assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
+ await page.locator('#export-legend').uncheck();await page.locator('#export-svg').click();
+ assert.doesNotMatch(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/downstream dependency/);
+ await page.locator('#export-png').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='png'));
+ const png=await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='png').at(-1).value);assert.ok(png.startsWith('data:image/png;base64,iVBOR'));
+ await page.locator('#copy-image').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok(await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='clipboard').at(-1).value.startsWith('data:image/png;base64,')));
+ await page.locator('#export-legend').check();await page.locator('#clear-filter').click();await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+});
+test('grouping preserves package and version collisions on representative large graphs',async()=>{
+ const nodes=Array.from({length:180},(_,i)=>({id:'model:package'+(i%3)+':orders:v'+i,name:'orders',package:'package'+(i%3),kind:'model',schema:'schema'+(i%6),tags:['shared'],folder:'models/'+(i%10)}));
+ const edges=nodes.slice(1).map((n,i)=>({source:nodes[i].id,target:n.id}));
+ await page.evaluate(p=>dbtUpdate(p),{...fixture,focus:nodes[0].id,nodes,edges,boundary:[]});
+ await page.locator('#group-by').selectOption('schema');assert.equal(await page.locator('.card:not(.boundary)').count(),180);
+ assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),6);
+ await page.locator('#group-by').selectOption('tag');assert.equal(await page.locator('.card:not(.boundary)').count(),180);
+ await page.getByRole('button',{name:'▾ shared (180)',exact:true}).click();assert.equal(await page.locator('.card.collapsed').count(),1);
+ await page.getByRole('button',{name:'▸ shared (180)',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),180);
+ await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+});
+test('execution badges expose provenance and route failed tests without relying on colors',async()=>{
+ const execution={status:'failed',label:'Build failed',failingTests:2,details:'target: dev; invocation: run-1; run_results.json'};
+ await page.evaluate(({fixture,execution})=>dbtUpdate({...fixture,nodes:fixture.nodes.map(n=>({...n,execution:n.id==='model'?execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'No compatible result artifact'}}))}),{fixture,execution});
+ const badge=page.getByRole('button',{name:/orders: Build failed/});assert.equal(await badge.count(),1);assert.match(await badge.getAttribute('aria-label'),/run_results.json/);
+ await badge.click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
+ await page.evaluate(d=>dbtShowDoc('model',d),doc);assert.match(await page.locator('#doc-content').innerText(),/test declarations/);
+ assert.match(await page.locator('#execution-legend').innerText(),/unknown/);
+ await page.locator('#export-svg').click();assert.match(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/Build failed/);
+ await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))}),fixture);
+ assert.equal(await page.getByRole('button',{name:/Build failed/}).count(),0);
+ assert.equal(await page.locator('.execution-badge[data-status=unknown]').count(),4);
+ await page.evaluate(p=>dbtUpdate(p),fixture);
+});
+test('exports support every bundled edge style without invalid geometry',async()=>{
+ for(const edgeStyle of ['bezier','taxi','round-taxi','segments','straight','unbundled-bezier','haystack']){
+  await page.evaluate(p=>dbtUpdate(p),{...fixture,edgeStyle});
+  const svg=await page.evaluate(()=>graphSvg());assert.doesNotMatch(svg,/NaN|undefined/);
+ }
+ assert.deepEqual(errors,[]);
+});
+test('column trace, declaration and provenance origins preserve owning identity and authored evidence',async()=>{
+ await page.evaluate(({doc})=>{select('model',false);dbtShowDoc('model',{...doc,columns:[{...doc.columns[0],origins:[
+  {resource:'model.package_a.orders.v2',column:'customer_id',direct:true,kind:'value',complete:true,expression:'o.customer_id',path:'/a/orders.sql',offset:12},
+  {resource:'source.package_b.crm.customers',column:'id',direct:false,kind:'join',complete:false,expression:'o.customer_id = c.id',path:'/b/sources.yml',offset:34}
+ ]}]})},{doc});
+ await page.getByRole('button',{name:'Columns',exact:true}).click();
+ await page.getByRole('button',{name:'id',exact:true}).click();
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='column'&&e.id==='model'&&e.value==='id')));
+ await page.getByRole('button',{name:'Open declaration',exact:true}).click();
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='declaration'&&e.id==='model'&&e.value==='id')));
+ const origins=page.getByRole('button',{name:/Open origin /});assert.equal(await origins.count(),2);
+ assert.match(await origins.nth(0).innerText(),/package_a.orders.v2.customer_id.*direct passthrough/);
+ assert.match(await origins.nth(1).innerText(),/join.*derived.*partial analysis.*o.customer_id = c.id/);
+ await origins.nth(1).click();
+ assert.deepEqual(await page.evaluate(()=>JSON.parse(events.filter(e=>e.type==='origin').at(-1).value)),{column:'id',index:1});
+ assert.deepEqual(errors,[]);
+});

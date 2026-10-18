@@ -87,7 +87,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val docGeneration = new AtomicLong
   private val graphWork = new Object
   private val docWork = new Object
-  private var focus = Option.empty[String]
+  private var focus = Option(settings.getState.pinnedFocus).filter(_.nonEmpty)
   private var upstreamExtra = 0
   private var downstreamExtra = 0
   private var context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
@@ -359,7 +359,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val selection = if (selectedPath.isEmpty) DbtRunSelection.all(w, selectedRoot) else choices.find(_.path == selectedPath)
         val owner = selection.flatMap(DbtRunSelection.owner(w, _)).map(w.executionRoot)
         val models = selection.toVector.flatMap(DbtRunSelection.selectedModels(w, _))
-        val nextFocus = if (follow || oldFocus.isEmpty) editorModel.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
+        val nextFocus = if (follow && state.pinnedFocus.isEmpty || oldFocus.isEmpty) editorModel.map(DbtGraphData.key(w, _)).orElse(oldFocus) else oldFocus
         val graph = DbtGraphData.build(w, nextFocus, if (nextFocus != oldFocus) state.upstream else up,
           if (nextFocus != oldFocus) state.downstream else down, state.exposures)
         val data = models.headOption.map(DbtResourceData.get(w, _))
@@ -425,6 +425,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         payload.addProperty("docsVisible", settings.getState.docsVisible)
         payload.addProperty("docsWidth", settings.getState.docsWidth)
         payload.addProperty("running", runner.isRunning)
+        payload.addProperty("pinned", settings.getState.pinnedFocus.nonEmpty)
         payload.addProperty("canGenerateDocs", context.root.nonEmpty)
         val focusedNode = payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject)
           .find(n => Option(n.get("focus")).exists(_.getAsBoolean))
@@ -561,6 +562,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
             } else browser.foreach(_.showDoc(id, doc))
             if (kind == "focus") {
               focus = Some(id)
+              if (settings.getState.pinnedFocus.nonEmpty) settings.getState.pinnedFocus = id
               upstreamExtra = 0
               downstreamExtra = 0
               targetElement.navigate(true)
@@ -570,6 +572,39 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         ).submit(AppExecutorUtil.getAppExecutorService)
       case "expand" => if (id == "upstream") upstreamExtra += 5 else downstreamExtra += 5; refresh(follow = false)
       case "regenerate" => start("Generate Docs")
+      case "pin" =>
+        settings.getState.pinnedFocus = if (field("value") == "true") focus.getOrElse(id) else ""
+        refresh(follow = false)
+      case "filter" =>
+        val expression = id.take(4000); val exclude = field("value").take(4000)
+        val rootPath = context.root
+        ReadAction.nonBlocking(new Callable[JsonObject] {
+          override def call(): JsonObject = {
+            val w = DbtWorkspace.get(project)
+            val payload = new JsonObject
+            payload.addProperty("expression", expression); payload.addProperty("exclude", exclude)
+            val root = w.roots.find(r => rootPath.contains(r.directory.getPath)).orElse(
+              if (w.roots.map(w.executionRoot).distinct.size == 1) w.roots.map(w.executionRoot).headOption else None)
+            val result = root.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, _, expression, exclude))
+            val selected = result.toVector.flatMap(_.resources).map(s => DbtGraphData.key(w, s)).toSet
+            val targets = DbtGraphData.build(w, None, 1, 1, exposures = true).targets
+            val ids = targets.collect { case (key, e) if selected(DbtGraphData.key(w, e.symbol)) => key }.toVector
+            payload.add("ids", new Gson().toJsonTree(ids.asJava))
+            payload.add("diagnostics", new Gson().toJsonTree(result.map(_.problems).getOrElse(Vector("Choose an owning dbt project in the Runner.")).asJava))
+            payload
+          }
+        }).expireWith(this).coalesceBy(this, "selector-filter").finishOnUiThread(ModalityState.any(), (payload: JsonObject) =>
+          browser.foreach(_.showFilter(payload))).submit(AppExecutorUtil.getAppExecutorService)
+      case "export" => DbtGraphExport.show(project, id, field("value"))
+      case "execution" =>
+        val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
+        if (window != null) {
+          Option(window.getContentManager.findContent("Tests")).foreach { content =>
+            window.getContentManager.setSelectedContent(content)
+            content.getComponent match { case tests: DbtTestPanel => tests.showResource(id); case _ => () }
+          }
+          window.show()
+        }
       case "docs" => settings.getState.docsVisible = field("value") == "true"
       case "width" => field("value").toIntOption.foreach(n => settings.getState.docsWidth = n.max(220).min(1200))
       case _ => ()
@@ -631,6 +666,8 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
   }
 
   def showDoc(id: String, data: JsonObject): Unit = browser.runJavaScript("window.dbtShowDoc&&window.dbtShowDoc(" + new Gson().toJson(id) + "," + decode(data.toString) + ")")
+  def showColumn(id: String, data: JsonObject): Unit = browser.runJavaScript("window.dbtShowColumn&&window.dbtShowColumn(" + new Gson().toJson(id) + "," + decode(data.toString) + ")")
+  def showFilter(data: JsonObject): Unit = browser.runJavaScript("window.dbtShowFilter&&window.dbtShowFilter(" + decode(data.toString) + ")")
 
   def runnerState(running: Boolean, message: String): Unit = browser.runJavaScript("window.dbtRunnerState&&window.dbtRunnerState(" + running + "," + new Gson().toJson(message) + ")")
 }

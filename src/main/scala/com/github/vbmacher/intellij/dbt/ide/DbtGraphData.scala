@@ -56,6 +56,8 @@ private[ide] object DbtGraphData {
       node.addProperty("kind", s.kind); node.addProperty("schema", data.attributes.getOrElse("schema", ""))
       node.addProperty("package", s.namespace); node.addProperty("materialized", data.attributes.getOrElse("materialized", ""))
       node.addProperty("description", data.description); node.addProperty("focus", start.contains(id(s)))
+      node.addProperty("folder", w.owner(s).flatMap(_.relative(s.file.getVirtualFile)).getOrElse("").split('/').dropRight(1).mkString("/"))
+      node.add("tags", gson.toJsonTree(data.tags.asJava))
       node.addProperty("manifest", data.attributes.contains("artifact-project"))
       node.addProperty("candidate", groups(key(w, s)).size > 1)
       val runs = w.owner(s).map(w.executionRoot).flatMap(r => executionRuns.get(r.directory.getPath)).getOrElse(Vector.empty)

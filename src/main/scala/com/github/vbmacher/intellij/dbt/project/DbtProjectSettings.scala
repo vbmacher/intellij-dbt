@@ -63,6 +63,7 @@ final class DbtSettingsState {
   @BeanProperty var exposures: Boolean = true
   @BeanProperty var docsVisible: Boolean = true
   @BeanProperty var docsWidth: Int = 360
+  @BeanProperty var pinnedFocus: String = ""
 
   def upstream: Int = DbtSettingsState.depth(upstreamDepth)
   def downstream: Int = DbtSettingsState.depth(downstreamDepth)
