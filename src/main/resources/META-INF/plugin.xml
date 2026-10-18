@@ -134,6 +134,9 @@
         <action id="Dbt.Consumers" class="com.github.vbmacher.intellij.dbt.ide.DbtConsumersAction" text="dbt Downstream Consumers">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="Dbt.AirflowContext" class="com.github.vbmacher.intellij.dbt.ide.DbtAirflowAction" text="dbt Airflow Context">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>

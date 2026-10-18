@@ -133,3 +133,24 @@ final class DbtConsumersAction extends AnAction {
   }
 }
 
+final class DbtAirflowAction extends AnAction {
+  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
+    DbtImpactUi.background(project, "Resolve declarative dbt Airflow context") { DbtImpactUi.read { DbtAirflow.tasks(DbtWorkspace.get(project)) } } { tasks =>
+      val panel = DbtImpactUi.panel()
+      panel.add(new JLabel(if (tasks.isEmpty) "No mappings. Add .dbt-airflow.yml in a dbt project; see integrations documentation." else "Explicit mappings only; DAG Python is never evaluated."), BorderLayout.NORTH)
+      val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
+        " · " + t.resources.map(_.uniqueId).mkString(", ") + " · " + t.problems.mkString("; ") + " · evidence: " + t.evidence + ":" + t.offset +
+        (if (t.ingestion.nonEmpty) " · upstream ingestion: " + t.ingestion.mkString(", ") else "")).toArray)
+      panel.add(new JScrollPane(list), BorderLayout.CENTER)
+      val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
+      def selected: Option[DbtAirflowTask] = Option(list.getSelectedIndex).filter(i => i >= 0 && i < tasks.size).map(tasks)
+      buttons.add(DbtImpactUi.button("Open mapping definition") { selected.foreach(t => DbtImpactUi.open(project, t.evidence, t.offset)) })
+      buttons.add(DbtImpactUi.button("Open Airflow task") { selected match {
+        case Some(t) if t.url.nonEmpty => t.url.foreach(BrowserUtil.browse)
+        case _ => Messages.showInfoMessage(project, "Set airflow_url in .dbt-airflow.yml and choose a task.", "Airflow context")
+      } })
+      panel.add(buttons, BorderLayout.SOUTH); DbtImpactUi.show(project, "dbt Airflow Context", panel)
+    }
+  }
+}
+

@@ -177,5 +177,36 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
     assertEquals(1, result.size); assertTrue(result.head.confidence.startsWith("inferred"))
   }
 
+  def testAirflowLiteralNamedGraphExcludeAndDynamicMappings(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("models/report.sql", "select * from {{ ref('orders') }}")
+    add("selectors.yml", "selectors: [{name: reports, definition: report}]\n")
+    val definition = add(".dbt-airflow.yml", """airflow_url: https://airflow.test
+tasks:
+- {dag: daily_finance, task: build_all, project: analytics, select: 'orders+', exclude: report, upstream_ingestion: [orders_loaded]}
+- {dag: daily_finance, task: named, project: analytics, selector: reports}
+- {dag: dynamic, task: build, project: analytics, select: '{{ runtime_selector }}'}
+""")
+    add("dags/evil.py", "raise RuntimeError('must never execute')")
+    val tasks = DbtAirflow.tasks(workspace)
+    assertEquals(3, tasks.size)
+    assertEquals(Vector("orders"), tasks.head.resources.map(_.name))
+    assertEquals(Vector("report"), tasks(1).resources.map(_.name))
+    assertTrue(tasks(2).resources.isEmpty); assertTrue(tasks(2).problems.exists(_.contains("Dynamic")))
+    assertEquals(Vector("orders_loaded"), tasks.head.ingestion)
+    assertEquals(definition.getVirtualFile.getPath, tasks.head.evidence)
+    assertEquals(Some("https://airflow.test/dags/daily_finance/grid?task_id=build_all"), tasks.head.url)
+  }
+
+  def testAirflowMissingProjectAndMissingSelectionStayExplicit(): Unit = {
+    project()
+    add(".dbt-airflow.yml", "tasks: [{dag: daily, task: missing_project, project: absent, select: '*'}, {dag: daily, task: no_selection, project: analytics}]\n")
+    val tasks = DbtAirflow.tasks(workspace)
+    assertTrue(tasks.forall(_.resources.isEmpty))
+    assertTrue(tasks.head.problems.exists(_.contains("Project")))
+    assertTrue(tasks(1).problems.exists(_.contains("unknown")))
+  }
+
 
 }
