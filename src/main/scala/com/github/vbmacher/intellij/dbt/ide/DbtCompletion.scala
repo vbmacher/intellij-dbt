@@ -85,6 +85,14 @@ private[ide] object DbtCompletion {
           s.attributes.get("tags").toVector.flatMap(_.split(",")).map(tag => DbtSuggestion("tag:" + tag, "selector", "selector")) ++
           (if (s.kind == "selector") Vector(DbtSuggestion("selector:" + s.name, "named selector", "selector")) else Vector.empty)
       } ++ resources(DbtSymbol.RefKinds).map(s => DbtSuggestion(s.name, "resource selector", s.kind))).distinctBy(_.text)
+    } else if (file.getVirtualFile.getExtension == "sql") {
+      val prefix = file.getText.substring(0, offset)
+      val qualifier = "([A-Za-z_][A-Za-z_0-9]*)\\.[A-Za-z_0-9]*$".r.findFirstMatchIn(prefix).map(_.group(1))
+      DbtSqlAnalysis.forCompletion(w, file, offset).flatMap(_.scope(offset)).toVector.flatMap(_.relations)
+        .filter { case (alias, _) => qualifier.forall(_.equalsIgnoreCase(alias)) }.flatMap { case (alias, columns) =>
+          columns.map(c => DbtSuggestion(c.name, c.attributes.getOrElse("data_type", "column") + " · " + alias,
+            "column", c.attributes.getOrElse("description", "")))
+        }.distinctBy(s => (s.text, s.detail))
     } else Vector.empty
   }
 

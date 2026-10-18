@@ -38,6 +38,11 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     edit(properties, properties.getText.replace("name: events", "name: activity"))
     assertEquals(Vector("activity"), names)
   }
+  def testColumnCompletionRespectsAliasAndCteProjection(): Unit = {
+    schema()
+    val file = configure("models/report.sql", "with o as (select id from {{ ref('orders') }}) select x.<caret> from o x")
+    assertEquals(Vector("id"), DbtCompletion.suggestions(file, myFixture.getCaretOffset).map(_.text))
+  }
   def testLineageDistinguishesPassthroughAndCalculation(): Unit = {
     schema()
     val file = configure("models/report.sql", "select o.id as order_id, o.amount * 2 as gross from {{ ref('orders') }} o<caret>")
@@ -84,5 +89,22 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     assertEquals(Vector("id"), analysis.columns.head.inputs.map(_.name))
     assertEquals(Set("join", "filter"), analysis.columns.head.contextInputs.map(_._2).toSet)
   }
-
+  def testCurrentSqlProjectionOverridesStaleYamlColumnNames(): Unit = {
+    schema()
+    val workspace = DbtWorkspace.get(getProject)
+    val orders = workspace.files.find(_.getName == "orders.sql").get
+    edit(orders, "select 1 as id")
+    val file = configure("models/report.sql", "select o.<caret> from {{ ref('orders') }} o")
+    assertEquals(Vector("id"), DbtCompletion.suggestions(file, myFixture.getCaretOffset).map(_.text))
+    edit(file, "select o.amount from {{ ref('orders') }} o")
+    val analysis = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), file).get
+    assertTrue(analysis.problems.exists(_.message.contains("amount")))
+    assertFalse(analysis.columns.head.complete)
+  }
+  def testDynamicProjectionNamesDoNotAppearAsInventedSqlColumns(): Unit = {
+    schema()
+    add("models/dynamic.sql", "select {{ var('column_name') }} from {{ source('raw', 'events') }}")
+    val file = configure("models/report.sql", "select d.<caret> from {{ ref('dynamic') }} d")
+    assertTrue(DbtCompletion.suggestions(file, myFixture.getCaretOffset).isEmpty)
+  }
 }
