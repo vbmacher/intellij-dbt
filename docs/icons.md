@@ -1,6 +1,6 @@
 # dbt resource icons
 
-[User guide](README.md) · [Navigation](navigation.md)
+[User guide](getting_started.md) · [Navigation](navigation.md)
 
 **Navigation results** below means the Go to Declaration chooser, Find Usages
 window, and applicable dbt Properties / dbt Dependencies popups. Ctrl+Click on a
@@ -19,8 +19,8 @@ separate Project-window entries.
 | Icon | Meaning | Rule |
 | --- | --- | --- |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Editor gutter: resource/declaration lines with related targets, ambiguous references or metadata-only targets. Click for a chooser; tooltips explain ambiguity/staleness. One marker per line. |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/model-dark.svg"><img src="icons/model.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/source-dark.svg"><img src="icons/source.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="table" width="20" height="20"></picture> | Source table, SQL CTE or Information Schema view | Navigation results: tables under `sources:`, SQL CTE definitions and views from selected Information Schema metadata. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/seed-dark.svg"><img src="icons/seed.svg" alt="seed" width="20" height="20"></picture> | Seed | Project window and navigation results: `.csv` files in `seed-paths` (`seeds/`) and their YAML properties. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/snapshot-dark.svg"><img src="icons/snapshot.svg" alt="snapshot" width="20" height="20"></picture> | Snapshot | Project window and navigation results: `.sql` files in `snapshot-paths` (`snapshots/`), legacy `{% snapshot %}` blocks and YAML properties. |
@@ -55,17 +55,40 @@ separate Project-window entries.
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/materialization-dark.svg"><img src="icons/materialization.svg" alt="materialization" width="20" height="20"></picture> | Materialization | Project window and navigation results: `{% materialization %}` blocks in resource `.sql` files. |
 | Declared resource's icon | YAML resource properties | Project window and navigation results: named entries such as `models:`, `sources:`, `macros:` and `unit_tests:` in configured resource paths. Use the declared resource's icon, except test-only files above. |
 
-Every icon uses the original orange dbt mark at 80% opacity behind a small symbol. Each symbol has a
-colored outline and accents, a pale tint within its silhouette and a thin halo (white in light themes,
-dark in dark themes). The surrounding area stays transparent. Symbols sit on a 10 px grid in the
-bottom-right corner with 1 px strokes so they stay crisp at 16 px, and each uses a distinct silhouette.
+The same resource icons also identify completion suggestions. Test results use
+the IDE's status icons and text labels for running, passed, failed and ignored
+tests; warning and cancellation details remain visible in their output.
 
-Symbol colors group related resources:
+## Tool-window icons
 
-| Color | Resources |
-| --- | --- |
-| Blue | Data relations: model, source, table, column, snapshot, analysis/saved query, alias, gutter navigation |
-| Green | Data quality and seeds: tests, unit tests, fixtures, checks, seeds |
-| Purple | Jinja and code: macros, builtin Jinja, UDFs, variables, parameters, statement results, materializations |
-| Teal | Semantic layer and consumers: semantic models, metrics, dimensions, entities, exposures/exports |
-| Gray | Project metadata: configuration, properties, selectors, packages, docs, groups |
+These are the IDE's standard action icons. See [the dbt window](workspace.md)
+for the corresponding controls.
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| Table with dbt mark | dbt tool window | Tool-window stripe entry labeled **dbt**. |
+| Run triangle | Run | Runner **Run** button. |
+| Build/compile symbol | Build or Compile | Runner **Build** and **Compile** buttons; the button label distinguishes the command. |
+| Test/run symbol | Run tests | Runner **Test** button. |
+| Preview symbol | Preview rows | Runner **Preview** button. |
+| Preview/details symbol | Documentation | Runner **Generate Docs** button and Lineage **Toggle documentation** button. |
+| Refresh arrows | Refresh or generate | Runner **Source Freshness** and Lineage **Regenerate Docs** buttons; the label or tooltip identifies which command runs. |
+| Suspend/stop symbol | Stop execution | Runner **Stop** button. |
+| Clear/garbage-collection symbol | Clear output | Runner **Clear** button. |
+| Gear | Settings | Runner **Settings** button. |
+| Close cross | Clear or close | Lineage **Clear search** and **Close documentation** buttons; each has its own tooltip. |
+| Magnifier plus/minus | Zoom | Lineage **Zoom in** and **Zoom out** buttons. |
+| Fit-content corners | Fit graph | Lineage **Fit graph** button. |
+
+## Lineage resource symbols
+
+The graph uses compact symbols next to resource kinds. Execution badges display
+status text separately; a resource symbol never means that a command succeeded.
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| ▤ | Model or other resource | Model cards and documentation headings; also the fallback for resource kinds without another graph symbol. |
+| ⇥ | Source table | Source-table cards and documentation headings. |
+| ▦ | Seed | Seed cards and documentation headings. |
+| ◷ | Snapshot | Snapshot cards and documentation headings. |
+| ◈ | Exposure | Exposure cards and documentation headings. |

@@ -1,10 +1,10 @@
 # Navigation
 
-[User guide](README.md) · [Configuration](configuration.md) · [Icon legend](icons.md) · [Troubleshooting](troubleshooting.md)
+[User guide](getting_started.md) · [Editing](editor.md) · [Configuration](configuration.md) · [Icon legend](icons.md) · [Troubleshooting](troubleshooting.md)
 
-Use **Ctrl+Click** or **Go to Declaration** to open definitions; **Find Usages** lists
-their references. See [features](../README.md#features),
-[local metadata and v2 checks](configuration.md#local-metadata), or
+dbt references connect model code, YAML properties, macros, tests and documentation.
+Targets use the owning project, package and model version. See
+[local metadata and v2 checks](configuration.md#local-metadata) or
 [troubleshooting](troubleshooting.md) for missing or ambiguous targets.
 
 ## Gutter markers
@@ -15,7 +15,13 @@ docs declarations show callers; unit tests link to their model and fixture files
 
 Markers also identify references with multiple definitions or metadata-only targets;
 tooltips show ambiguity and staleness. Targets on the same line share one popup.
-Disable **dbt navigation** under **Settings → Editor → General → Gutter Icons**.
+See [navigation configuration](configuration.md) to change gutter visibility.
+
+The **dbt Dependencies** popup groups dependencies under **Uses** and consumers
+under **Used by**. Choose a resource to open its declaration or a `file:line`
+entry to open the corresponding reference.
+
+<img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="460">
 
 ## Where references work
 
@@ -35,6 +41,22 @@ Quoted and multiline YAML values work in supported locations. Ordinary strings,
 variable definitions, selected run-file values and unrelated YAML do not gain Jinja
 navigation just by containing a call.
 
+## Hover documentation
+
+Hover a model argument in `ref`, a table argument in `source`, or a macro name,
+or invoke **Quick Documentation**. The popup includes descriptions, known columns
+and dependencies. It shows up to 15 columns and eight dependencies in each
+direction, with counts. See the [documentation sidebar](workspace.md#documentation)
+for the full lists.
+
+Builtin names such as `ref`, `source` and `var` open the official dbt reference
+article in the Documentation tool window. Links to other dbt reference articles
+stay in that window. Source headings show logical names such as
+`analytics.raw.events`; known physical database, schema and relation names are
+listed separately.
+
+See [documentation configuration](configuration.md) for hover preferences.
+
 ## Models, seeds, snapshots and sources
 
 ```sql
@@ -48,6 +70,8 @@ In `source()`, `raw` opens the source and `events` its table. Use YAML names,
 even when `identifier` sets a different warehouse name.
 
 YAML properties link to source files; **dbt Properties** opens YAML from source.
+
+<img src="screenshots/model-properties.png" alt="dbt Properties offers the YAML declarations of the orders model" width="640">
 
 ### Model versions
 
@@ -127,7 +151,6 @@ vars:
 `start_date` opens the project-scoped definition. The fallback `'eu'` has no target.
 `options` opens the dictionary; its members are not separate dbt variables.
 
-Default precedence: root package-scoped, root global, then installed package.
 Package macros use the calling node's project variables. `builtins.var`,
 `builtins.ref` and `builtins.source` bypass same-named user macros.
 
@@ -257,7 +280,7 @@ State-dependent selections need explicitly selected state metadata.
 
 ## Python models
 
-With the free Python Community Edition plugin enabled:
+With [Python support](installation.md) available:
 
 ```python
 def model(dbt, session):
@@ -269,3 +292,19 @@ def model(dbt, session):
 
 Use the model's `dbt` parameter or a local alias. Unrelated objects, shadowed names,
 interpolated strings and comments do not navigate.
+
+## Information Schema references
+
+In a dbt v2 check, Information Schema views and known columns open their metadata:
+
+```sql
+select name
+from {{ info_schema('models') }}
+where name = 'orders'
+```
+
+The view and known columns can open builtin documentation when local metadata is
+unavailable. A literal model name such as `orders` can open the model when its
+condition identifies a unique resource. See
+[Information Schema configuration](configuration.md#dbt-v2-information-schema-and-checks)
+for the required version and metadata directory.

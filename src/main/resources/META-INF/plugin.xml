@@ -17,6 +17,9 @@
         <li>Use gutter markers to open related properties, definitions, dependencies and callers.</li>
         <li>Follow SQL CTEs, columns, macro parameters, selectors and Semantic Layer references.</li>
         <li>Use local source files and optionally selected JSON or Parquet metadata for navigation.</li>
+        <li>Complete dbt calls and SQL columns, inspect macro parameters, validate YAML offline, and use native Rename and Safe Delete.</li>
+        <li>Trace column lineage, edit resource documentation, review Git impact and selector/state plans, and inspect bounded typed query or CTE results.</li>
+        <li>Browse native test results and lineage execution evidence; optionally configure SQLFluff/sqlfmt, Metabase, Airflow mappings and local read-only agent tools.</li>
       </ul>
       <p>Open a directory containing <code>dbt_project.yml</code> to get started. Enable the bundled YAML plugin.
       SQL navigation works with plain-text files and does not require Database Tools.
