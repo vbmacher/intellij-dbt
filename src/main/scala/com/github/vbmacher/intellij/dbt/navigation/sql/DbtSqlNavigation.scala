@@ -22,6 +22,11 @@ import scala.jdk.CollectionConverters._
 /** Relations, columns and aliases of SQL resources; the Jinja references found before resolve template relations. */
 private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
   override def relationRanges(sql: String): Vector[TextRange] = DbtSqlRelations.ranges(sql)
+  override def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = DbtSqlNavigation.projectedColumns(sql)
+  override def withPrefix(text: String, end: Int): Option[String] = DbtSqlNavigation.withPrefix(text, end)
+
+  override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis] =
+    DbtSqlAnalyzer.analyze(file, workspace, completionOffset)
 
   override def references(context: DbtNavigationContext): Vector[DbtNavigationReference] =
     DbtSqlNavigation.references(context.file, context.workspace, context.root, context.found)
@@ -38,7 +43,7 @@ private[sql] final class DbtSqlProjections extends DbtDeclarationSource {
 }
 
 /** SQL syntax comes exclusively from JSqlParser; templates are masked without changing offsets. */
-private object DbtSqlNavigation {
+private[sql] object DbtSqlNavigation {
   private val ProjectionCache = Key.create[CachedValue[Vector[(String, TextRange)]]]("dbt.sql.projections")
   /** Templates whose control flow would make the masked SQL meaningless. */
   private val ControlTags = Set("for", "if", "macro", "test", "snapshot", "materialization")
@@ -48,22 +53,69 @@ private object DbtSqlNavigation {
   private def sqlFile(file: PsiFile): Boolean = file.getVirtualFile.getExtension == "sql" && file.getTextLength <= 1000000
 
   /** The SQL with every template blanked out in place; each expression becomes a `_dbt<index>` identifier. */
-  private def masked(text: String, blocks: Vector[DbtSyntax.Block]): Option[String] =
+  private[sql] def masked(text: String, blocks: Vector[DbtSyntax.Block]): Option[String] =
     if (blocks.exists(_.tagName.exists(ControlTags))) None
     else {
       val chars = text.toCharArray
       blocks.zipWithIndex.foreach { case (b, i) =>
         val start = b.range.getStartOffset
         start.until(b.range.getEndOffset).foreach(p => if (chars(p) != '\n' && chars(p) != '\r') chars(p) = ' ')
-        if (!b.tag) marker(i).zipWithIndex.foreach { case (c, n) => if (start + n < b.range.getEndOffset) chars(start + n) = c }
+        val configuration = DbtSyntax.calls(b).exists(c => Set("config", "builtins.config")(c.name) && c.closed &&
+          b.tokens.headOption.exists(_.range.getStartOffset == c.range.getStartOffset) &&
+          b.tokens.lastOption.exists(_.range.getEndOffset == c.expressionRange.getEndOffset))
+        if (!b.tag && !configuration) marker(i).zipWithIndex.foreach { case (c, n) => if (start + n < b.range.getEndOffset) chars(start + n) = c }
       }
       Some(new String(chars))
     }
 
   private def marker(index: Int): String = s"_dbt$index"
 
+  def withPrefix(text: String, end: Int): Option[String] = {
+    if (end < 0 || end > text.length || end > 1000000) return None
+    val before = text.substring(0, end)
+    val chars = before.toCharArray
+    DbtSyntax.blocks(text).filter(_.range.getEndOffset <= end).foreach(b =>
+      b.range.getStartOffset.until(b.range.getEndOffset).foreach(i => if (chars(i) != '\n' && chars(i) != '\r') chars(i) = ' '))
+    tokens(new String(chars)).lastOption.filter(_.image.equalsIgnoreCase("with"))
+      .map(token => text.substring(0, DbtSqlRelations.offset(before, token)))
+  }
+
   private def parse(sql: String): Option[Statement] =
     try Some(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch { case _: JSQLParserException => None }
+
+  def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = {
+    def safeFrom(item: FromItem): Boolean = item match {
+      case p: ParenthesedSelect => safe(p.getSelect)
+      case p: ParenthesedFromItem => safeFrom(p.getFromItem) && Option(p.getJoins).toVector.flatMap(_.asScala).forall(j => safeFrom(j.getFromItem))
+      case _ => true
+    }
+    def safe(s: Select): Boolean = Option(s.getWithItemsList).toVector.flatMap(_.asScala).forall(i => i.getParenthesedStatement match {
+      case p: ParenthesedSelect => safe(p.getSelect)
+      case _ => false
+    }) && (s match {
+      case p: ParenthesedSelect => safe(p.getSelect)
+      case sets: SetOperationList => Option(sets.getSelects).toVector.flatMap(_.asScala).forall(safe)
+      case p: PlainSelect => Option(p.getIntoTables).forall(_.isEmpty) && p.getIntoTempTable == null && p.getMySqlSelectIntoClause == null &&
+        safeFrom(p.getFromItem) && Option(p.getJoins).toVector.flatMap(_.asScala).forall(j => safeFrom(j.getFromItem))
+      case _ => false
+    })
+    def select(s: Select): (Vector[String], Boolean) = s match {
+      case p: ParenthesedSelect => select(p.getSelect)
+      case sets: SetOperationList => Option(sets.getSelects).toVector.flatMap(_.asScala).headOption.map(select).getOrElse(Vector.empty -> false)
+      case p: PlainSelect =>
+        val items = Option(p.getSelectItems).toVector.flatMap(_.asScala)
+        val names = items.flatMap(item => Option(item.getAlias).map(_.getUnquotedName).orElse(item.getExpression match {
+          case c: Column => Some(c.getUnquotedColumnName)
+          case _ => None
+        })).filterNot(_.startsWith("_dbt"))
+        names -> (names.size == items.size)
+      case _ => Vector.empty -> false
+    }
+    if (sql.length > 1000000) None else masked(sql, DbtSyntax.blocks(sql)).filter { query => scala.util.Try {
+      val parsedTokens = tokens(query)
+      !parsedTokens.zipWithIndex.exists { case (token, index) => token.image == ";" && index != parsedTokens.size - 1 }
+    }.getOrElse(false) }.flatMap(parse).collect { case s: Select if safe(s) => select(s) }
+  }
 
   def projections(resource: DbtSymbol): Vector[DbtSymbol] = {
     val file = resource.file
@@ -126,10 +178,12 @@ private object DbtSqlNavigation {
       ProgressManager.checkCanceled()
       var ctes = inherited
       Option(s.getWithItemsList).toVector.flatMap(_.asScala).foreach { item =>
-        Option(item.getSelect).foreach { body =>
-          val first = nodeTokens(body).headOption.map(offset(_)).getOrElse(0)
+        Option(item.getParenthesedStatement).collect { case body: ParenthesedSelect => body }.foreach { body =>
+          val explicitColumns = Option(item.getWithItemList).toVector.flatMap(_.asScala)
+          val first = explicitColumns.headOption.flatMap(item => nodeTokens(item).headOption).orElse(nodeTokens(body).headOption).map(offset(_)).getOrElse(0)
           val target = declaration(item.getUnquotedAliasName, first, before = true).toVector.map(symbol("cte", item.getUnquotedAliasName, _))
-          ctes += item.getUnquotedAliasName.toLowerCase -> Relation(target, select(body.getSelect, ctes))
+          val columns = select(body.getSelect, ctes)
+          ctes += item.getUnquotedAliasName.toLowerCase -> Relation(target, if (explicitColumns.nonEmpty) Map.empty else columns)
         }
       }
       s match {
@@ -244,7 +298,7 @@ private object DbtSqlNavigation {
       }
   }
 
-  private def nodeTokens(node: ASTNodeAccess): Vector[Token] = Option(node.getASTNode).map { n =>
+  private[sql] def nodeTokens(node: ASTNodeAccess): Vector[Token] = Option(node.getASTNode).map { n =>
     val last = n.jjtGetLastToken()
     val result = ArrayBuffer.empty[Token]
     var t = n.jjtGetFirstToken()
@@ -255,7 +309,7 @@ private object DbtSqlNavigation {
     result.toVector
   }.getOrElse(Vector.empty)
 
-  private def tokens(sql: String): Vector[Token] = {
+  private[sql] def tokens(sql: String): Vector[Token] = {
     val manager = new CCJSqlParserTokenManager(new SimpleCharStream(new StringProvider(sql)))
     Iterator.continually(manager.getNextToken()).takeWhile(_.kind != 0).toVector
   }

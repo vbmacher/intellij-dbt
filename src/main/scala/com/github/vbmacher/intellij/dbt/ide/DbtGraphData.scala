@@ -91,6 +91,17 @@ private[ide] object DbtGraphData {
     data.columns.foreach { c =>
       val col = new JsonObject; col.addProperty("name", c.name); col.addProperty("type", c.dataType); col.addProperty("description", c.description)
       col.add("declarations", gson.toJsonTree(c.declarations.asJava)); columns.add(col)
+      val origins = new JsonArray
+      com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage.upstream(w, s, c.name).foreach { edge =>
+        val origin = new JsonObject
+        origin.addProperty("resource", edge.input.namespace + "." + edge.input.owner)
+        origin.addProperty("column", edge.input.name); origin.addProperty("direct", edge.direct)
+        origin.addProperty("kind", edge.kind)
+        origin.addProperty("complete", edge.complete); origin.addProperty("expression", edge.expression)
+        origin.addProperty("path", edge.input.file.getVirtualFile.getPath); origin.addProperty("offset", edge.input.range.getStartOffset)
+        origins.add(origin)
+      }
+      col.add("origins", origins)
     }
     doc.add("columns", columns)
     val tests = new JsonArray
@@ -100,5 +111,39 @@ private[ide] object DbtGraphData {
     doc.add("upstream", gson.toJsonTree(upstream.asJava))
     doc.add("downstream", gson.toJsonTree(downstream.asJava))
     doc
+  }
+
+  def columnPaths(w: DbtWorkspace, resource: DbtSymbol, column: String): JsonObject = {
+    val edges = com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage.edges(w)
+    val resources = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind)).distinctBy(s => (key(w, s)))
+    def owner(c: DbtSymbol): Option[DbtSymbol] = resources.find(r => r.namespace == c.namespace &&
+      r.relationName == c.owner && r.version == c.version && w.owner(r) == w.owner(c))
+    val seen = mutable.Set(key(w, resource) -> column.toLowerCase)
+    val lines = mutable.ArrayBuffer.empty[String]
+    def walk(up: Boolean): Unit = {
+      val visited = mutable.Set(key(w, resource) -> column.toLowerCase)
+      var frontier = Vector(resource -> column)
+      while (frontier.nonEmpty && visited.size < 1000) {
+      ProgressManager.checkCanceled()
+      val next = frontier.flatMap { case (model, name) =>
+        edges.flatMap { edge =>
+          val upstream = edge.resource.sameResource(model) && w.owner(edge.resource) == w.owner(model) && edge.column.equalsIgnoreCase(name)
+          val downstream = owner(edge.input).exists(r => r.sameResource(model) && w.owner(r) == w.owner(model)) && edge.input.name.equalsIgnoreCase(name)
+          if (if (up) upstream else downstream) {
+            lines += s"${edge.input.namespace}.${edge.input.owner}.${edge.input.name} -> ${edge.resource.presentableText}.${edge.column}" +
+              (if (edge.kind != "value") " (" + edge.kind + " dependency)" else if (edge.direct) " (passthrough)" else " (" + edge.expression + ")") + (if (edge.complete) "" else " [partial]")
+            if (up) owner(edge.input).map(_ -> edge.input.name).toVector else Vector(edge.resource -> edge.column)
+          } else Vector.empty
+        }
+      }
+      frontier = next.filter { case (s, name) => visited.add(key(w, s) -> name.toLowerCase) }
+      }
+      seen ++= visited
+    }
+    walk(up = true); walk(up = false)
+    val result = new JsonObject
+    result.add("ids", gson.toJsonTree(seen.toVector.map(_._1).distinct.asJava))
+    result.addProperty("text", if (lines.isEmpty) "No proven column paths. Schemas or supported SQL may be unavailable." else lines.distinct.mkString("\n"))
+    result
   }
 }

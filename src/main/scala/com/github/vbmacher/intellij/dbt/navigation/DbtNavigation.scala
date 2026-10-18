@@ -19,6 +19,10 @@ private[dbt] trait DbtReferenceProvider {
 
   /** Physical relation positions from a host parser, for clipboard conversion. */
   def relationRanges(sql: String): Vector[TextRange] = Vector.empty
+
+  def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[DbtSqlAnalysis] = None
+  def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = None
+  def withPrefix(text: String, end: Int): Option[String] = None
 }
 
 private[dbt] object DbtReferenceProvider {
@@ -27,6 +31,10 @@ private[dbt] object DbtReferenceProvider {
 
 /** The references of dbt files, cached until PSI or VFS changes. */
 private[dbt] object DbtNavigation {
+  def withPrefix(text: String, end: Int): Option[String] =
+    DbtReferenceProvider.EP.getExtensionList.asScala.iterator.flatMap(_.withPrefix(text, end)).nextOption()
+  def projectedColumns(sql: String): Option[(Vector[String], Boolean)] =
+    DbtReferenceProvider.EP.getExtensionList.asScala.iterator.flatMap(_.projectedColumns(sql)).nextOption()
   def relationRanges(sql: String): Vector[TextRange] =
     DbtReferenceProvider.EP.getExtensionList.asScala.toVector.flatMap(_.relationRanges(sql)).distinct
   private val ProjectFiles = Set(DbtWorkspace.ProjectFileName, "profiles.yml", "packages.yml", "package-lock.yml", "dependencies.yml",

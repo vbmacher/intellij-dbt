@@ -428,13 +428,36 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val id = field("id")
     kind match {
       case "ready" => refresh(follow = true)
-      case "select" | "focus" =>
+      case "declaration" | "origin" =>
+        val value = field("value")
+        ReadAction.nonBlocking(new Callable[Option[DbtSymbolElement]] {
+          override def call(): Option[DbtSymbolElement] = {
+            val w = DbtWorkspace.get(project)
+            DbtGraphData.build(w, None, 1, 1, exposures = true).targets.get(id).flatMap { resource =>
+              if (kind == "declaration") {
+                w.columns(resource.symbol).find(_.name == value).map(_.element).orElse(
+                  com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(w, resource.symbol.file)
+                    .flatMap(_.columns.find(_.name == value)).map(c =>
+                      DbtSymbol("sql_projection", c.name, resource.symbol.namespace, resource.symbol.file, c.range).element))
+              } else Try(JsonParser.parseString(value).getAsJsonObject).toOption.flatMap { request =>
+                for {
+                  column <- Option(request.get("column")).filter(_.isJsonPrimitive).map(_.getAsString)
+                  index <- Option(request.get("index")).flatMap(v => Try(v.getAsInt).toOption)
+                  edge <- com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage.upstream(w, resource.symbol, column).lift(index)
+                } yield edge.input.element
+              }
+            }
+          }
+        }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.any(), (target: Option[DbtSymbolElement]) =>
+          if (!disposed) target.filter(_.isValid).foreach(_.navigate(true))).submit(AppExecutorUtil.getAppExecutorService)
+      case "select" | "focus" | "edit" | "column" =>
         val request = docGeneration.incrementAndGet()
         ReadAction.nonBlocking(new Callable[Option[(JsonObject, DbtSymbolElement)]] {
           override def call(): Option[(JsonObject, DbtSymbolElement)] = {
             val w = DbtWorkspace.get(project)
             // Rebuild the identity map rather than retaining PSI objects in the browser callback.
-            DbtGraphData.build(w, None, 1, 1, exposures = true).targets.get(id).map(e => DbtGraphData.documentation(w, e.symbol) -> e)
+            DbtGraphData.build(w, None, 1, 1, exposures = true).targets.get(id).map(e =>
+              (if (kind == "column") DbtGraphData.columnPaths(w, e.symbol, field("value")) else DbtGraphData.documentation(w, e.symbol)) -> e)
           }
         }).expireWith(this).inSmartMode(project).coalesceBy(docWork).finishOnUiThread(ModalityState.any(), (result: Option[(JsonObject, DbtSymbolElement)]) =>
           if (!disposed && request == docGeneration.get()) result.foreach { case (doc, targetElement) =>
