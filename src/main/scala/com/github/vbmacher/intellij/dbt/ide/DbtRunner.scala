@@ -26,7 +26,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 private[ide] final case class DbtCommand(arguments: Vector[String], directory: String, environment: Map[String, String],
-  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String])
+  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String], commandOffset: Int = 1, root: String = "", sourceSql: String = "")
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
@@ -95,7 +95,8 @@ private[ide] object DbtCommand {
           stateFlags.map(flags => DbtCommand(prefix ++ command ++ structured ++ select ++ refresh ++ preview ++ flags ++
             (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
             directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
-            action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root)))
+            action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root), prefix.length, root.directory.getPath,
+            if (action == "Preview") DbtRunSelection.selectedModels(w, selection).headOption.map(_.file.getText).getOrElse("") else ""))
         }
       }
     } yield command
@@ -140,6 +141,7 @@ final class DbtRunner(project: Project) extends Disposable {
         }
         else try {
           val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
+          val started = System.nanoTime()
           val line = new GeneralCommandLine(command.arguments.asJava).withWorkDirectory(command.directory)
             .withEnvironment(command.environment.asJava).withCharset(StandardCharsets.UTF_8)
           val process = new ColoredProcessHandler(line)
@@ -156,16 +158,24 @@ final class DbtRunner(project: Project) extends Disposable {
               val success = event.getExitCode == 0 && !wasCancelled
               val message = if (wasCancelled) s"${command.action} cancelled" else s"${command.action} finished (exit ${event.getExitCode})"
               val preview = if (success && command.action == "Preview") Some(DbtPreview.format(output.synchronized(output.toString))) else None
+              def argument(name: String): String = command.arguments.drop(command.commandOffset + 1).sliding(2).find(_.head == name).map(_(1)).getOrElse("")
+              val result = if (success && command.action == "Preview") DbtQueryResult.parse(output.synchronized(output.toString),
+                command.target, argument("--limit").toIntOption.getOrElse(10), (System.nanoTime() - started) / 1000000L,
+                Option(argument("--inline")).filter(_.nonEmpty).getOrElse("Model: " + argument("--select") +
+                  "\n\nSource SQL captured before execution (before dbt compilation):\n" + command.sourceSql)).toOption else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
                 if (DbtArtifactContext.fingerprint(command.artifactDirectory) != manifestBefore)
                   Try(DbtArtifactContext.record(command.artifactDirectory, command.artifactContext))
                 LocalFileSystem.getInstance.refreshIoFiles(java.util.List.of(new java.io.File(command.artifactDirectory)), true, true, null)
               }
+              val execution = evidence.finish(command, wasCancelled)
+              val displayedPreview = if (preview.nonEmpty && result.isEmpty)
+                Some("Malformed or unavailable dbt preview JSON. See raw process output.") else preview
               onUi {
                 handler = null; busy.set(false)
                 console.print("\n" + message + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-                fire(DbtRunnerEvent(running = false, message, refresh, preview))
+                fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command)))
                 DbtNotifications.publish(project, command, message, success, wasCancelled)
               }
             }
@@ -203,7 +213,7 @@ private[ide] object DbtNotifications {
 
 private[ide] object DbtPreview {
   private val ansi = "\u001b\\[[0-9;]*[A-Za-z]".r
-  def format(output: String): String = {
+  def rows(output: String): Option[JsonArray] = {
     val plain = ansi.replaceAllIn(output, "")
     def rows(element: JsonElement): Option[JsonArray] = {
       if (element.isJsonArray) Some(element.getAsJsonArray)
@@ -235,8 +245,11 @@ private[ide] object DbtPreview {
       }
     }
     val candidates = Vector(plain) ++ values
-    val parsed = candidates.iterator.flatMap(s => Try(JsonParser.parseString(s.trim)).toOption.flatMap(rows)).toVector.lastOption
-    parsed match {
+    candidates.iterator.flatMap(s => Try(JsonParser.parseString(s.trim)).toOption.flatMap(rows)).toVector.lastOption
+  }
+
+  def format(output: String): String = {
+    rows(output) match {
       case Some(array) if array.isEmpty => "No data returned."
       case Some(array) =>
         val objects = array.asScala.filter(_.isJsonObject).map(_.getAsJsonObject).toVector

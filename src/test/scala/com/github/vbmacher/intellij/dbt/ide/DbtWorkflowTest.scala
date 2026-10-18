@@ -103,6 +103,13 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     add("models/report.sql", "with a as (select id, amount * 2 as gross from {{ ref('orders') }}) select id as key, gross from a")
     assertEquals(Vector("key"), DbtColumnLineage.inherited(w, model("report")).map(_._1))
   }
+  def testGridPreservesTypesNullsUnicodeAndCsvQuoting(): Unit = {
+    val result = DbtQueryResult.parse("{\"show\":[{\"id\":2,\"text\":\"a,b\\nž\",\"flag\":true,\"empty\":null},{\"id\":10}]}", "dev", 20, 23, "select *").toOption.get
+    assertEquals(new java.math.BigDecimal("2"), result.value(0, 0))
+    assertEquals(Boolean.box(true), result.value(0, 2)); assertNull(result.value(0, 3))
+    assertTrue(result.export().contains("\"a,b\nž\""))
+    assertTrue(DbtQueryResult.parse("broken", "dev", 10, 0, "").isLeft)
+  }
   def testSelectionCommandsUseExactIdentitiesAndNeverOverwriteBaseline(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id")

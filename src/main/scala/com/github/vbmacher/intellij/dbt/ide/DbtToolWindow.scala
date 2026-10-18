@@ -77,6 +77,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val fullRefresh = new JCheckBox("Full Refresh")
   private val stop = new JButton("Stop", AllIcons.Actions.Suspend)
   private val preview = new JBTextArea
+  private var lastPreviewCommand = Option.empty[DbtCommand]
+  private val resultGrid = new DbtResultGrid(limit => rerunPreview(limit))
   private val status = new JBTextArea
   private val toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
   private val commands = scala.collection.mutable.Map.empty[String, JButton]
@@ -169,6 +171,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   clear.addActionListener(_ => {
     runner.console.clear()
     preview.setText("")
+    lastPreviewCommand = None
+    resultGrid.clear("Run an explicit preview to see rows.")
   })
   toolbar.add(clear)
   stop.setToolTipText("Cancel the running dbt command")
@@ -228,7 +232,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
   val output = new OnePixelSplitter(true, .75f)
   output.setFirstComponent(runner.console.getComponent)
-  output.setSecondComponent(new JBScrollPane(preview))
+  output.setSecondComponent(resultGrid)
   runner.console match {
     case console: com.intellij.execution.impl.ConsoleViewImpl => console.getEditor.getSettings.setUseSoftWraps(true)
     case _ => ()
@@ -260,7 +264,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     updateButtons()
     browser.foreach(_.runnerState(event.running, event.message))
     event.preview.foreach(preview.setText)
-    if (event.refresh) schedule(follow = false)
+    if (event.running) resultGrid.clear("dbt command running…")
+    event.result.foreach(resultGrid.showResult)
+    if (event.result.nonEmpty) lastPreviewCommand = event.command.filter(_.action == "Preview")
+    if (!event.running && event.result.isEmpty) resultGrid.clear(event.preview.getOrElse(event.message))
+    if (event.refresh || event.execution.nonEmpty) schedule(follow = false)
   })
   val connection = project.getMessageBus.connect(this)
   connection.subscribe(DbtProjectSettings.Changed, new DbtSettingsListener {
@@ -439,6 +447,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   private def updateButtons(): Unit = {
+    resultGrid.setRunning(runner.isRunning)
     commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty &&
       context.selection.exists(s => name != "Preview" || !s.directory)) }
     runSelection.setEnabled(!runner.isRunning)
@@ -471,6 +480,36 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case Left(message) => contextLabel.setText(message)
     }).submit(AppExecutorUtil.getAppExecutorService)
   })
+
+  private def rerunPreview(limit: Int): Unit = lastPreviewCommand.foreach { previous =>
+    saveTarget(); saveExecutableArguments()
+    FileDocumentManager.getInstance().saveAllDocuments()
+    ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
+      override def call(): Either[String, DbtCommand] = {
+        val w = DbtWorkspace.get(project)
+        for {
+          root <- w.roots.find(_.directory.getPath == previous.root).toRight("The preview execution project is unavailable.")
+          _ <- Either.cond(DbtArtifactContext.identity(root) == previous.artifactContext, (),
+            "Execution settings changed. Start a new preview to use the current context.")
+          index = previous.arguments.indexOf("--limit", previous.commandOffset + 1)
+          _ <- Either.cond(index >= 0 && index + 1 < previous.arguments.size, (), "The previous query has no supported row limit.")
+        } yield previous.copy(arguments = previous.arguments.updated(index + 1, limit.max(1).min(1000).toString))
+      }
+    }).expireWith(this).withDocumentsCommitted(project).finishOnUiThread(ModalityState.defaultModalityState(),
+      (result: Either[String, DbtCommand]) => result match {
+        case Right(command) =>
+          val unchanged = ReadAction.computeBlocking[Boolean, RuntimeException](() =>
+            lastPreviewCommand.contains(previous) && DbtWorkspace.get(project).roots.find(_.directory.getPath == previous.root)
+              .exists(root => DbtArtifactContext.identity(root) == previous.artifactContext))
+          if (unchanged) runner.start(command) else contextLabel.setText("The preview or execution settings changed. Start a new preview.")
+        case Left(message) => contextLabel.setText(message)
+      }).submit(AppExecutorUtil.getAppExecutorService)
+  }
+
+  private def saveSelection(): Unit = context.root.foreach { path =>
+    settings.options(path).selection = selectionExpression.getText.trim
+    settings.options(path).exclude = selectionExclude.getText.trim
+  }
 
   private def handleMessage(raw: String): Unit = {
     if (disposed) return
