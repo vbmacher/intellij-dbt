@@ -94,3 +94,42 @@ final class DbtImpactAction extends AnAction {
   }
 }
 
+final class DbtConsumersAction extends AnAction {
+  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
+    val source = Option(event.getData(CommonDataKeys.PSI_FILE))
+    val offset = Option(event.getData(CommonDataKeys.EDITOR)).map(_.getCaretModel.getOffset).getOrElse(0)
+    DbtImpactUi.background(project, "Read dbt consumers") { DbtImpactUi.read {
+      val w = DbtWorkspace.get(project); val focus = DbtImpactUi.context(w, source, offset)
+      val columns = focus.toVector.flatMap(s => DbtResourceData.get(w, s).columns.map(_.name)).distinct
+      (w, focus, DbtConsumers.exposures(w, focus), columns)
+    } } { case (w, focus, exposures, columns) =>
+      val service = project.getService(classOf[DbtConsumers]); val panel = DbtImpactUi.panel()
+      val status = new JLabel; val list = new JList[String]; var values = Vector.empty[DbtConsumer]
+      val column = new JComboBox[String]((Vector("All columns") ++ columns).toArray)
+      def update(): Unit = {
+        val cache = service.snapshot
+        val selectedColumn = Option(column.getSelectedItem).map(_.toString).filter(_ != "All columns")
+        values = exposures ++ cache.consumers.filter(c => focus.forall(s => c.resource == DbtImpact.key(w, s)) &&
+          selectedColumn.forall(name => c.column.isEmpty || c.column.contains(name)))
+        list.setListData(values.map(c => c.name + " · " + c.kind + " · Owner: " + c.owner + " · " + c.confidence +
+          (if (selectedColumn.nonEmpty && c.column.isEmpty) " · model-level; column use unknown" else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence).toArray)
+        status.setText(cache.status + " Refreshed: " + (if (cache.refreshedAt == 0) "never" else new java.util.Date(cache.refreshedAt).toString) +
+          (if (cache.stale) " (stale)" else "") + (if (values.isEmpty) " No consumers found." else ""))
+      }
+      column.addActionListener(_ => update())
+      val header = new JPanel(new BorderLayout); header.add(status, BorderLayout.NORTH); header.add(column, BorderLayout.SOUTH)
+      update(); panel.add(header, BorderLayout.NORTH); panel.add(new JScrollPane(list), BorderLayout.CENTER)
+      val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
+      buttons.add(DbtImpactUi.button("Open consumer") { Option(list.getSelectedIndex).filter(i => i >= 0 && i < values.size).flatMap(i => values(i).url).foreach(BrowserUtil.browse) })
+      buttons.add(DbtImpactUi.button("Go to exposure definition") { Option(list.getSelectedIndex).filter(i => i >= 0 && i < values.size).foreach { i =>
+        w.symbols.find(s => DbtImpact.key(w, s) == values(i).resource && s.kind == "exposure").foreach(_.element.navigate(true))
+      } })
+      val refresh = DbtImpactUi.button("Refresh Metabase metadata") {
+        DbtImpactUi.background(project, "Refresh Metabase consumers") { service.refresh(DbtImpactUi.read { DbtWorkspace.get(project) }) }(_ => update())
+      }
+      buttons.add(refresh); buttons.add(DbtImpactUi.button("Configure…") { com.intellij.openapi.options.ShowSettingsUtil.getInstance().editConfigurable(project, new DbtConsumersConfigurable(project)) })
+      panel.add(buttons, BorderLayout.SOUTH); DbtImpactUi.show(project, "dbt Consumers" + focus.map(s => ": " + s.uniqueId).getOrElse(""), panel)
+    }
+  }
+}
+

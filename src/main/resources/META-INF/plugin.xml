@@ -99,6 +99,7 @@
         <localInspection language="" shortName="DbtUnresolvedReference" displayName="Unresolved dbt reference" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedReferenceInspection"/>
         <notificationGroup id="dbt Workspace" displayType="BALLOON" isLogByDefault="true"/>
         <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
+        <projectConfigurable id="dbt.integrations" displayName="dbt Integrations" instance="com.github.vbmacher.intellij.dbt.ide.DbtConsumersConfigurable"/>
         <toolWindow id="dbt" anchor="bottom" factoryClass="com.github.vbmacher.intellij.dbt.ide.DbtToolWindowFactory" icon="/icons/dbt/table.svg"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
@@ -128,6 +129,9 @@
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="Dbt.ChangeImpact" class="com.github.vbmacher.intellij.dbt.ide.DbtImpactAction" text="dbt Change Impact">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.Consumers" class="com.github.vbmacher.intellij.dbt.ide.DbtConsumersAction" text="dbt Downstream Consumers">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">
