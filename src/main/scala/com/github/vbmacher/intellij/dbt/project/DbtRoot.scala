@@ -148,9 +148,11 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     pathKinds.iterator.flatMap { case (k, path) => folders(path, r).map(k -> _) }.nextOption()
   }
 
-  def excluded(file: VirtualFile): Boolean = relative(file).exists { r =>
+  def excluded(file: VirtualFile): Boolean = relative(file).exists(r => excludedPath(r, file.isDirectory))
+
+  def excludedPath(r: String, directory: Boolean = false): Boolean = {
     val parts = r.split("/").toVector
-    val paths = parts.indices.map(i => Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || file.isDirectory))
+    val paths = parts.indices.map(i => Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || directory))
     exclusions.exists(pathContains(_, r)) || ignores.foldLeft(false) { case (ignored, (negated, directoriesOnly, matchers)) =>
       if (paths.exists { case (path, directory) => (!directoriesOnly || directory) && matchers.exists(_.matches(path)) }) !negated
       else ignored
