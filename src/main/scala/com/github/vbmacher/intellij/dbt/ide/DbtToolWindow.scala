@@ -44,11 +44,14 @@ import scala.util.Try
 final class DbtToolWindowFactory extends ToolWindowFactory {
   override def createToolWindowContent(project: Project, toolWindow: ToolWindow): Unit = {
     val panel = new DbtToolWindowPanel(project)
+    val tests = new DbtTestPanel(project)
     val manager = toolWindow.getContentManager
-    Vector("Lineage" -> panel.lineagePanel, "Runner" -> panel.runnerPanel, "Status" -> panel.statusPanel).foreach { case (name, component) =>
+    Vector("Lineage" -> panel.lineagePanel, "Runner" -> panel.runnerPanel, "Tests" -> tests, "Status" -> panel.statusPanel).foreach { case (name, component) =>
       val content = ContentFactory.getInstance().createContent(component, name, false)
       manager.addContent(content)
     }
+    Disposer.register(manager, tests)
+    tests.refresh()
     Disposer.register(manager, panel)
     panel.refresh(follow = true)
   }

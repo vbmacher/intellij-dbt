@@ -83,7 +83,8 @@ private[ide] object DbtCommand {
         else if (action != "Generate Docs" && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {
           val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
-          val command = if (action == "Generate Docs") Vector("docs", "generate") else Vector(if (action == "Preview") "show" else action.toLowerCase)
+          val command = if (action == "Generate Docs") Vector("docs", "generate") else if (action == "Source Freshness") Vector("source", "freshness") else Vector(if (action == "Preview") "show" else action.toLowerCase)
+          val structured = if (Set("Run", "Build", "Test", "Source Freshness")(action)) Vector("--log-format", "json") else Vector.empty
           val select = if (action == "Generate Docs" || all) Vector.empty else Vector("--select") ++ selectors
           val incremental = DbtRunSelection.selectedModels(w, selection).exists(s =>
             DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
@@ -101,10 +102,12 @@ private[ide] object DbtCommand {
   }
 }
 
-private[ide] final case class DbtRunnerEvent(running: Boolean, message: String, refresh: Boolean = false, preview: Option[String] = None)
+private[ide] final case class DbtRunnerEvent(running: Boolean, message: String, refresh: Boolean = false, preview: Option[String] = None,
+  result: Option[DbtQueryResult] = None, execution: Option[DbtExecutionRun] = None, command: Option[DbtCommand] = None)
 
 @Service(Array(Service.Level.PROJECT))
 final class DbtRunner(project: Project) extends Disposable {
+  private val evidence = project.getService(classOf[DbtExecutionEvidence])
   private val busy = new AtomicBoolean(false)
   private val cancelled = new AtomicBoolean(false)
   @volatile private var disposed = false
@@ -128,11 +131,12 @@ final class DbtRunner(project: Project) extends Disposable {
     if (disposed || !busy.compareAndSet(false, true)) false
     else {
       cancelled.set(false)
+      evidence.begin(command)
       console.print(command.arguments.mkString(" ") + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-      fire(DbtRunnerEvent(running = true, s"${command.action} running"))
+      fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = evidence.active, command = Some(command)))
       AppExecutorUtil.getAppExecutorService.execute(() => {
         if (disposed || cancelled.get()) onUi {
-          busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled"))
+          busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled", execution = evidence.finish(command, canceled = true), command = Some(command)))
         }
         else try {
           val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
@@ -142,8 +146,11 @@ final class DbtRunner(project: Project) extends Disposable {
           handler = process
           val output = new StringBuilder
           process.addProcessListener(new ProcessListener {
-            override def onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key[_]): Unit =
+            override def onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key[_]): Unit = {
               output.synchronized { if (output.length < 10000000) output.append(event.getText) }
+              evidence.stream(event.getText)
+              evidence.active.foreach(run => onUi { fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = Some(run))) })
+            }
             override def processTerminated(event: ProcessEvent): Unit = {
               val wasCancelled = cancelled.get()
               val success = event.getExitCode == 0 && !wasCancelled
@@ -174,7 +181,7 @@ final class DbtRunner(project: Project) extends Disposable {
             busy.set(false); handler = null
             val message = "Cannot launch dbt: " + Option(error.getMessage).getOrElse(error.toString) + ". Check the executable in dbt Workspace settings."
             console.print(message + "\n", ConsoleViewContentType.ERROR_OUTPUT)
-            fire(DbtRunnerEvent(running = false, message)); DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
+            fire(DbtRunnerEvent(running = false, message, execution = evidence.finish(command, canceled = cancelled.get()), command = Some(command))); DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
           }
         }
       })

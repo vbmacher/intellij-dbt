@@ -45,6 +45,7 @@
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.intellij.modules.json</depends>
     <depends>com.intellij.modules.jcef</depends>
+    <depends>intellij.testRunner.plugin</depends>
     <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
