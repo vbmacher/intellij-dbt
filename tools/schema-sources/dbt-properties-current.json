@@ -1,0 +1,1920 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt properties (current)",
+  "type": "object",
+  "properties": {
+    "version": {
+      "enum": [
+        2
+      ]
+    },
+    "models": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/resource"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "seeds": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/resource"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "snapshots": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/resource"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "sources": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/source"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "macros": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/macro"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "exposures": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "object"
+              },
+              "depends_on": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "semantic_models": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "columns": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "data_type": {
+                          "type": "string"
+                        },
+                        "tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "data_tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "constraints": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "config": {
+                          "type": "object",
+                          "properties": {
+                            "materialized": {
+                              "type": "string",
+                              "description": "Materialization, including custom adapter materializations."
+                            },
+                            "enabled": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "\\{[{%]"
+                                }
+                              ]
+                            },
+                            "tags": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "contract": {
+                              "type": "object",
+                              "properties": {
+                                "enforced": {
+                                  "anyOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": true
+                            },
+                            "unique_key": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "meta": {
+                              "type": "object"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": true
+                        },
+                        "meta": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "materialized": {
+                    "type": "string",
+                    "description": "Materialization, including custom adapter materializations."
+                  },
+                  "enabled": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  },
+                  "tags": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "contract": {
+                    "type": "object",
+                    "properties": {
+                      "enforced": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": true
+                  },
+                  "unique_key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "type": "object"
+                  }
+                },
+                "required": [],
+                "additionalProperties": true
+              },
+              "tags": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "data_tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "meta": {
+                "type": "object"
+              },
+              "versions": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "type": [
+                            "number",
+                            "string"
+                          ]
+                        },
+                        "defined_in": {
+                          "type": "string"
+                        },
+                        "columns": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "data_type": {
+                                    "type": "string"
+                                  },
+                                  "tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "data_tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "constraints": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "type": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [],
+                                          "additionalProperties": true
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "config": {
+                                    "type": "object",
+                                    "properties": {
+                                      "materialized": {
+                                        "type": "string",
+                                        "description": "Materialization, including custom adapter materializations."
+                                      },
+                                      "enabled": {
+                                        "anyOf": [
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "string",
+                                            "pattern": "\\{[{%]"
+                                          }
+                                        ]
+                                      },
+                                      "tags": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "contract": {
+                                        "type": "object",
+                                        "properties": {
+                                          "enforced": {
+                                            "anyOf": [
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [],
+                                        "additionalProperties": true
+                                      },
+                                      "unique_key": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "meta": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [],
+                                    "additionalProperties": true
+                                  },
+                                  "meta": {
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "name"
+                                ],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "metrics": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "columns": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "data_type": {
+                          "type": "string"
+                        },
+                        "tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "data_tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "constraints": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "config": {
+                          "type": "object",
+                          "properties": {
+                            "materialized": {
+                              "type": "string",
+                              "description": "Materialization, including custom adapter materializations."
+                            },
+                            "enabled": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "\\{[{%]"
+                                }
+                              ]
+                            },
+                            "tags": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "contract": {
+                              "type": "object",
+                              "properties": {
+                                "enforced": {
+                                  "anyOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": true
+                            },
+                            "unique_key": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "meta": {
+                              "type": "object"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": true
+                        },
+                        "meta": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "materialized": {
+                    "type": "string",
+                    "description": "Materialization, including custom adapter materializations."
+                  },
+                  "enabled": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  },
+                  "tags": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "contract": {
+                    "type": "object",
+                    "properties": {
+                      "enforced": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": true
+                  },
+                  "unique_key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "type": "object"
+                  }
+                },
+                "required": [],
+                "additionalProperties": true
+              },
+              "tags": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "data_tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "meta": {
+                "type": "object"
+              },
+              "versions": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "type": [
+                            "number",
+                            "string"
+                          ]
+                        },
+                        "defined_in": {
+                          "type": "string"
+                        },
+                        "columns": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "data_type": {
+                                    "type": "string"
+                                  },
+                                  "tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "data_tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "constraints": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "type": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [],
+                                          "additionalProperties": true
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "config": {
+                                    "type": "object",
+                                    "properties": {
+                                      "materialized": {
+                                        "type": "string",
+                                        "description": "Materialization, including custom adapter materializations."
+                                      },
+                                      "enabled": {
+                                        "anyOf": [
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "string",
+                                            "pattern": "\\{[{%]"
+                                          }
+                                        ]
+                                      },
+                                      "tags": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "contract": {
+                                        "type": "object",
+                                        "properties": {
+                                          "enforced": {
+                                            "anyOf": [
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [],
+                                        "additionalProperties": true
+                                      },
+                                      "unique_key": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "meta": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [],
+                                    "additionalProperties": true
+                                  },
+                                  "meta": {
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "name"
+                                ],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "saved_queries": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "columns": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "data_type": {
+                          "type": "string"
+                        },
+                        "tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "data_tests": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "constraints": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "config": {
+                          "type": "object",
+                          "properties": {
+                            "materialized": {
+                              "type": "string",
+                              "description": "Materialization, including custom adapter materializations."
+                            },
+                            "enabled": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "\\{[{%]"
+                                }
+                              ]
+                            },
+                            "tags": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "contract": {
+                              "type": "object",
+                              "properties": {
+                                "enforced": {
+                                  "anyOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": true
+                            },
+                            "unique_key": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "\\{[{%]"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "meta": {
+                              "type": "object"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": true
+                        },
+                        "meta": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "materialized": {
+                    "type": "string",
+                    "description": "Materialization, including custom adapter materializations."
+                  },
+                  "enabled": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  },
+                  "tags": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "contract": {
+                    "type": "object",
+                    "properties": {
+                      "enforced": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": true
+                  },
+                  "unique_key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "\\{[{%]"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "type": "object"
+                  }
+                },
+                "required": [],
+                "additionalProperties": true
+              },
+              "tags": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "data_tests": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "meta": {
+                "type": "object"
+              },
+              "versions": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "type": [
+                            "number",
+                            "string"
+                          ]
+                        },
+                        "defined_in": {
+                          "type": "string"
+                        },
+                        "columns": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "data_type": {
+                                    "type": "string"
+                                  },
+                                  "tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "data_tests": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "constraints": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "type": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [],
+                                          "additionalProperties": true
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\{[{%]"
+                                      }
+                                    ]
+                                  },
+                                  "config": {
+                                    "type": "object",
+                                    "properties": {
+                                      "materialized": {
+                                        "type": "string",
+                                        "description": "Materialization, including custom adapter materializations."
+                                      },
+                                      "enabled": {
+                                        "anyOf": [
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "string",
+                                            "pattern": "\\{[{%]"
+                                          }
+                                        ]
+                                      },
+                                      "tags": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "contract": {
+                                        "type": "object",
+                                        "properties": {
+                                          "enforced": {
+                                            "anyOf": [
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [],
+                                        "additionalProperties": true
+                                      },
+                                      "unique_key": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              {
+                                                "type": "string",
+                                                "pattern": "\\{[{%]"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "meta": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [],
+                                    "additionalProperties": true
+                                  },
+                                  "meta": {
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "name"
+                                ],
+                                "additionalProperties": true
+                              }
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "unit_tests": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "given": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "string"
+                        },
+                        "rows": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": {}
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\{[{%]"
+                            }
+                          ]
+                        },
+                        "fixture": {
+                          "type": "string"
+                        },
+                        "format": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "input"
+                      ],
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              },
+              "expect": {
+                "type": "object",
+                "properties": {
+                  "rows": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {}
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  },
+                  "fixture": {
+                    "type": "string"
+                  },
+                  "format": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "name",
+              "model",
+              "given",
+              "expect"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    }
+  },
+  "required": [],
+  "additionalProperties": true,
+  "patternProperties": {
+    "^functions$": false
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt project (current)",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "config-version": {
+      "enum": [
+        2
+      ]
+    },
+    "profile": {
+      "type": "string"
+    },
+    "version": {
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "require-dbt-version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string",
+              "pattern": "\\{[{%]"
+            }
+          ]
+        }
+      ]
+    },
+    "model-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "macro-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "seed-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "snapshot-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "analysis-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "test-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "docs-paths": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "vars": {
+      "type": "object"
+    },
+    "models": {
+      "type": "object"
+    },
+    "seeds": {
+      "type": "object"
+    },
+    "snapshots": {
+      "type": "object"
+    },
+    "flags": {
+      "type": "object"
+    },
+    "dispatch": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "macro_namespace": {
+                "type": "string"
+              },
+              "search_order": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{[{%]"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "macro_namespace",
+              "search_order"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": true
+}

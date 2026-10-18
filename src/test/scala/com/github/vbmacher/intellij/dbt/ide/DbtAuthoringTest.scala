@@ -82,6 +82,18 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     val version = configure("models/version_report.sql", "select * from {{ ref('versioned', v='<caret>') }}")
     assertEquals(Set("1", "2"), DbtCompletion.suggestions(version, myFixture.getCaretOffset).map(_.text).toSet)
   }
+  def testOfflineSchemasSelectVersionAndIgnoreUnrelatedYaml(): Unit = {
+    project()
+    val properties = add("models/schema.yml", "models: [{name: orders, columns: wrong}]\n")
+    val unrelated = add("models/service.yml", "services: {http: {port: 8080}}\n")
+    val providers = new DbtYamlSchemaProvider().getProviders(getProject).asScala
+    val selected = providers.filter(_.isAvailable(properties.getVirtualFile))
+    assertEquals(Vector("dbt properties (current)"), selected.map(_.getName).toVector)
+    assertNotNull(selected.head.getSchemaFile)
+    assertTrue(providers.forall(!_.isAvailable(unrelated.getVirtualFile)))
+    add(".dbt-navigation.yml", "dbt-version: '1.7'\n")
+    assertEquals(Vector("dbt properties (queries)"), providers.filter(_.isAvailable(properties.getVirtualFile)).map(_.getName).toVector)
+  }
   def testJoinAndFilterDependenciesAreSeparateFromValueDerivation(): Unit = {
     schema()
     val file = configure("models/report.sql", "select a.id from {{ ref('orders') }} a join {{ ref('orders') }} b on a.id = b.id where b.amount > 0<caret>")

@@ -105,6 +105,9 @@
         <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesHandlerFactory" order="first"/>
         <referencesSearch implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferencesSearch"/>
     </extensions>
+    <extensions defaultExtensionNs="JavaScript">
+        <JsonSchema.ProviderFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtYamlSchemaProvider"/>
+    </extensions>
     <actions>
         <action id="Dbt.ChangeImpact" class="com.github.vbmacher.intellij.dbt.ide.DbtImpactAction" text="dbt Change Impact">
             <add-to-group group-id="ToolsMenu" anchor="last"/>

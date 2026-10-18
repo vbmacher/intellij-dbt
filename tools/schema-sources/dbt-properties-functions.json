@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt properties (Core 1.11+)",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "dbt-properties-current.json#/properties/version"
+    },
+    "models": {
+      "$ref": "dbt-properties-current.json#/properties/models"
+    },
+    "seeds": {
+      "$ref": "dbt-properties-current.json#/properties/seeds"
+    },
+    "snapshots": {
+      "$ref": "dbt-properties-current.json#/properties/snapshots"
+    },
+    "sources": {
+      "$ref": "dbt-properties-current.json#/properties/sources"
+    },
+    "macros": {
+      "$ref": "dbt-properties-current.json#/properties/macros"
+    },
+    "exposures": {
+      "$ref": "dbt-properties-current.json#/properties/exposures"
+    },
+    "semantic_models": {
+      "$ref": "dbt-properties-current.json#/properties/semantic_models"
+    },
+    "metrics": {
+      "$ref": "dbt-properties-current.json#/properties/metrics"
+    },
+    "saved_queries": {
+      "$ref": "dbt-properties-current.json#/properties/saved_queries"
+    },
+    "unit_tests": {
+      "$ref": "dbt-properties-current.json#/properties/unit_tests"
+    },
+    "functions": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "dbt-common.json#/definitions/resource"
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}
