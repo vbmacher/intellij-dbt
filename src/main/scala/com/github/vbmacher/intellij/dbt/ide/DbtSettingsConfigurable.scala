@@ -26,6 +26,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   }
   private val artifacts = new JBTextField
   private val target = new JBTextField
+  private val stateDirectory = new TextFieldWithBrowseButton
+  private val defer = new JBCheckBox("Defer unselected upstream resources to baseline state")
+  private val favorState = new JBCheckBox("Favor baseline relations (dbt Core 1.4+)")
   private val limit = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1))
   private val colors = new JBCheckBox("Colored output")
   private val notifications = new JBCheckBox("Desktop notifications when dbt commands finish")
@@ -64,10 +67,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     profiles.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
       .withTitle("Select dbt profiles directory")
       .withDescription("Choose the directory containing profiles.yml."))
+    stateDirectory.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
+      .withTitle("Select baseline state directory").withDescription("Choose a separate directory containing manifest.json."))
     executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
     exposures.setToolTipText("Show dashboards, notebooks, and other downstream consumers defined as dbt exposures, with their dependency links in the lineage graph.")
     val rows = Vector("Owning dbt root" -> root, "dbt executable" -> executable, "Executable arguments" -> executableArguments, "Project root override" -> projectRoot,
       "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Active target (blank uses profile default)" -> target,
+      "Baseline state directory" -> stateDirectory, "" -> defer, "" -> favorState,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream depth" -> upstream,
       "Downstream depth" -> downstream, "Layout direction" -> direction, "Edge style" -> edges, "" -> exposures)
     rows.zipWithIndex.foreach { case ((label, field), index) =>
@@ -99,19 +105,25 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     profiles.setText(o.profilesDirectory)
     artifacts.setText(o.artifactDirectory)
     target.setText(o.target)
+    stateDirectory.setText(o.stateDirectory)
+    defer.setSelected(o.defer)
+    favorState.setSelected(o.favorState)
     limit.setValue(Int.box(o.previewLimit.max(1).min(1000)))
     colors.setSelected(o.colors)
     notifications.setSelected(o.notifications)
   }
 
   private def readOptions(): DbtRunOptions = {
-    val o = new DbtRunOptions
+    val o = drafts.getOrElse(selectedRoot, new DbtRunOptions).copy()
     o.executable = executable.getText.trim
     o.executableArguments = executableArguments.getText.trim
     o.projectRoot = projectRoot.getText.trim
     o.profilesDirectory = profiles.getText.trim
     o.artifactDirectory = artifacts.getText.trim
     o.target = target.getText.trim
+    o.stateDirectory = stateDirectory.getText.trim
+    o.defer = defer.isSelected
+    o.favorState = favorState.isSelected
     o.previewLimit = limit.getValue.asInstanceOf[Number].intValue()
     o.colors = colors.isSelected
     o.notifications = notifications.isSelected
@@ -149,6 +161,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     executable.dispose()
     projectRoot.dispose()
     profiles.dispose()
+    stateDirectory.dispose()
   }
 
   override def apply(): Unit = {

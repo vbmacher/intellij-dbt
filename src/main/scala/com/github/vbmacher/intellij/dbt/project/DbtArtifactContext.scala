@@ -17,9 +17,15 @@ private[dbt] object DbtArtifactContext {
     val profiles = DbtExecutionContext.profiles(root).directory.normalize()
     val inputs = Vector(profiles.resolve("profiles.yml").toString, directory.resolve("dbt_project.yml").toString,
       directory.resolve("vars.yml").toString) ++ root.setting("run-config")
+    val state = root.runOptions.stateDirectory.trim
+    val baseline = if (state.isEmpty) Vector.empty else {
+      val path = directory.resolve(state).resolve("manifest.json").normalize().toString
+      Vector(path, root.psiFile(path).map(_.getModificationStamp.toString).getOrElse("unavailable"))
+    }
     val configuration = inputs.flatMap(path => Vector(path, root.psiFile(path).map(_.getText).getOrElse(""))) ++
       root.envFiles.flatMap(file => Vector(file.getVirtualFile.getPath, file.getText)) ++
-      Vector(root.runOptions.executable, root.runOptions.executableArguments)
+      Vector(root.runOptions.executable, root.runOptions.executableArguments, state, root.runOptions.defer.toString,
+        root.runOptions.favorState.toString) ++ baseline
     Vector(directory.toString, DbtExecutionContext.activeTarget(root).getOrElse(""), textDigest(configuration.mkString("\u0000")))
   }
   def record(directory: String, context: Vector[String]): Unit = {

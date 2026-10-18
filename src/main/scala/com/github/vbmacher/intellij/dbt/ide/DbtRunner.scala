@@ -69,6 +69,13 @@ private[ide] object DbtCommand {
         val target = DbtExecutionContext.activeTarget(root).getOrElse("")
         val all = selection.directory && (selection.path.isEmpty || selection.path == root.directory.getPath)
         val selectors = if (all) Vector.empty else DbtRunSelection.selectors(w, selection)
+        val stateFlags = if (Set("Generate Docs", "Source Freshness")(action)) Right(Vector.empty[String]) else for {
+          _ <- Either.cond(!options.defer || root.engine == "core", (), "Core deferral flags are unavailable for the configured engine.")
+          _ <- Either.cond(!options.favorState || options.defer && root.engine == "core" && root.supports(4), (), "Favor state requires deferral and dbt Core 1.4+.")
+          directory <- if (options.stateDirectory.nonEmpty || options.defer || options.favorState)
+            DbtState.manifest(root).flatMap(_ => DbtState.baseline(root)).map(Some(_)) else Right(None)
+        } yield directory.toVector.flatMap(path => Vector("--state", path.toString)) ++
+          (if (options.defer) Vector("--defer") else Vector.empty) ++ (if (options.favorState) Vector("--favor-state") else Vector.empty)
         if (!Actions.contains(action)) Left("Unknown dbt command.")
         else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
           Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
@@ -84,7 +91,7 @@ private[ide] object DbtCommand {
           val preview = if (action == "Preview") Vector("--limit", options.previewLimit.max(1).min(1000).toString, "--output", "json") else Vector.empty
           val profiles = DbtExecutionContext.profiles(root).directory.toString
           val artifact = root.artifactDirectory
-          Right(DbtCommand(prefix ++ command ++ select ++ refresh ++ preview ++
+          stateFlags.map(flags => DbtCommand(prefix ++ command ++ structured ++ select ++ refresh ++ preview ++ flags ++
             (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
             directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
             action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root)))

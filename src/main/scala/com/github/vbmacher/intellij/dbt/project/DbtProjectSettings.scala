@@ -18,10 +18,13 @@ final class DbtRunOptions {
   @BeanProperty var notifications: Boolean = true
   @BeanProperty var selection: String = ""
   @BeanProperty var exclude: String = ""
+  @BeanProperty var stateDirectory: String = ""
+  @BeanProperty var defer: Boolean = false
+  @BeanProperty var favorState: Boolean = false
 
   def values: Vector[Any] =
     Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications,
-      selection, exclude)
+      selection, exclude, stateDirectory, defer, favorState)
 
   def copy(): DbtRunOptions = {
     val c = new DbtRunOptions
@@ -36,6 +39,9 @@ final class DbtRunOptions {
     c.notifications = notifications
     c.selection = selection
     c.exclude = exclude
+    c.stateDirectory = stateDirectory
+    c.defer = defer
+    c.favorState = favorState
     c
   }
 }

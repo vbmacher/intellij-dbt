@@ -177,7 +177,46 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"))
   toolbar.add(configure)
   val north = new JPanel(new BorderLayout)
-  north.add(configuration, BorderLayout.NORTH)
+  val selectionBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
+  selectionExpression.setName("dbt.selection")
+  selectionExclude.setName("dbt.exclude")
+  selectionExpression.setToolTipText("Optional dbt selector expression, such as tag:finance+. Overrides the model/directory selection.")
+  selectionBar.add(new JBLabel("Selection:")); selectionBar.add(selectionExpression)
+  selectionBar.add(new JBLabel("Exclude:")); selectionBar.add(selectionExclude); selectionBar.add(selectionPreview)
+  selectionPreview.addActionListener(_ => {
+    saveSelection()
+    val rootPath = context.root
+    val currentSelection = context.selection
+    ReadAction.nonBlocking(new Callable[String] {
+      override def call(): String = {
+        val w = DbtWorkspace.get(project)
+        w.roots.find(r => rootPath.contains(r.directory.getPath)).map { root =>
+          val expression = if (root.runOptions.selection.trim.nonEmpty) root.runOptions.selection
+            else currentSelection.filter(s => s.path.nonEmpty && s.path != root.directory.getPath)
+              .map(DbtRunSelection.selectors(w, _).mkString(" ")).getOrElse("")
+          val result = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, root.runOptions.exclude)
+          "Local selector preview · " + root.name + " · target: " + DbtExecutionContext.activeTarget(root).getOrElse("profile default") +
+            "\nMatched resources: " + result.resources.size + "\n" + result.resources.map(_.uniqueId).mkString("\n") +
+            (if (result.problems.nonEmpty) "\nIncomplete: " + result.problems.mkString("\n") else "") +
+            (if (root.runOptions.stateDirectory.nonEmpty) "\n\nBaseline: " + root.runOptions.stateDirectory + "\n" +
+              DbtState.compare(w, root).fold(identity, _.map(c => s"${c.status}: ${c.id} — ${c.reason} ${c.relation}").mkString("\n")) +
+              DbtState.preview(w, root, expression, root.runOptions.exclude).fold(error => "\n" + error, plan =>
+                "\n\nBuild locally (static preview):\n" + plan.selected.map(_.uniqueId).mkString("\n") +
+                  "\n\nUnselected upstream dependencies:\n" + plan.dependencies.map(d =>
+                    s"${d.resolution}: ${d.id} ${d.relation}\n  ${d.reason}\n  ${d.evidence}").mkString("\n") +
+                  (if (plan.problems.nonEmpty) "\nIncomplete: " + plan.problems.mkString("; ") else "")) else "") +
+            "\n\nCommand:\n" + (if (root.runOptions.selection.trim.nonEmpty) DbtCommand.selection(w, root, "Build", fullRefresh = false)
+              else currentSelection.toRight("Choose a model or directory in the Runner.")
+                .flatMap(DbtCommand.create(w, _, "Build", fullRefresh = false))).fold(identity, _.arguments.mkString(" "))
+        }.getOrElse("Choose an owning dbt project in the Runner.")
+      }
+    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (text: String) => {
+      DbtTextDialog.show("dbt selection and state", text)
+    }).submit(AppExecutorUtil.getAppExecutorService)
+  })
+  val configurationRows = new JPanel(new BorderLayout)
+  configurationRows.add(configuration, BorderLayout.NORTH); configurationRows.add(selectionBar, BorderLayout.SOUTH)
+  north.add(configurationRows, BorderLayout.NORTH)
   north.add(toolbar, BorderLayout.CENTER)
   north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)

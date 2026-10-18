@@ -66,6 +66,26 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertEquals("select customer_key from {{ ref('orders') }}", report.getText)
     assertTrue(yaml.getText.contains("events, columns: [{name: customer_id}]"))
   }
+  def testSelectionCommandsUseExactIdentitiesAndNeverOverwriteBaseline(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\n")
+    add("dbt_packages/pkg/models/orders.sql", "select 2 as id")
+    val root = w.roots.find(_.name == "analytics").get
+    val options = root.runOptions; options.selection = "orders"
+    val command = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
+    assertTrue(command.arguments.contains("fqn:analytics.orders")); assertFalse(command.arguments.contains("fqn:pkg.orders"))
+    val modelSelection = DbtRunSelection.available(w).find(_.path == root.directory.getPath + "/models/orders.sql").get
+    assertEquals("select 1 as id", DbtCommand.create(w, modelSelection, "Preview", fullRefresh = false).toOption.get.sourceSql)
+    options.stateDirectory = "target"; options.defer = true
+    assertTrue(DbtCommand.selection(w, root, "Build", fullRefresh = false).left.toOption.get.contains("separate"))
+    options.stateDirectory = "baseline"
+    add("baseline/manifest.json", "{\"metadata\":{\"dbt_schema_version\":\"https://schemas.getdbt.com/dbt/manifest/v12.json\"},\"nodes\":{\"model.analytics.orders\":{\"raw_code\":\"select 0 as id\",\"columns\":{\"id\":{}},\"relation_name\":\"PROD.ANALYTICS.ORDERS\"}}}")
+    val changes = DbtState.compare(w, root).toOption.get
+    assertTrue(changes.exists(c => c.id == "model.analytics.orders" && c.status == "modified"))
+    val deferred = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
+    assertTrue(deferred.arguments.contains("--defer")); assertTrue(deferred.arguments.contains(root.directory.getPath + "/baseline"))
+  }
   def testNativeCaretTargetsUnusedSqlDefinitionsBeforeTheModel(): Unit = {
     project()
     val file = configure("models/orders.sql", "with un<caret>used as (select 1 as id) select 2 as total")
