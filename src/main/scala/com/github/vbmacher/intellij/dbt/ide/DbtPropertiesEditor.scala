@@ -140,6 +140,7 @@ private[ide] object DbtPropertiesEditor {
       private var proposed = Option.empty[DbtPropertyEdit]
       yaml.setEditable(false)
       private val sync = new JButton("Sync columns and preview YAML")
+      private val inherit = new JButton("Inherit empty descriptions")
       private var columns = data.columns.map(c => c.copy(description = w.columns(resource).find(_.name == c.name)
         .flatMap(_.mapping).flatMap(DbtYaml.string(_, "description")).getOrElse(c.description)))
       private val tableModel = new javax.swing.table.DefaultTableModel(Array[AnyRef]("Column", "Type", "Description"), 0) {
@@ -167,12 +168,19 @@ private[ide] object DbtPropertiesEditor {
         }
       })
       sync.addActionListener(_ => preview())
+      inherit.addActionListener(_ => {
+        readColumns()
+        val inherited = DbtColumnLineage.inherited(w, resource).map { case (name, text, _) => name -> text }.toMap
+        columns = columns.map(c => if (c.description.isEmpty) c.copy(description = inherited.getOrElse(c.name, "")) else c)
+        columns.indices.foreach(i => tableModel.setValueAt(columns(i).description, i, 2))
+        preview()
+      })
       private val diff = new JButton("View YAML diff")
       diff.addActionListener(_ => { preview(); proposed.foreach(edit => {
         val factory = DiffContentFactory.getInstance()
         DiffManager.getInstance().showDiff(w.project, new SimpleDiffRequest(edit.path, factory.create(edit.before), factory.create(edit.after), "Current source", "Proposed properties"))
       }) })
-      val actions = new JPanel; actions.add(sync); actions.add(diff)
+      val actions = new JPanel; actions.add(sync); actions.add(inherit); actions.add(diff)
       val editor = new JPanel(new BorderLayout); editor.add(new JBLabel("Description (doc() expressions are preserved):"), BorderLayout.NORTH)
       editor.add(new JBScrollPane(description), BorderLayout.CENTER)
       val fields = new JPanel(new java.awt.GridLayout(2, 2)); fields.add(new JBLabel("Tags (comma-separated):")); fields.add(tags)

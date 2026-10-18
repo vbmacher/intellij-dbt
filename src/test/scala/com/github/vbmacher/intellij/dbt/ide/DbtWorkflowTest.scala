@@ -81,6 +81,13 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertEquals(Set("id", "amount"), w.columns(model("orders")).map(_.name).toSet)
     assertEquals("Amount", DbtResourceData.get(w, model("orders")).columns.find(_.name == "amount").get.description)
   }
+  def testInheritedDescriptionsRequireProvenPassthrough(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id, 2 as amount")
+    add("models/schema.yml", "models: [{name: orders, columns: [{name: id, description: Identifier}, {name: amount, description: Amount}]}]")
+    add("models/report.sql", "with a as (select id, amount * 2 as gross from {{ ref('orders') }}) select id as key, gross from a")
+    assertEquals(Vector("key"), DbtColumnLineage.inherited(w, model("report")).map(_._1))
+  }
   def testSelectionCommandsUseExactIdentitiesAndNeverOverwriteBaseline(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id")
