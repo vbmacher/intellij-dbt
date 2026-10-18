@@ -64,6 +64,15 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     val result = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), file).get
     assertTrue(result.issues.nonEmpty); assertTrue(result.wildcards.isEmpty)
   }
+  def testExpandQualifiedWildcardPreservesSqlAndDoesNotExpandCount(): Unit = {
+    schema()
+    configure("models/report.sql", "select o.<caret>* from {{ ref('orders') }} o")
+    try myFixture.launchAction(myFixture.findSingleIntention("Expand dbt SQL columns"))
+    catch { case e: AssertionError => throw new AssertionError("After intention: PSI=" + myFixture.getFile.getText + " DOCUMENT=" + myFixture.getEditor.getDocument.getText, e) }
+    assertEquals("select o.id, o.amount from {{ ref('orders') }} o", myFixture.getFile.getText)
+    configure("models/count.sql", "select count(<caret>*) from {{ ref('orders') }}")
+    assertFalse(myFixture.getAvailableIntentions.asScala.exists(_.getText == "Expand dbt SQL columns"))
+  }
   def testMacroSignatureIncludesDefaultAndDocumentedType(): Unit = {
     project()
     add("macros/money.sql", "{% macro money(amount, scale=2) %}{{ amount }}{% endmacro %}")

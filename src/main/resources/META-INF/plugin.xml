@@ -82,6 +82,10 @@
         <fileDocumentManagerListener implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormatOnSave"/>
         <localInspection language="" shortName="DbtSqlFluff" displayName="SQLFluff diagnostics (run Inspect dbt SQL)" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlFluffInspection"/>
         <localInspection language="" shortName="DbtStaticAnalysis" displayName="dbt SQL, macro arguments and contracts" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtStaticInspection"/>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtExpandColumnsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
         <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
