@@ -6,7 +6,9 @@ import com.intellij.navigation.ItemPresentation
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.impl.light.LightElement
-import com.intellij.psi.{PsiElement, PsiFile, PsiNamedElement, SmartPointerManager}
+import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile, PsiNamedElement, SmartPointerManager}
+import com.github.vbmacher.intellij.dbt.syntax.DbtSyntax
+import com.intellij.util.IncorrectOperationException
 import org.jetbrains.yaml.psi.{YAMLMapping, YAMLSequence}
 
 import javax.swing.Icon
@@ -62,7 +64,8 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def relationName: String = if (kind == "source_table") s"$owner.$name" else name
 
   def sameResource(other: DbtSymbol): Boolean =
-    kind == other.kind && namespace == other.namespace && name == other.name && version == other.version
+    kind == other.kind && namespace == other.namespace && name == other.name && version == other.version &&
+      (!Set("source_table", "column")(kind) || owner == other.owner)
 
   def metadataSuffix: String = if (isStale) " (stale metadata)" else if (metadata) " (metadata)" else ""
 
@@ -78,6 +81,11 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
   extends LightElement(symbol.file.getManager, DbtSymbolLanguage.Instance) with PsiNamedElement {
   private val pointer = SmartPointerManager.getInstance(symbol.file.getProject)
     .createSmartPsiFileRangePointer(symbol.file, symbol.range)
+  private var deletion = Option.empty[com.intellij.psi.SmartPsiFileRange]
+  private var insertOutputAlias = false
+  private[dbt] def prepareOutputAliasRename(): Unit = { insertOutputAlias = true }
+  private[dbt] def prepareSourceDeletion(range: TextRange): Unit =
+    deletion = Some(SmartPointerManager.getInstance(getProject).createSmartPsiFileRangePointer(symbol.file, range))
 
   override def getName: String = symbol.name
 
@@ -91,7 +99,44 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
     override def getIcon(unused: Boolean): Icon = DbtSymbolElement.icon(symbol.kind)
   }
 
-  override def setName(name: String): PsiElement = throw new UnsupportedOperationException("dbt rename is not supported")
+  override def setName(name: String): PsiElement = {
+    if (!isWritable || !DbtSyntax.isIdentifier(name)) throw new IncorrectOperationException("Choose a writable source definition and a valid dbt identifier.")
+    if (symbol.isCode) {
+      val extension = symbol.file.getVirtualFile.getExtension
+      if (!symbol.attributes.contains("defined_in")) symbol.file.setName(name + symbol.version.map("_v" + _).getOrElse("") + "." + extension)
+    } else {
+      val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
+      if (insertOutputAlias || symbol.attributes.contains("insert-output-alias")) document.insertString(getTextRange.getEndOffset, " as " + name)
+      else {
+        val existing = document.getText(getTextRange)
+        val quote = existing.headOption.filter(c => Set('"', '\'', '`')(c) && existing.lastOption.contains(c))
+        document.replaceString(getTextRange.getStartOffset, getTextRange.getEndOffset, quote.fold(name)(q => s"$q$name$q"))
+      }
+      PsiDocumentManager.getInstance(getProject).commitDocument(document)
+    }
+    this
+  }
+
+  override def delete(): Unit = {
+    if (!isWritable) throw new IncorrectOperationException("Choose a writable source definition.")
+    if (deletion.nonEmpty) deletion.flatMap(p => Option(p.getRange)).foreach { range =>
+      val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
+      document.deleteString(range.getStartOffset, range.getEndOffset)
+      PsiDocumentManager.getInstance(getProject).commitDocument(document)
+    }
+    else if (symbol.isCode) symbol.file.delete()
+    else if (symbol.isProperty || symbol.kind == "column" && symbol.mapping.nonEmpty) symbol.mapping.foreach(m => m.getParent.delete())
+    else if (symbol.kind == "macro") {
+      val blocks = DbtSyntax.inFile(symbol.file)
+      val start = blocks.find(b => b.isTag("macro") && b.range.contains(getTextRange))
+      val end = start.flatMap(s => blocks.find(b => b.isTag("endmacro") && b.range.getStartOffset > s.range.getStartOffset))
+      (for (a <- start; b <- end) yield (a, b)).foreach { case (a, b) =>
+        val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
+        document.deleteString(a.range.getStartOffset, b.range.getEndOffset)
+        PsiDocumentManager.getInstance(getProject).commitDocument(document)
+      }
+    } else throw new IncorrectOperationException("Safe deletion of this SQL definition requires an explicit projection edit.")
+  }
 
   override def getContainingFile: PsiFile = symbol.file
 
@@ -106,7 +151,8 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
 
   override def isValid: Boolean = symbol.file.isValid && pointer.getRange != null
 
-  override def isWritable: Boolean = false
+  override def isWritable: Boolean = !symbol.metadata && symbol.file.isWritable &&
+    DbtWorkspace.get(getProject).owner(symbol).exists(r => DbtWorkspace.get(getProject).packageOwner(r).isEmpty)
 
   override def navigate(requestFocus: Boolean): Unit =
     if (symbol.kind == "documentation") getProject.getService(classOf[DbtDocumentationNavigation]).show(this)

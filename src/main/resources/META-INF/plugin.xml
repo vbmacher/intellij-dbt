@@ -75,6 +75,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <completion.contributor language="any" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtCompletionContributor"/>
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
+        <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
         <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <lang.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>

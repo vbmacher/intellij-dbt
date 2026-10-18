@@ -10,6 +10,18 @@ final class DbtNavigationReference private[dbt] (file: PsiFile, range: TextRange
   extends PsiPolyVariantReferenceBase[PsiFile](file, range, true) {
   override def multiResolve(incompleteCode: Boolean): Array[ResolveResult] = candidates.distinct.map(new PsiElementResolveResult(_)).toArray
   override def getCanonicalText: String = label
+  override def handleElementRename(newName: String): PsiElement = {
+    val workspace = DbtWorkspace.get(file.getProject)
+    val models = candidates.collect { case e: DbtSymbolElement if e.symbol.kind == "model" => e.symbol }
+    val family = models.size == candidates.size && models.nonEmpty && models.map(s =>
+      (s.namespace, s.name, workspace.owner(s))).distinct.size == 1
+    if (!com.github.vbmacher.intellij.dbt.syntax.DbtSyntax.isIdentifier(newName) || candidates.size != 1 && !family)
+      throw new com.intellij.util.IncorrectOperationException("Ambiguous reference '" + label + "' cannot be renamed: " + candidates.map(_.toString).mkString(", "))
+    val document = PsiDocumentManager.getInstance(file.getProject).getDocument(file)
+    document.replaceString(getRangeInElement.getStartOffset, getRangeInElement.getEndOffset, newName)
+    PsiDocumentManager.getInstance(file.getProject).commitDocument(document)
+    file
+  }
   override def isReferenceTo(element: PsiElement): Boolean = candidates.exists { candidate =>
     (candidate, element) match {
       case (a: DbtSymbolElement, _) if a.symbol.kind == "documentation" => false
