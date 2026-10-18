@@ -11,6 +11,16 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def w = DbtWorkspace.get(getProject)
   private def model(name: String) = w.symbols.find(s => s.isCode && s.name == name).get
+  def testSelectionIntersectionExcludesAndNamedSelectors(): Unit = {
+    project()
+    add("models/a.sql", "{{ config(tags=['finance']) }} select 1")
+    add("models/b.sql", "select * from {{ ref('a') }}")
+    add("models/c.sql", "select 3")
+    add("selectors.yml", "selectors:\n- name: finance\n  definition:\n    union:\n    - a+\n    - exclude: b\n")
+    assertEquals(Set("a", "b"), DbtSelection.resolve(w, w.roots.head, "a+").resources.map(_.name).toSet)
+    assertEquals(Vector("a"), DbtSelection.resolve(w, w.roots.head, "selector:finance").resources.map(_.name))
+    assertTrue(DbtSelection.resolve(w, w.roots.head, "unsupported:foo").problems.nonEmpty)
+  }
   def testNativeRenameUpdatesOnlyResolvingReferencesAndYaml(): Unit = {
     project()
     val source = add("models/orders.sql", "{{ config(alias='warehouse_orders') }} select 1 as id")

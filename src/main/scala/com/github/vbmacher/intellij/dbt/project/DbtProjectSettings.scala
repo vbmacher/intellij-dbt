@@ -16,9 +16,12 @@ final class DbtRunOptions {
   @BeanProperty var previewLimit: Int = 10
   @BeanProperty var colors: Boolean = true
   @BeanProperty var notifications: Boolean = true
+  @BeanProperty var selection: String = ""
+  @BeanProperty var exclude: String = ""
 
   def values: Vector[Any] =
-    Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications)
+    Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications,
+      selection, exclude)
 
   def copy(): DbtRunOptions = {
     val c = new DbtRunOptions
@@ -31,6 +34,8 @@ final class DbtRunOptions {
     c.previewLimit = previewLimit
     c.colors = colors
     c.notifications = notifications
+    c.selection = selection
+    c.exclude = exclude
     c
   }
 }

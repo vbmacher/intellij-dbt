@@ -68,6 +68,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val runSelection = new TextFieldWithBrowseButton
   private val target = new JComboBox[String]()
   private val executableArguments = new JBTextField(24)
+  private val selectionExpression = new JBTextField(24)
+  private val selectionExclude = new JBTextField(18)
+  private val selectionPreview = new JButton("Review selection")
   private val fullRefresh = new JCheckBox("Full Refresh")
   private val stop = new JButton("Stop", AllIcons.Actions.Suspend)
   private val preview = new JBTextArea
@@ -334,6 +337,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val pendingTarget = targetText
         val targetEdited = pendingTarget != loadedTarget
         context = next
+        if (changedRoot) {
+          selectionExpression.setText(context.root.map(settings.options(_).selection).getOrElse(""))
+          selectionExclude.setText(context.root.map(settings.options(_).exclude).getOrElse(""))
+        }
         context.root.foreach(settings.getState.runnerRoot = _)
         if (changedRoot || executableArguments.getText == loadedArguments) {
           loadedArguments = context.root.map(settings.options(_).executableArguments).getOrElse("")
@@ -400,6 +407,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   private def start(action: String): Unit = WriteIntentReadAction.run(() => {
+    saveSelection()
     saveTarget()
     saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
@@ -407,8 +415,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val requestedRefresh = fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
       override def call(): Either[String, DbtCommand] =
-        selection.toRight("Choose a model or directory in the Runner.").flatMap(selected =>
-          DbtCommand.create(DbtWorkspace.get(project), selected, action, requestedRefresh))
+        selection.toRight("Choose a model or directory in the Runner.").flatMap { selected =>
+          val w = DbtWorkspace.get(project)
+          val root = DbtRunSelection.owner(w, selected).map(w.executionRoot)
+          root.filter(_.runOptions.selection.trim.nonEmpty).fold(DbtCommand.create(w, selected, action, requestedRefresh))(
+            DbtCommand.selection(w, _, action, requestedRefresh))
+        }
     }).expireWith(this).inSmartMode(project).withDocumentsCommitted(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
       case Right(command) => WriteIntentReadAction.run(() => {
         FileDocumentManager.getInstance().saveAllDocuments()

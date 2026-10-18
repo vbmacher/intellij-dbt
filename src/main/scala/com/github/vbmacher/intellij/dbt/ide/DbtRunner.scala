@@ -29,7 +29,32 @@ private[ide] final case class DbtCommand(arguments: Vector[String], directory: S
   action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String])
 
 private[ide] object DbtCommand {
-  val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs")
+  val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
+  def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
+    val options = root.runOptions
+    val expression = options.selection.trim
+    val resolved = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
+    val stateSelection = expression.split("\\s+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
+    val state = if (options.defer || options.favorState || stateSelection || options.stateDirectory.nonEmpty) DbtState.manifest(root).map(_ => ()) else Right(())
+    for {
+      _ <- state
+      _ <- Either.cond(!options.favorState || options.defer, (), "Favor state requires deferral.")
+      _ <- Either.cond(!options.favorState || root.engine == "core" && root.supports(4), (), "Favor state is supported only for configured dbt Core 1.4+.")
+      _ <- Either.cond(resolved.complete || stateSelection && resolved.problems.forall(_.contains("state:")), (), resolved.problems.mkString("\n"))
+      _ <- Either.cond(stateSelection || resolved.resources.nonEmpty, (), "Selection matches no resources.")
+      _ <- Either.cond(action != "Preview", (), "Use a model or CTE for Preview.")
+      all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
+      base <- create(w, all, action, fullRefresh)
+    } yield {
+      val selections = if (action == "Generate Docs" || expression.isEmpty) Vector.empty
+      else if (stateSelection) Vector("--select") ++ expression.split("\\s+").filter(_.nonEmpty)
+      else Vector("--select") ++ resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).distinct
+      // Preserve explicit exclusions as well: dbt may otherwise select their tests indirectly.
+      val excludes = if (action == "Generate Docs" || options.exclude.trim.isEmpty) Vector.empty
+      else Vector("--exclude") ++ options.exclude.trim.split("\\s+")
+      base.copy(arguments = base.arguments ++ selections ++ excludes)
+    }
+  }
   def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
     val selected = if (requested.path.isEmpty && requested.directory)
       DbtRunSelection.all(w, requested.root).filter(_.root == requested.root)
