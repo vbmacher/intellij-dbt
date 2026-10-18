@@ -7,7 +7,7 @@ import com.intellij.psi.{PsiElement, PsiFile}
 import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping}
 
 /** dbt's resolution rules shared by the languages hosting references. */
-private[navigation] object DbtResolution {
+private[dbt] object DbtResolution {
   /** Versioned declarations: the requested version, or the single latest version, or the unversioned ones. */
   def versioned(defs: Vector[DbtSymbol], requested: Option[String]): Vector[DbtSymbol] = {
     val latest = defs.flatMap(_.attributes.get("latest_version")).distinct

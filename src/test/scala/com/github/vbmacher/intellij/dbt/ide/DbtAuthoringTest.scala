@@ -6,6 +6,38 @@ import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
 final class DbtAuthoringTest extends DbtCodeInsightTestCase {
+  def testBundledTemplatesLoadThroughNativeTemplateSettings(): Unit = {
+    val settings = com.intellij.codeInsight.template.impl.TemplateSettings.getInstance()
+    Vector("dbtref", "dbtsource", "dbtconfig").foreach(name =>
+      assertNotNull(name, settings.getTemplate(name, "dbt")))
+  }
+  private def schema(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id, 2 as amount")
+    add("models/schema.yml", "models: [{name: orders, columns: [{name: id, data_type: int, description: Identifier}, {name: amount, data_type: decimal}]}]\n" +
+      "sources: [{name: raw, tables: [{name: events, columns: [{name: event_id}]}]}, {name: crm, tables: [{name: customers}]}]\n")
+  }
+  def testNativeRefCompletionPreservesQuotesAndCaret(): Unit = {
+    schema()
+    configure("models/report.sql", "select * from {{ ref('ord<caret>') }}")
+    val items = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString)
+    if (items.nonEmpty) {
+      assertTrue(items.contains("orders"))
+      myFixture.getLookup.setCurrentItem(myFixture.getLookupElements.find(_.getLookupString == "orders").get)
+      myFixture.finishLookup('\n')
+    }
+    assertEquals("select * from {{ ref('orders') }}", myFixture.getFile.getText)
+    assertEquals("select * from {{ ref('orders".length, myFixture.getCaretOffset)
+  }
+  def testSourceTablesAreScopedAndRefreshAfterUnsavedChanges(): Unit = {
+    schema()
+    val file = configure("models/report.sql", "select * from {{ source('raw', '<caret>') }}")
+    def names = DbtCompletion.suggestions(file, myFixture.getCaretOffset).map(_.text)
+    assertEquals(Vector("events"), names)
+    val properties = DbtWorkspace.get(getProject).files.find(_.getName == "schema.yml").get
+    edit(properties, properties.getText.replace("name: events", "name: activity"))
+    assertEquals(Vector("activity"), names)
+  }
   def testLineageDistinguishesPassthroughAndCalculation(): Unit = {
     schema()
     val file = configure("models/report.sql", "select o.id as order_id, o.amount * 2 as gross from {{ ref('orders') }} o<caret>")
@@ -26,6 +58,24 @@ final class DbtAuthoringTest extends DbtCodeInsightTestCase {
     edit(file, "select * from unknown_relation")
     val result = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), file).get
     assertTrue(result.issues.nonEmpty); assertTrue(result.wildcards.isEmpty)
+  }
+  def testMacroSignatureIncludesDefaultAndDocumentedType(): Unit = {
+    project()
+    add("macros/money.sql", "{% macro money(amount, scale=2) %}{{ amount }}{% endmacro %}")
+    add("macros/schema.yml", "macros: [{name: money, arguments: [{name: amount, type: decimal}]}]")
+    val w = DbtWorkspace.get(getProject)
+    val m = w.symbols.find(s => s.kind == "macro" && !s.isProperty).get
+    assertEquals(Vector("amount: decimal", "scale=2"), DbtCompletion.parameters(w, m).map(_._2))
+  }
+  def testCompletionKeepsModelVersionsSeparateAndHandlesUnfinishedQuote(): Unit = {
+    schema()
+    add("models/versioned_v1.sql", "select 1 as id")
+    add("models/versioned_v2.sql", "select 2 as id")
+    add("models/versions.yml", "models: [{name: versioned, latest_version: 2, versions: [{v: 1}, {v: 2}]}]")
+    val file = configure("models/report.sql", "select * from {{ ref('ord<caret>")
+    assertTrue(DbtCompletion.suggestions(file, myFixture.getCaretOffset).exists(_.text == "orders"))
+    val version = configure("models/version_report.sql", "select * from {{ ref('versioned', v='<caret>') }}")
+    assertEquals(Set("1", "2"), DbtCompletion.suggestions(version, myFixture.getCaretOffset).map(_.text).toSet)
   }
   def testJoinAndFilterDependenciesAreSeparateFromValueDerivation(): Unit = {
     schema()
