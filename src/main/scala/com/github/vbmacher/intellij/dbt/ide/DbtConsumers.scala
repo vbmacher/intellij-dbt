@@ -44,7 +44,8 @@ final class DbtConsumers(project: Project) {
   def hasSecret: Boolean = Option(PasswordSafe.getInstance().getPassword(credential)).exists(_.nonEmpty)
   def setSecret(secret: String): Unit = PasswordSafe.getInstance().set(credential, if (secret.isEmpty) null else new Credentials("api-key", secret))
   def clear(): Unit = { cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Refresh Metabase metadata explicitly.") }
-  def refresh(w: DbtWorkspace): DbtConsumersCache = try {
+  def refresh(w: DbtWorkspace): DbtConsumersCache = refresh(w, Duration.ofSeconds(10))
+  private[ide] def refresh(w: DbtWorkspace, requestTimeout: Duration): DbtConsumersCache = try {
     val url = project.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl
     val key = Option(PasswordSafe.getInstance().getPassword(credential)).filter(_.nonEmpty)
     if (DbtAirflow.safeUrl(url).isEmpty || key.isEmpty) {
@@ -55,11 +56,15 @@ final class DbtConsumers(project: Project) {
       def get(path: String): Either[String, JsonElement] = try {
         com.intellij.openapi.progress.ProgressManager.checkCanceled()
         if (System.nanoTime() > deadline) return Left("Metabase refresh exceeded the 60 second limit.")
-        val request = HttpRequest.newBuilder(URI.create(url.stripSuffix("/") + path)).timeout(Duration.ofSeconds(10))
+        val requestDeadline = math.min(deadline, System.nanoTime() + requestTimeout.toNanos)
+        val request = HttpRequest.newBuilder(URI.create(url.stripSuffix("/") + path)).timeout(requestTimeout)
           .header("x-api-key", key.get).GET().build()
         val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
         val stream = response.body()
-        val bytes = try stream.readNBytes(4000001) finally stream.close()
+        val body = java.util.concurrent.CompletableFuture.supplyAsync(() => stream.readNBytes(4000001))
+        val bytes = try {
+          body.get(math.max(1L, requestDeadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS)
+        } finally { body.cancel(true); stream.close() }
         if (response.statusCode() == 401 || response.statusCode() == 403) Left("Permission denied. Check the Metabase API key and metadata permissions.")
         else if (response.statusCode() != 200) Left("Metabase metadata request failed (HTTP " + response.statusCode() + ").")
         else if (bytes.length > 4000000) Left("Metabase response exceeds the 4 MB metadata limit.")

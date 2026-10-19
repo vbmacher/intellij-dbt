@@ -81,5 +81,77 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue(DbtImpact.validationCommand(both, result.copy(affected = result.affected :+ (foreign -> Vector.empty))).isLeft)
   }
 
+  def testMetabasePhysicalCollisionsAndStaleMetadataNeverBecomeDirectLineage(): Unit = {
+    project()
+    val declaration = "sources: [{name: raw, database: warehouse, schema: landing, tables: [{name: orders, identifier: physical_orders, columns: [{name: amount}]}]}]\n"
+    add("models/sources.yml", declaration)
+    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
+    add("dbt_packages/pkg/models/sources.yml", declaration)
+    val card = json("""{"id":7,"name":"Revenue","dataset_query":{"query":{"source-table":42,"fields":[["field",99,null]]}}}""")
+    val table = json("""{"id":42,"db_name":"warehouse","schema":"landing","name":"physical_orders","fields":[{"id":99,"name":"amount"}]}""")
+    val w = workspace
+    val matches = DbtConsumers.mapQuestions(w, "https://metabase.test", Vector(card), Vector(table))
+    assertEquals(Set("source.analytics.raw.orders", "source.pkg.raw.orders"), matches.map(_.resource.split("\\|").last).toSet)
+    assertTrue(matches.forall(_.confidence.startsWith("inferred")))
+    val local = new DbtWorkspace(getProject, w.roots, w.files, w.symbols.filter(s => w.owner(s).contains(root)).map(s =>
+      if (s.kind == "source_table") s.copy(attributes = s.attributes.updated("stale", "true")) else s))
+    assertTrue(DbtConsumers.mapQuestions(local, "https://metabase.test", Vector(card), Vector(table)).forall(_.confidence.startsWith("inferred")))
+    table.addProperty("db_name", "unrelated_target")
+    assertTrue(DbtConsumers.mapQuestions(w, "https://metabase.test", Vector(card), Vector(table)).isEmpty)
+  }
+
+  def testMetabaseDisconnectedFreshnessAndCredentialSettingsStayExplicitAndSecretFree(): Unit = {
+    project()
+    val service = getProject.getService(classOf[DbtConsumers])
+    assertTrue(service.snapshot.status.contains("Disconnected"))
+    assertEquals(0L, service.snapshot.refreshedAt)
+    assertTrue(service.refresh(workspace).status.contains("Configure"))
+    assertTrue(DbtConsumersCache(Vector.empty, System.currentTimeMillis() - 16 * 60 * 1000, "Metadata refreshed").stale)
+    assertFalse(DbtConsumersCache(Vector.empty, System.currentTimeMillis(), "Metadata refreshed").stale)
+    service.setSecret("acceptance-secret-must-not-export")
+    assertTrue(service.hasSecret)
+    val settings = getProject.getService(classOf[DbtConsumersSettings])
+    val configurable = new DbtConsumersConfigurable(getProject)
+    val panel = configurable.createComponent().asInstanceOf[javax.swing.JPanel]
+    configurable.apply()
+    assertTrue("Blank API key retains Password Safe credential", service.hasSecret)
+    val serialized = JDOMUtil.writeElement(XmlSerializer.serialize(settings.getState))
+    assertFalse(serialized.contains("acceptance-secret-must-not-export"))
+    assertFalse(service.snapshot.toString.contains("acceptance-secret-must-not-export"))
+    panel.getComponents.collectFirst { case box: JCheckBox if box.getText == "Remove saved Metabase API key" => box }.get.setSelected(true)
+    configurable.apply()
+    assertFalse(service.hasSecret)
+  }
+
+  def testMetabaseStalledResponseBodyTimesOutWithoutReplacingTheCache(): Unit = {
+    project()
+    val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    val started = new java.util.concurrent.CountDownLatch(1)
+    val release = new java.util.concurrent.CountDownLatch(1)
+    server.createContext("/api/card", exchange => {
+      exchange.sendResponseHeaders(200, 1000)
+      exchange.getResponseBody.write('['.toInt)
+      exchange.getResponseBody.flush()
+      started.countDown()
+      try release.await(5, java.util.concurrent.TimeUnit.SECONDS)
+      finally exchange.close()
+    })
+    server.start()
+    val service = getProject.getService(classOf[DbtConsumers])
+    try {
+      getProject.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl = "http://127.0.0.1:" + server.getAddress.getPort
+      service.setSecret("bounded-fixture-key")
+      val before = service.snapshot
+      val start = System.nanoTime()
+      val result = service.refresh(workspace, java.time.Duration.ofMillis(500))
+      assertTrue("Server sent headers and stalled the response body", started.await(1, java.util.concurrent.TimeUnit.SECONDS))
+      assertTrue("Response body deadline must bound the call", System.nanoTime() - start < java.util.concurrent.TimeUnit.SECONDS.toNanos(3))
+      assertEquals(before.refreshedAt, result.refreshedAt)
+      assertEquals(before.consumers, result.consumers)
+      assertTrue(result.status.contains("unavailable"))
+      assertFalse(result.toString.contains("bounded-fixture-key"))
+    } finally { release.countDown(); server.stop(0) }
+  }
+
 
 }
