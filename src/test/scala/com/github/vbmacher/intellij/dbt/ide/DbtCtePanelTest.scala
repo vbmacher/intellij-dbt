@@ -45,6 +45,9 @@ import json,os,sys,time
 args=sys.argv[1:]
 with open('calls.jsonl','a') as f: f.write(json.dumps(args)+'\n')
 while os.path.exists('hold'): time.sleep(.01)
+if os.path.exists('fail'):
+ print('query failed at CTE',file=sys.stderr,flush=True)
+ sys.exit(1)
 print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True)
 """)
     assertTrue(executable.toFile.setExecutable(true))
@@ -159,6 +162,73 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     await("Continue stops after the breakpoint frame") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
     flushReads()
     assertEquals(1, calls(f).size)
+  }
+
+  def testStepIntoRefAtTheEndOfACteOpensTheExactReferencedModelWithoutQuerying(): Unit = {
+    val f = setup("with orders as (select * from {{ ref('upstream') }}) select * from orders")
+    add("models/upstream.sql", "with base as (select 1 as id) select * from base")
+    val manager = com.intellij.openapi.wm.ToolWindowManager.getInstance(getProject)
+    val window = Option(manager.getToolWindow("dbt")).getOrElse {
+      val registered = manager.registerToolWindow(com.intellij.openapi.wm.RegisterToolWindowTask.notClosable("dbt",
+        com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM))
+      Disposer.register(getTestRootDisposable, () => manager.unregisterToolWindow("dbt"))
+      registered
+    }
+    val originalContents = window.getContentManager.getContents.toVector
+    val list = components(f.panel).collectFirst { case l: JList[_] => l }.get
+    list.setSelectedIndex(0)
+    try {
+      click(f.panel, "Step into referenced model")
+      await("Step into opens the referenced source model even when its ref is the last SQL token") {
+        window.getContentManager.getContents.exists(_.getDisplayName == "Inspect: upstream.sql")
+      }
+      val content = window.getContentManager.getContents.find(_.getDisplayName == "Inspect: upstream.sql").get
+      val nested = content.getComponent.asInstanceOf[DbtCtePanel]
+      val nestedFrames = components(nested).collectFirst { case l: JList[_] => l }.get
+      assertEquals(1, nestedFrames.getModel.getSize)
+      assertEquals("base", nestedFrames.getModel.getElementAt(0))
+      assertTrue("Opening the referenced inspector must not execute a query", calls(f).isEmpty)
+      assertFalse(f.runner.isRunning)
+      click(nested, "Step")
+      await("Only an explicit nested Step executes its CTE") { calls(f).size == 1 && !f.runner.isRunning && rows(nested) == 1 }
+      val query = calls(f).head(calls(f).head.indexOf("--inline") + 1)
+      assertEquals("with base as (select 1 as id)\nselect * from base", query)
+    } finally window.getContentManager.getContents.filterNot(originalContents.contains).foreach(content =>
+      window.getContentManager.removeContent(content, true))
+  }
+
+  def testQueryFailureStopsContinueAndRestartRetriesTheFirstFrameWithoutOldResults(): Unit = {
+    val f = setup()
+    Files.writeString(f.directory.resolve("fail"), "")
+    click(f.panel, "Continue to breakpoint")
+    await("A failed frame finishes") { calls(f).size == 1 && !f.runner.isRunning }
+    flushReads()
+    assertEquals("Continue must stop after a query error", 1, calls(f).size)
+    assertEquals(0, rows(f.panel))
+    assertTrue(messages(f.panel), messages(f.panel).contains("exit 1"))
+    Files.delete(f.directory.resolve("fail"))
+    click(f.panel, "Restart")
+    assertEquals(1, calls(f).size)
+    click(f.panel, "Step")
+    await("Restart explicitly retries the first frame") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    assertEquals(calls(f).head(calls(f).head.indexOf("--inline") + 1), calls(f).last(calls(f).last.indexOf("--inline") + 1))
+  }
+
+  def testCountingAFrameDoesNotReplaceItsCachedPreviewOrAdvanceTheStack(): Unit = {
+    val f = setup()
+    click(f.panel, "Step")
+    await("First CTE preview completes") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    click(f.panel, "Count all rows")
+    await("Explicit complete count finishes") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    assertTrue(calls(f).last(calls(f).last.indexOf("--inline") + 1).endsWith("select count(*) as full_row_count from a"))
+    click(f.panel, "Step")
+    await("Step still advances to the second CTE") { calls(f).size == 3 && !f.runner.isRunning && rows(f.panel) == 1 }
+    assertTrue(calls(f).last(calls(f).last.indexOf("--inline") + 1).endsWith("select * from b"))
+    click(f.panel, "Step Back")
+    assertEquals(3, calls(f).size)
+    val table = components(f.panel).collectFirst { case t: JTable => t }.get
+    assertTrue(String.valueOf(table.getValueAt(0, 0)).endsWith("select * from a"))
+    assertFalse(String.valueOf(table.getValueAt(0, 0)).contains("count(*)"))
   }
 
   def testPlanningAtFinalSelectCteReferenceUsesItsExactDefinitionAndDependencies(): Unit = {
