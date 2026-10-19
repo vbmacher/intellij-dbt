@@ -11,6 +11,9 @@ private[dbt] final case class DbtSqlColumn(name: String, range: TextRange, input
   direct: Boolean, expression: String, complete: Boolean, dataType: Option[String] = None, outputAlias: Boolean = false,
   contextInputs: Vector[(DbtSymbol, String)] = Vector.empty)
 private[dbt] final case class DbtSqlProblem(range: TextRange, message: String)
+private[dbt] final case class DbtSqlSuppressionComment(range: TextRange, ids: String, file: Boolean)
+private[dbt] final case class DbtSqlSuppressionStatement(range: TextRange, first: Int)
+private[dbt] final case class DbtSqlSuppressionLayout(statements: Vector[DbtSqlSuppressionStatement], comments: Vector[DbtSqlSuppressionComment])
 private[dbt] final case class DbtSqlScope(range: TextRange, relations: Vector[(String, Vector[DbtSymbol])], complete: Boolean)
 private[dbt] final case class DbtCte(name: String, range: TextRange, body: TextRange, dependencies: Vector[String], sql: String)
 private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scopes: Vector[DbtSqlScope],
@@ -21,6 +24,9 @@ private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scop
 }
 
 private[dbt] object DbtSqlAnalysis {
+  def suppressionLayout(file: PsiFile): DbtSqlSuppressionLayout =
+    DbtReferenceProvider.EP.getExtensionList.asScala.iterator.flatMap(_.sqlSuppressionLayout(file)).nextOption()
+      .getOrElse(DbtSqlSuppressionLayout(Vector.empty, Vector.empty))
   def forCompletion(w: DbtWorkspace, file: PsiFile, offset: Int): Option[DbtSqlAnalysis] =
     DbtReferenceProvider.EP.getExtensionList.asScala.iterator.flatMap(_.sqlAnalysis(file, w, Some(offset))).nextOption()
   private val Cache = Key.create[java.util.concurrent.ConcurrentHashMap[String, DbtSqlAnalysis]]("dbt.sql.analysis")

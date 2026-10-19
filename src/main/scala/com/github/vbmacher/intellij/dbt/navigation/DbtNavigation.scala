@@ -21,6 +21,7 @@ private[dbt] trait DbtReferenceProvider {
   def relationRanges(sql: String): Vector[TextRange] = Vector.empty
 
   def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[DbtSqlAnalysis] = None
+  def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] = None
   def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = None
   def withPrefix(text: String, end: Int): Option[String] = None
 }

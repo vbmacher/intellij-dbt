@@ -28,6 +28,9 @@ private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
   override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis] =
     DbtSqlAnalyzer.analyze(file, workspace, completionOffset)
 
+  override def sqlSuppressionLayout(file: PsiFile): Option[com.github.vbmacher.intellij.dbt.navigation.DbtSqlSuppressionLayout] =
+    Option(file.getVirtualFile).filter(_.getExtension == "sql").map(_ => DbtSqlSuppression.layout(file))
+
   override def references(context: DbtNavigationContext): Vector[DbtNavigationReference] =
     DbtSqlNavigation.references(context.file, context.workspace, context.root, context.found)
 }

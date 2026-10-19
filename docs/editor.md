@@ -69,6 +69,21 @@ Macro warnings identify unknown keyword arguments when one macro definition is
 known and it does not accept arbitrary keywords. They do not check argument counts
 or supplied value types.
 
+For SQL warnings, open **Alt+Enter** and the
+**Inspection 'dbt SQL, macro arguments and contracts' options** submenu. Choose
+**Suppress for statement** or **Suppress for file**. Statement suppression adds
+a comment before the SQL statement and applies through its semicolon or the end
+of the file:
+
+```sql
+-- noinspection DbtStaticAnalysis
+select o.external_column from {{ ref('orders') }} o;
+```
+
+File suppression adds `--file: noinspection DbtStaticAnalysis` before the first
+statement. Remove the comment or use Undo to restore the warnings. These comments
+apply to this inspection.
+
 Project, dependency, selector and resource-property YAML files receive key/value
 completion, hover help and structural warnings. Supported keys follow the
 [engine and version](configuration.md#engine-and-version). Jinja values and custom
