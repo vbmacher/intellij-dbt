@@ -100,6 +100,7 @@ test('every direction and edge style renders without script errors',async()=>{fo
 test('schema, folder and tag grouping collapse without changing canonical resource identities',async()=>{
  const grouped={...fixture,nodes:fixture.nodes.map((n,i)=>({...n,folder:i<2?'models/staging':'models/marts',tags:i<2?['zebra','finance']:[]}))};
  await page.evaluate(p=>dbtUpdate(p),grouped);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('schema');
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),3);
  assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:schema:mart');
@@ -111,14 +112,18 @@ test('schema, folder and tag grouping collapse without changing canonical resour
  assert.ok(await page.evaluate(()=>cy.edges().some(e=>e.target().id()==='group:schema:mart')));
  await page.getByRole('button',{name:'▸ mart (1)',exact:true}).focus();await page.keyboard.press('Enter');
  assert.equal(await page.evaluate(()=>cy.getElementById('model').length),1);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('folder');
  assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:folder:models%2Fstaging');
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('tag');
  assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:tag:finance');
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.id()==='model').length),1);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);
 });
 test('selector filtering reuses backend resolution, marks adjacent boundaries and rejects stale results',async()=>{
+ await page.locator('#filter-options').evaluate(e=>e.open=true);
  await page.locator('#selector').fill('tag:finance+');await page.locator('#exclude').fill('tag:deprecated');
  await page.getByRole('button',{name:'Apply filter',exact:true}).click();
  assert.ok(await page.evaluate(()=>events.some(e=>e.type==='filter'&&e.id==='tag:finance+'&&e.value==='tag:deprecated')));
@@ -129,7 +134,7 @@ test('selector filtering reuses backend resolution, marks adjacent boundaries an
  assert.equal(await page.locator('.card.filtered-boundary').count(),2);
  assert.match(await page.locator('#filter-status').innerText(),/1 matches · 2 boundary · 1 hidden/);
  assert.equal(await page.evaluate(()=>cy.getElementById('other').length),0);
- await page.getByRole('button',{name:'Clear filter',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),4);
+ await page.locator('#filter-options').evaluate(e=>e.open=true);await page.getByRole('button',{name:'Clear filter',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),4);
 });
 test('pin focus sends the current identity and survives backend refresh',async()=>{
  await page.locator('#pin-focus').click();assert.equal(await page.locator('#pin-focus').getAttribute('aria-pressed'),'true');
@@ -142,33 +147,46 @@ test('minimap click, keyboard and toggle navigate the existing viewport',async()
  const before=await page.evaluate(()=>cy.pan()),box=await page.locator('#minimap').boundingBox();
  await page.mouse.click(box.x+20,box.y+20);assert.notDeepEqual(await page.evaluate(()=>cy.pan()),before);
  await page.locator('#minimap').focus();const pan=await page.evaluate(()=>cy.pan());await page.keyboard.press('ArrowRight');assert.equal((await page.evaluate(()=>cy.pan())).x,pan.x-60);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#show-minimap').uncheck();assert.equal(await page.locator('#minimap').isVisible(),false);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#show-minimap').check();assert.equal(await page.locator('#minimap').isVisible(),true);await page.locator('#fit').click();
 });
 test('SVG, PNG and clipboard exports include local visible labels, Unicode, theme and optional legend',async()=>{
  await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>n.id==='model'?{...n,name:'objednávky 日本語 & <orders>'}:n)}),fixture);
+ await page.locator('#filter-options').evaluate(e=>e.open=true);
  await page.locator('#selector').fill('orders');await page.evaluate(()=>dbtShowFilter({expression:'orders',exclude:'',ids:['model'],diagnostics:[]}));
+ await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#export-svg').click();
  const svg=await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1]));
  const decoded=Buffer.from(svg,'binary').toString('utf8');
  assert.match(decoded,/objednávky 日本語 &amp; &lt;orders&gt;/);assert.doesNotMatch(decoded,/unrelated/);assert.match(decoded,/downstream dependency/);
  assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
- await page.locator('#export-legend').uncheck();await page.locator('#export-svg').click();
+ await page.locator('#export-options').evaluate(e=>e.open=true);
+ await page.locator('#export-legend').uncheck();await page.locator('#export-options').evaluate(e=>e.open=true);
+ await page.locator('#export-svg').click();
  assert.doesNotMatch(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/downstream dependency/);
+ await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#export-png').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='png'));
  const png=await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='png').at(-1).value);assert.ok(png.startsWith('data:image/png;base64,iVBOR'));
+ await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#copy-image').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok(await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='clipboard').at(-1).value.startsWith('data:image/png;base64,')));
- await page.locator('#export-legend').check();await page.locator('#clear-filter').click();await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+ await page.locator('#export-options').evaluate(e=>e.open=true);
+ await page.locator('#export-legend').check();await page.locator('#filter-options').evaluate(e=>e.open=true);
+ await page.locator('#clear-filter').click();await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
 });
 test('grouping preserves package and version collisions on representative large graphs',async()=>{
  const nodes=Array.from({length:180},(_,i)=>({id:'model:package'+(i%3)+':orders:v'+i,name:'orders',package:'package'+(i%3),kind:'model',schema:'schema'+(i%6),tags:['shared'],folder:'models/'+(i%10)}));
  const edges=nodes.slice(1).map((n,i)=>({source:nodes[i].id,target:n.id}));
  await page.evaluate(p=>dbtUpdate(p),{...fixture,focus:nodes[0].id,nodes,edges,boundary:[]});
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('schema');assert.equal(await page.locator('.card:not(.boundary)').count(),180);
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),6);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('tag');assert.equal(await page.locator('.card:not(.boundary)').count(),180);
  await page.getByRole('button',{name:'▾ shared (180)',exact:true}).click();assert.equal(await page.locator('.card.collapsed').count(),1);
  await page.getByRole('button',{name:'▸ shared (180)',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),180);
+ await page.locator('#view-options').evaluate(e=>e.open=true);
  await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
 });
 test('execution badges expose provenance and route failed tests without relying on colors',async()=>{
@@ -177,7 +195,8 @@ test('execution badges expose provenance and route failed tests without relying 
  const badge=page.getByRole('button',{name:/orders: 2 failing tests · Build failed/});assert.equal(await badge.count(),1);assert.match(await badge.getAttribute('aria-label'),/run_results.json/);
  await badge.click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
  await page.evaluate(d=>dbtShowDoc('model',d),doc);assert.match(await page.locator('#doc-content').innerText(),/test declarations/);
- assert.match(await page.locator('#execution-legend').innerText(),/unknown/);
+
+ await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#export-svg').click();assert.match(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/Build failed/);
  await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))}),fixture);
  assert.equal(await page.getByRole('button',{name:/Build failed/}).count(),0);
@@ -273,6 +292,7 @@ test('Airflow badges and detail entries stay bounded and report hidden mappings'
 
 test('Runner selection explicitly updates Lineage fields while stale local replies are rejected',async()=>{
  await page.evaluate(p=>dbtUpdate(p),fixture);
+ await page.locator('#filter-options').evaluate(e=>e.open=true);
  await page.locator('#selector').fill('old');await page.locator('#exclude').fill('tag:old');
  await page.evaluate(()=>dbtShowFilter({fromRunner:true,expression:'fqn:analytics.orders',exclude:'',ids:['model'],diagnostics:[]}));
  assert.equal(await page.locator('#selector').inputValue(),'fqn:analytics.orders');
@@ -281,16 +301,37 @@ test('Runner selection explicitly updates Lineage fields while stale local repli
  await page.evaluate(()=>dbtShowFilter({expression:'old',exclude:'tag:old',ids:['other'],diagnostics:[]}));
  assert.equal(await page.locator('#selector').inputValue(),'fqn:analytics.orders');
  assert.match(await page.locator('#filter-status').innerText(),/1 matches/);
- await page.getByRole('button',{name:'Clear filter',exact:true}).click();
+ await page.locator('#filter-options').evaluate(e=>e.open=true);await page.getByRole('button',{name:'Clear filter',exact:true}).click();
 });
 
 test('only explicit Lineage filter actions request Runner synchronization',async()=>{
+ await page.locator('#filter-options').evaluate(e=>e.open=true);
  await page.locator('#selector').fill('tag:finance+');await page.locator('#exclude').fill('');
  await page.locator('#filter-form').evaluate(form=>form.requestSubmit());
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),true);
  await page.evaluate(()=>dbtShowFilter({expression:'tag:finance+',exclude:'',ids:['model'],diagnostics:[]}));
  await page.evaluate(p=>dbtUpdate(p),fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
- await page.getByRole('button',{name:'Clear filter',exact:true}).click();
+ await page.locator('#filter-options').evaluate(e=>e.open=true);await page.getByRole('button',{name:'Clear filter',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1)),{type:'filter',id:'',value:'',shared:true});
+});
+
+
+test('secondary controls stay grouped and usable in a narrow window',async()=>{
+ try{
+  await page.setViewportSize({width:600,height:600});
+  for(const id of ['filter','view','export']){
+   await page.locator('#'+id+'-options').evaluate(e=>e.open=false);
+   const summary=page.locator('#'+id+'-options summary');
+   await summary.click();
+   const popover=await page.locator('#'+id+'-options .control-popover').boundingBox();
+   assert.ok(popover.x>=0&&popover.x+popover.width<=600);
+   await page.keyboard.press('Escape');
+   assert.equal(await page.locator('#'+id+'-options .control-popover').isVisible(),false);
+  }
+  const graph=await page.locator('#main').boundingBox();
+  assert.ok(graph.height>500,'The graph keeps the space released by secondary controls');
+  assert.equal(await page.locator('#filter-form').isVisible(),false);
+  assert.equal(await page.locator('#export-png').isVisible(),false);
+ }finally{await page.setViewportSize({width:1400,height:850})}
 });

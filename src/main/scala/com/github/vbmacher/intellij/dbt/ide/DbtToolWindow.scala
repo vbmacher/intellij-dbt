@@ -20,13 +20,13 @@ import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
 import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.ui.{DocumentAdapter, JBColor, OnePixelSplitter}
+import com.intellij.ui.{DocumentAdapter, JBColor}
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.IconUtil
-import java.awt.{BorderLayout, Dimension, FlowLayout, GridBagConstraints, GridBagLayout, Insets}
+import java.awt.{BorderLayout, Dimension, FlowLayout, GridBagConstraints, GridBagLayout, GridLayout, Insets}
 import java.awt.event.{FocusAdapter, FocusEvent}
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
@@ -34,7 +34,7 @@ import java.nio.file.Paths
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicLong
-import javax.swing.{JButton, JCheckBox, JComboBox, JPanel}
+import javax.swing.{JButton, JCheckBox, JComboBox, JMenuItem, JPanel, JPopupMenu, JTabbedPane, JToggleButton}
 import javax.swing.event.DocumentEvent
 import javax.imageio.ImageIO
 import scala.jdk.CollectionConverters._
@@ -46,7 +46,7 @@ final class DbtToolWindowFactory extends ToolWindowFactory {
     val panel = new DbtToolWindowPanel(project)
     val tests = new DbtTestPanel(project)
     val manager = toolWindow.getContentManager
-    Vector("Lineage" -> panel.lineagePanel, "Runner" -> panel.runnerPanel, "Tests" -> tests, "Status" -> panel.statusPanel).foreach { case (name, component) =>
+    Vector("Runner" -> panel.runnerPanel, "Lineage" -> panel.lineagePanel, "Tests" -> tests).foreach { case (name, component) =>
       val content = ContentFactory.getInstance().createContent(component, name, false)
       manager.addContent(content)
     }
@@ -58,20 +58,18 @@ final class DbtToolWindowFactory extends ToolWindowFactory {
 }
 
 private[ide] final case class DbtViewContext(root: Option[String], selection: Option[DbtRunSelection], incremental: Boolean,
-  targets: Vector[String], target: String, status: String, choices: Vector[DbtRunSelection] = Vector.empty, completions: Vector[String] = Vector.empty, currentModel: String = "", artifacts: String = "")
+  targets: Vector[String], target: String, status: String, choices: Vector[DbtRunSelection] = Vector.empty, completions: Vector[String] = Vector.empty, artifacts: String = "")
 
 /** All PSI/artifact work is performed in cancellable nonblocking read actions. Only immutable UI payloads cross to the EDT. */
 private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable {
   val lineagePanel = new JPanel(new BorderLayout)
   val runnerPanel = new JPanel(new BorderLayout)
-  val statusPanel = new JPanel(new BorderLayout)
   private val settings = DbtProjectSettings.get(project)
   private val runner = project.getService(classOf[DbtRunner])
   private val contextLabel = new JBLabel("Choose a model or directory to run commands.")
   contextLabel.setName("dbt.context")
   private val runSelection = new TextFieldWithBrowseButton
   private val target = new JComboBox[String]()
-  private val executableArguments = new JBTextField(24)
   private val selectionExpression = new JBTextField(24)
   private val selectionExclude = new JBTextField(18)
   private val selectionPreview = new JButton("Review selection")
@@ -86,16 +84,18 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var lsRequest = Option.empty[Long]
   private var cliReview = Option.empty[Vector[String]]
   private var completionItems = Vector.empty[String]
-  private val selectionShortcuts = scala.collection.mutable.ArrayBuffer.empty[JButton]
+  private val selectorToggle = new JToggleButton("dbt selectors")
+  private val selectionControls = new JPanel(new BorderLayout)
   private val fullRefresh = new JCheckBox("Full Refresh")
   private val stop = new JButton("Stop", AllIcons.Actions.Suspend)
-  private val preview = new JBTextArea
   private var lastPreviewCommand = Option.empty[DbtCommand]
   private val resultGrid = new DbtResultGrid(limit => rerunPreview(limit))
   private val previewEvidence = new DbtPreviewEvidencePanel(project)
-  private val status = new JBTextArea
   private val toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
-  private val commands = scala.collection.mutable.Map.empty[String, JButton]
+  private val command = new JComboBox[String](DbtCommand.Actions.toArray)
+  command.getAccessibleContext.setAccessibleName("dbt command")
+  private val execute = new JButton("Execute", AllIcons.Actions.Execute)
+  private val output = new JTabbedPane
   private val alarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
   private val generation = new AtomicLong
   private val docGeneration = new AtomicLong
@@ -107,7 +107,6 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
   private var fillingTarget = false
   private var fillingSelection = false
-  private var loadedArguments = ""
   private var loadedTarget = ""
   private var disposed = false
   private var followPending = false
@@ -125,7 +124,6 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       unavailable.setWrapStyleWord(true)
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
-  executableArguments.setName("dbt.executableArguments")
   runSelection.setName("dbt.runSelection")
   runSelection.setText(settings.getState.runnerSelection)
   runSelection.getTextField.asInstanceOf[JBTextField].getEmptyText.setText("All models")
@@ -143,17 +141,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   fullRefresh.setToolTipText("<html>Rebuild incremental models in the selected model or directory from all source data.<br>" +
     "Applies to Run and Build. Can take longer and use more warehouse compute.</html>")
-  executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
-  executableArguments.getDocument.addDocumentListener(new DocumentAdapter {
-    override def textChanged(event: DocumentEvent): Unit = if (executableArguments.getText != loadedArguments) invalidateReview()
-  })
-  executableArguments.addActionListener(_ => saveExecutableArguments())
-  executableArguments.addFocusListener(new FocusAdapter {
-    override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
-  })
   val configuration = new JPanel(new GridBagLayout)
-  Vector(("Target:", target, .2), ("Model or directory:", runSelection, .5),
-    ("Executable arguments:", executableArguments, .3)).zipWithIndex.foreach { case ((text, field, weight), column) =>
+  Vector(("Model or directory:", runSelection, .75), ("Target:", target, .25)).zipWithIndex.foreach { case ((text, field, weight), column) =>
     val label = new JBLabel(text)
     label.setLabelFor(field)
     val c = new GridBagConstraints
@@ -168,54 +157,70 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
     configuration.add(field, c)
   }
-  DbtCommand.Actions.foreach { name =>
-    val (icon, tooltip) = name match {
-      case "Run" => AllIcons.Actions.Execute -> "Run the selected model or directory"
-      case "Build" => AllIcons.Actions.Compile -> "Build and test the selected model or directory"
-      case "Compile" => AllIcons.Actions.Compile -> "Compile the selected model or directory"
-      case "Test" => AllIcons.RunConfigurations.TestState.Run -> "Run tests for the selected model or directory"
-      case "Preview" => AllIcons.Actions.Preview -> "Preview a single selected model"
-      case "Generate Docs" => AllIcons.Actions.PreviewDetails -> "Generate documentation for the selected execution project and target"
-      case "Source Freshness" => AllIcons.Actions.Refresh -> "Check freshness of all sources in the selected dbt project"
-    }
-    val button = new JButton(name, icon)
-    button.setToolTipText(tooltip)
-    commands(name) = button
-    button.addActionListener(_ => start(name))
-    toolbar.add(button)
-    if (name == "Build") toolbar.add(fullRefresh)
-  }
-  val clear = new JButton("Clear", AllIcons.Actions.GC)
-  clear.setToolTipText("Clear the command log and preview")
-  clear.addActionListener(_ => {
-    runner.console.clear()
-    preview.setText("")
-    lastPreviewCommand = None
-    resultGrid.clear("Run an explicit preview to see rows.")
+  command.setName("dbt.command")
+  command.setToolTipText("Choose the dbt command to run for this scope and target.")
+  command.addActionListener(_ => { invalidateReview(); updateButtons() })
+  execute.setName("dbt.execute")
+  execute.addActionListener(_ => start(command.getSelectedItem.toString))
+  toolbar.add(command)
+  toolbar.add(execute)
+  toolbar.add(stop)
+  toolbar.add(fullRefresh)
+  selectorToggle.setName("dbt.selectorToggle")
+  selectorToggle.setToolTipText("Show selector options. Clear Selection and Exclude to use the model or directory scope.")
+  selectorToggle.addActionListener(_ => {
+    selectionControls.setVisible(selectorToggle.isSelected)
+    runnerPanel.revalidate()
   })
-  toolbar.add(clear)
   stop.setToolTipText("Cancel the running dbt command")
   stop.addActionListener(_ => runner.stop())
   stop.setEnabled(false)
-  toolbar.add(stop)
-  val configure = new JButton("Settings", AllIcons.General.Settings)
-  configure.setToolTipText("Configure dbt Workspace settings")
-  configure.addActionListener(_ => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"))
-  toolbar.add(configure)
+  val more = new JButton("More…")
+  val menu = new JPopupMenu
+  Vector[(String, () => Unit)](
+    "Clear output" -> (() => {
+      runner.console.clear()
+      lastPreviewCommand = None
+      resultGrid.clear("Run a preview to see rows.")
+      previewEvidence.showEvidence(None)
+    }),
+    "Workspace details" -> (() => DbtTextDialog.show("dbt workspace details", diagnosticsText)),
+    "Settings" -> (() => ShowSettingsUtil.getInstance().showSettingsDialog(project, "dbt Workspace"))
+  ).foreach { case (label, action) =>
+    val item = new JMenuItem(label)
+    item.addActionListener(_ => action())
+    menu.add(item)
+  }
+  more.addActionListener(_ => menu.show(more, 0, more.getHeight))
+  toolbar.add(more)
   val north = new JPanel(new BorderLayout)
-  val selectionBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
+  val selectionBar = new JPanel(new GridBagLayout)
   selectionExpression.setName("dbt.selection")
   selectionExclude.setName("dbt.exclude")
   selectionExpression.setToolTipText("Optional dbt selector expression, such as tag:finance+. Overrides the model/directory selection.")
-  selectionBar.add(new JBLabel("Selection:")); selectionBar.add(selectionExpression)
-  selectionBar.add(new JBLabel("Exclude:")); selectionBar.add(selectionExclude); selectionBar.add(selectionPreview)
+  Vector("Selection:" -> selectionExpression, "Exclude:" -> selectionExclude).zipWithIndex.foreach {
+    case ((text, field), row) =>
+      val c = new GridBagConstraints
+      c.gridy = row
+      c.anchor = GridBagConstraints.WEST
+      c.insets = new Insets(3, 5, 3, 5)
+      val label = new JBLabel(text)
+      label.setLabelFor(field)
+      selectionBar.add(label, c)
+      c.gridx = 1
+      c.weightx = 1
+      c.fill = GridBagConstraints.HORIZONTAL
+      field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
+      selectionBar.add(field, c)
+  }
   selectionPreview.addActionListener(_ => {
     cliReview = None
     cliIncremental = false
     saveSelection()
-    saveTarget(); saveExecutableArguments()
+    saveTarget()
     val request = reviewRequest
-    val refresh = fullRefresh.isSelected
+    val action = command.getSelectedItem.toString
+    val refresh = fullRefresh.isSelected && (action == "Run" || action == "Build")
     val rootPath = context.root
     val currentSelection = context.selection
     ReadAction.nonBlocking(new Callable[(String, Option[DbtCommand])] {
@@ -223,7 +228,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val w = DbtWorkspace.get(project)
         w.roots.find(r => rootPath.contains(r.directory.getPath)).map { root =>
           val expression = DbtSelectionReview.expression(w, root, currentSelection)
-          val command = DbtCommand.selection(w, root, "Build", refresh, currentSelection)
+          val command = DbtCommand.selection(w, root, action, refresh, currentSelection)
           val result = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, root.runOptions.exclude)
           val text = "Local selector preview · " + root.name + " · target: " + DbtExecutionContext.activeTarget(root).getOrElse("profile default") +
             "\nMatched resources: " + result.resources.size + "\n" + result.resources.map(_.uniqueId).mkString("\n") +
@@ -243,6 +248,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       if (request == reviewRequest) {
         selectionReview.setText(result._1); selectionReview.setCaretPosition(0)
         reviewCommand = result._2
+        output.setSelectedIndex(2)
         updateButtons()
       }
     }).submit(AppExecutorUtil.getAppExecutorService)
@@ -251,17 +257,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   selectionReview.setEditable(false)
   selectionReview.setLineWrap(false)
   selectionReview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
-  val reviewControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0))
-  Vector(("Current model", "", ""), ("Upstream", "+", ""), ("Downstream", "", "+"), ("Both", "+", "+")).foreach {
-    case (label, before, after) =>
-      val button = new JButton(label)
-      button.addActionListener(_ => if (context.currentModel.nonEmpty) {
-        selectionExpression.setText(before + context.currentModel + after)
-        selectionPreview.doClick()
-      })
-      selectionShortcuts += button; reviewControls.add(button)
-  }
-  reviewControls.add(selectionLineage); reviewControls.add(selectionCopy); reviewControls.add(selectionRefresh)
+  val reviewControls = new JPanel(new GridLayout(1, 0, 5, 0))
+  reviewControls.add(selectionPreview); reviewControls.add(selectionLineage); reviewControls.add(selectionCopy); reviewControls.add(selectionRefresh)
   selectionCopy.addActionListener(_ => reviewCommand.foreach(command =>
     com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(new java.awt.datatransfer.StringSelection(
       com.intellij.util.execution.ParametersListUtil.join(command.arguments.asJava)))))
@@ -288,41 +285,40 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       override def textChanged(event: DocumentEvent): Unit = if (!fillingSelection) { saveSelection(); invalidateReview() }
     })
   }
-  val selectionControls = new JPanel(new BorderLayout)
   selectionControls.add(selectionBar, BorderLayout.NORTH)
   selectionControls.add(reviewControls, BorderLayout.CENTER)
-  selectionControls.add(new JBScrollPane(selectionReview), BorderLayout.SOUTH)
+  selectionControls.add(new JBLabel("Selection replaces the model or directory scope. Exclude removes matches."), BorderLayout.SOUTH)
+  selectionControls.setVisible(false)
   val configurationRows = new JPanel(new BorderLayout)
-  configurationRows.add(configuration, BorderLayout.NORTH); configurationRows.add(selectionControls, BorderLayout.SOUTH)
+  val selectorSection = new JPanel(new BorderLayout)
+  val selectorHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0))
+  selectorHeader.add(selectorToggle)
+  selectorSection.add(selectorHeader, BorderLayout.NORTH)
+  selectorSection.add(selectionControls, BorderLayout.CENTER)
+  configurationRows.add(configuration, BorderLayout.NORTH)
+  configurationRows.add(selectorSection, BorderLayout.CENTER)
   north.add(configurationRows, BorderLayout.NORTH)
   north.add(toolbar, BorderLayout.CENTER)
   north.add(contextLabel, BorderLayout.SOUTH)
   runnerPanel.add(north, BorderLayout.NORTH)
-  preview.setEditable(false)
-  preview.setLineWrap(false)
-  preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
-  val output = new OnePixelSplitter(true, .75f)
-  output.setFirstComponent(runner.console.getComponent)
+  output.setName("dbt.output")
+  output.addTab("Console", runner.console.getComponent)
   val resultArea = new JPanel(new BorderLayout)
   resultArea.add(resultGrid, BorderLayout.CENTER)
   resultArea.add(previewEvidence, BorderLayout.SOUTH)
-  output.setSecondComponent(resultArea)
+  output.addTab("Rows", resultArea)
+  output.addTab("Selection", new JBScrollPane(selectionReview))
   runner.console match {
     case console: com.intellij.execution.impl.ConsoleViewImpl => console.getEditor.getSettings.setUseSoftWraps(true)
     case _ => ()
   }
   runnerPanel.add(output, BorderLayout.CENTER)
-  status.setEditable(false)
-  status.setLineWrap(true)
-  status.setWrapStyleWord(true)
-  statusPanel.add(new JBScrollPane(status), BorderLayout.CENTER)
   fullRefresh.setVisible(false)
   runSelection.addDocumentListener(new DocumentAdapter {
     override def textChanged(event: DocumentEvent): Unit = {
       val path = selectionPath
       if (settings.getState.runnerSelection != path) {
         saveTarget()
-        saveExecutableArguments()
         invalidateReview()
         settings.getState.runnerSelection = path
         generation.incrementAndGet()
@@ -343,7 +339,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
   fullRefresh.addActionListener(_ => {
     val ids = cliReview
-    val text = selectionReview.getText.split("\n\nBuild command:", 2).head
+    val text = selectionReview.getText.split("\n\nCommand:", 2).head
     invalidateReview()
     cliReview = ids
     if (ids.nonEmpty) selectionReview.setText(text)
@@ -352,7 +348,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   runner.listen(this, event => {
     updateButtons()
     browser.foreach(_.runnerState(event.running, event.message))
-    event.preview.foreach(preview.setText)
+    if (event.running) output.setSelectedIndex(if (event.command.exists(_.action == "Resolve Selection")) 2 else 0)
     if (event.running && event.command.exists(_.action == "Preview")) previewEvidence.showEvidence(None)
     if (!event.running && event.previewEvidence.nonEmpty) previewEvidence.showEvidence(event.previewEvidence)
     if (event.running && event.command.exists(_.action == "Resolve Selection")) { lsRequest = Some(reviewRequest); cliReview = None }
@@ -374,7 +370,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       }
     }
     if (event.running) resultGrid.clear("dbt command running…")
-    event.result.foreach(resultGrid.showResult)
+    event.result.foreach { result => resultGrid.showResult(result); output.setSelectedIndex(1) }
+    if (!event.running && event.previewEvidence.nonEmpty) output.setSelectedIndex(1)
     if (event.result.nonEmpty) lastPreviewCommand = event.command.filter(_.action == "Preview")
     if (!event.running && event.result.isEmpty) resultGrid.clear(event.preview.getOrElse(event.message))
     if (event.refresh || event.execution.nonEmpty) schedule(follow = false)
@@ -435,13 +432,14 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private def updateCliCommand(ids: Vector[String], request: Long): Unit = {
     val rootPath = context.root
     val selected = context.selection
-    val refresh = fullRefresh.isSelected
+    val action = command.getSelectedItem.toString
+    val refresh = fullRefresh.isSelected && (action == "Run" || action == "Build")
     ReadAction.nonBlocking(new Callable[(Either[String, DbtCommand], Boolean)] {
       override def call(): (Either[String, DbtCommand], Boolean) = {
         val w = DbtWorkspace.get(project)
         val owner = w.roots.find(r => rootPath.contains(r.directory.getPath))
         val command = owner.toRight("The owning execution project is unavailable.")
-          .flatMap(DbtCommand.selection(w, _, "Build", refresh, selected, Some(ids)))
+          .flatMap(DbtCommand.selection(w, _, action, refresh, selected, Some(ids)))
         val incremental = owner.toVector.flatMap(r => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, r, "").resources)
           .exists(s => ids.contains(s.uniqueId) && DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
         command -> incremental
@@ -452,7 +450,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         reviewCommand = command.toOption
         cliIncremental = incremental
         fullRefresh.setVisible(context.incremental || cliIncremental)
-        selectionReview.append("\n\nBuild command:\n" + command.fold(identity,
+        selectionReview.append("\n\nCommand:\n" + command.fold(identity,
           c => com.intellij.util.execution.ParametersListUtil.join(c.arguments.asJava)))
         updateButtons()
       }
@@ -487,15 +485,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     }
   }
 
-  private def saveExecutableArguments(): Unit = context.root.foreach { path =>
-    val options = settings.options(path)
-    val value = executableArguments.getText.trim
-    loadedArguments = value
-    if (options.executableArguments != value) {
-      options.executableArguments = value
-      settings.changed()
-    }
-  }
+  private[ide] def diagnosticsText: String = context.status
 
   private def schedule(follow: Boolean): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed) {
     followPending ||= follow
@@ -548,9 +538,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, r, r.runOptions.selection, r.runOptions.exclude).resources).getOrElse(models)
         val incremental = scope.exists(s => DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
         graph -> DbtViewContext(owner.map(_.directory.getPath), selection, incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary, choices,
-          owner.map(DbtSelectionReview.completions(w, _)).getOrElse(Vector.empty), editorModel.filter(s =>
-            owner.exists(r => w.owner(s).exists(o => w.executionRoot(o).directory == r.directory))).map(
-            com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).getOrElse(""), owner.map(_.artifactDirectory.toString).getOrElse(""))
+          owner.map(DbtSelectionReview.completions(w, _)).getOrElse(Vector.empty), owner.map(_.artifactDirectory.toString).getOrElse(""))
       }
     }).inSmartMode(project).expireWith(this).coalesceBy(graphWork).finishOnUiThread(ModalityState.any(), (result: (DbtGraphSnapshot, DbtViewContext)) =>
       if (!disposed && request == generation.get()) {
@@ -568,12 +556,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           selectionExpression.setText(context.root.map(settings.options(_).selection).getOrElse(""))
           selectionExclude.setText(context.root.map(settings.options(_).exclude).getOrElse(""))
           fillingSelection = false
+          val active = selectionExpression.getText.trim.nonEmpty || selectionExclude.getText.trim.nonEmpty
+          selectorToggle.setSelected(active)
+          selectionControls.setVisible(active)
         }
         context.root.foreach(settings.getState.runnerRoot = _)
-        if (changedRoot || executableArguments.getText == loadedArguments) {
-          loadedArguments = context.root.map(settings.options(_).executableArguments).getOrElse("")
-          executableArguments.setText(loadedArguments)
-        }
         if (changedSelection || !context.incremental && !cliIncremental) fullRefresh.setSelected(false)
         fullRefresh.setVisible(context.incremental || cliIncremental)
         fillingTarget = true
@@ -586,10 +573,6 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         else if (changedTargets) target.setSelectedItem(pendingTarget)
         loadedTarget = context.target
         fillingTarget = false
-        contextLabel.setText(context.selection.map(_.label).getOrElse(if (runSelection.getText.trim.isEmpty)
-          "Choose a model or directory" else "Choose an available dbt model or directory") +
-          " · target: " + (if (context.target.isEmpty) "profile default" else context.target))
-        status.setText(context.status)
         val payload = snapshot.payload
         val nextFocus = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
         if (nextFocus != focus) {
@@ -631,27 +614,49 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     selectionPreview.setEnabled(context.root.nonEmpty && !runner.isRunning)
     selectionRefresh.setEnabled(context.root.nonEmpty && !runner.isRunning)
     selectionLineage.setEnabled(context.root.nonEmpty && !runner.isRunning)
-    selectionShortcuts.foreach(_.setEnabled(context.currentModel.nonEmpty && !runner.isRunning))
     selectionExpression.setEnabled(!runner.isRunning)
     selectionExclude.setEnabled(!runner.isRunning)
-    commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty &&
-      context.selection.exists(s => name != "Preview" || !s.directory)) }
+    val action = command.getSelectedItem.toString
+    val canExecute = !runner.isRunning && context.root.nonEmpty &&
+      context.selection.exists(s => action != "Preview" || !s.directory)
+    execute.setEnabled(canExecute)
+    val description = action match {
+      case "Run" => "Run models in the selected scope"
+      case "Build" => "Build resources and run their tests in the selected scope"
+      case "Compile" => "Compile the selected scope to SQL"
+      case "Test" => "Run tests for the selected scope"
+      case "Preview" => "Query one selected SQL model and display rows"
+      case "Generate Docs" => "Generate documentation for the execution project and target"
+      case "Source Freshness" => "Check freshness of all sources; choose the whole execution project"
+    }
+    execute.setToolTipText(description)
+    command.setToolTipText(description)
+    command.setEnabled(!runner.isRunning)
+    val selectorActive = selectionExpression.getText.trim.nonEmpty || selectionExclude.getText.trim.nonEmpty
+    selectorToggle.setText(if (selectorActive) "dbt selectors (active)" else "dbt selectors")
+    runSelection.setToolTipText(if (selectionExpression.getText.trim.nonEmpty)
+      "Sets the execution project. The active dbt selector determines which resources run."
+      else "Leave blank for all models, or choose a model or directory.")
+    val scope = if (selectionExpression.getText.trim.nonEmpty) "dbt selector: " + selectionExpression.getText.trim
+      else context.selection.map(_.label).getOrElse("Choose a model or directory")
+    val excluded = Option(selectionExclude.getText.trim).filter(_.nonEmpty).fold("")(text => " · exclude: " + text)
+    val summary = scope + excluded + " · target: " + (if (targetText.isEmpty) "profile default" else targetText)
+    contextLabel.setText(summary)
+    contextLabel.setToolTipText(summary)
     runSelection.setEnabled(!runner.isRunning)
     stop.setEnabled(runner.isRunning)
     target.setEnabled(!runner.isRunning && context.root.nonEmpty)
-    fullRefresh.setEnabled(!runner.isRunning)
-    executableArguments.setEnabled(!runner.isRunning && context.root.nonEmpty)
+    fullRefresh.setEnabled(!runner.isRunning && (action == "Run" || action == "Build"))
   }
 
   private def start(action: String): Unit = WriteIntentReadAction.run(() => {
     saveSelection()
     saveTarget()
-    saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
     val request = commandRequest
     val reviewedCli = cliReview
     val selection = context.selection.filter(_.path == selectionPath)
-    val requestedRefresh = fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
+    val requestedRefresh = (action == "Run" || action == "Build") && fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
       override def call(): Either[String, DbtCommand] =
         selection.toRight("Choose a model or directory in the Runner.").flatMap { selected =>
@@ -676,7 +681,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
 
   private def rerunPreview(limit: Int): Unit = lastPreviewCommand.foreach { previous =>
-    saveTarget(); saveExecutableArguments()
+    saveTarget()
     FileDocumentManager.getInstance().saveAllDocuments()
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
       override def call(): Either[String, DbtCommand] = {
@@ -704,6 +709,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val options = settings.options(path)
     val expression = selectionExpression.getText.trim
     val exclude = selectionExclude.getText.trim
+    updateButtons()
     if (options.selection != expression || options.exclude != exclude) {
       options.selection = expression
       options.exclude = exclude

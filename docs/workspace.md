@@ -2,7 +2,7 @@
 
 [User guide](getting_started.md) · [Configuration](configuration.md)
 
-Open **View → Tool Windows → dbt** for the **Lineage**, **Runner**, **Tests**, and **Status** tabs.
+Open **View → Tool Windows → dbt** for the **Runner**, **Lineage**, and **Tests** tabs.
 Only command buttons and preview actions run dbt or query the warehouse. Configure
 execution in [workspace and runner settings](configuration.md#workspace-and-runner-settings).
 
@@ -17,7 +17,8 @@ models. With several dbt projects, choose a path once to set the execution proje
 before clearing the field. Installed-package models run through their consuming
 project. Switching editors does not change the Runner selection.
 
-Use **Target** to select or type a target; blank uses the profile default.
+Use **Target** to select or type a target; blank uses the profile default. Choose
+**Run**, **Build**, or another command from the dropdown, then click **Execute**.
 
 | Control | Action |
 | --- | --- |
@@ -26,30 +27,32 @@ Use **Target** to select or type a target; blank uses the profile default.
 | **Preview** | Query one selected SQL model with `dbt show` and display up to the row limit. Requires a dbt version with `show`. |
 | **Generate Docs** | Run `dbt docs generate` for the chosen execution project and target. |
 | **Source Freshness** | Run `dbt source freshness`; select the entire execution project first. |
-| **Clear** | Clear the command log and preview. |
+| **More… → Clear output** | Clear the command log and preview. |
 | **Stop** | Cancel the active command. |
-| **Settings** | Open [workspace configuration](configuration.md#workspace-and-runner-settings). |
+| **More… → Settings** | Open [workspace configuration](configuration.md#workspace-and-runner-settings). |
 
 Commands save open documents first. Only one command runs at a time, including
-previews, CTE inspection and test runs. The log shows process output and the exit
-code. Successful **Run**, **Build**, **Compile**, and **Generate Docs** reload the
-artifacts. A notification appears when a command finishes; see
+previews, CTE inspection and test runs. The **Console** shows process output and the exit
+code. Preview results open **Rows**; selection reviews open **Selection**. These
+views share the result area. Successful **Run**, **Build**, **Compile**, and
+**Generate Docs** reload the artifacts. A notification appears when a command finishes; see
 [desktop notifications](configuration.md#workspace-and-runner-settings).
 
 ### Selection and state
 
-Enter a dbt expression in **Selection**, optionally add **Exclude**, then click
+Click **dbt selectors** to expand the selector fields. Enter a dbt expression
+in **Selection**, optionally add **Exclude**, then click
 **Review selection**. A nonempty **Selection** overrides **Model or directory**.
+The toggle reads **dbt selectors (active)** while either field is set; clear both
+fields to return to the model or directory scope.
 Press **Ctrl+Space** in either field for completion of names, packages, versions
 and named selectors.
 
 The review shows the execution project, target, matched resources, terms that
-could not be resolved locally, and the proposed **Build** command, without running
+could not be resolved locally, and the chosen command, without running
 anything. **Copy command** copies that command. Editing the fields, target, source
-or execution settings clears the review.
+execution settings, or chosen command clears the review.
 
-- **Current model**, **Upstream**, **Downstream**, and **Both** fill the expression
-  from the open model.
 - **Show in Lineage** applies the fields to the graph; **Apply filter** in Lineage
   updates these fields too.
 - **Refresh with dbt ls** asks dbt to resolve the selection, for example terms that
@@ -135,19 +138,20 @@ appearance and [installation](installation.md) for browser requirements.
 
 ### Filter, group, and share
 
-Enter **Selector** and **Exclude**, then click **Apply filter**. Expressions work
-as in [Runner selection](#selection-and-state). Direct neighbors that do not match
+Open **Filter**, enter **Selection** and **Exclude**, then click **Apply filter**.
+Expressions work as in [Runner selection](#selection-and-state). Direct neighbors that do not match
 remain as dashed **Filtered boundary** cards; other omitted resources are counted
 as hidden. **Clear filter** restores the graph and clears Runner's **Selection**
 and **Exclude** fields.
 
-Use **Group by** to choose **Schema**, **Folder**, or **Tag (first alphabetically)**.
+Open **View** and use **Group by** to choose **Schema**, **Folder**, or
+**Tag (first alphabetically)**.
 Click a group button to collapse or expand it. A resource with several tags appears
 under its alphabetically first tag.
 
 Click or drag in the **Minimap** to navigate; arrow keys pan when it has focus.
-Clear its checkbox to hide it. **Export PNG**, **Export SVG**, and **Copy image**
-capture the graph as currently filtered and collapsed; **Legend** adds a legend.
+Clear **View → Minimap** to hide it. Open **Export** for **Export PNG**,
+**Export SVG**, and **Copy image**. These actions capture the graph as currently filtered and collapsed; **Include legend** adds a legend.
 If the graph is too large for PNG, collapse groups, narrow the filter, or use SVG.
 
 ### Documentation
@@ -218,8 +222,8 @@ Some generic tests can run individually only after a manifest exists; click **Ru
 tests** once to create it. **Stored failing rows** requires `store_failures` for
 the test.
 
-## Status
+## Workspace details
 
-**Status** shows the executable, the dbt version recorded in the manifest, target,
-adapter, run selection, lineage focus, resource count, artifact paths and
+In Runner, choose **More… → Workspace details** to see the executable, the dbt
+version recorded in the manifest, target, adapter, run selection, lineage focus, resource count, artifact paths and
 timestamps, and whether relation metadata matches the current target.

@@ -34,7 +34,7 @@ files without running dbt. See [installation](installation.md) for requirements.
 - [Lineage](workspace.md#lineage): trace resources, [filter, group and export the graph](workspace.md#filter-group-and-share), read [documentation and column lineage](workspace.md#documentation) and [edit properties](workspace.md#edit-properties).
 - [Build and freshness badges](workspace.md#build-and-freshness-badges) on lineage cards.
 - [Tests](workspace.md#tests): browse, run and rerun tests and inspect failures.
-- [Status](workspace.md#status): the active execution context and metadata availability.
+- [Workspace details](workspace.md#workspace-details): the active execution context and metadata availability.
 
 ## Integrations
 
