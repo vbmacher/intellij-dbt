@@ -133,7 +133,8 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
       .zipWithIndex.foreach { case (sql, index) =>
         configure(s"models/negative_star_$index.sql", sql.replaceFirst("\\*", "<caret>*"))
         val before = myFixture.getFile.getText
-        assertFalse(sql, new DbtExpandColumnsIntention().isAvailable(getProject, myFixture.getEditor, myFixture.getFile))
+        if (index >= 4) assertFalse(sql, new DbtExpandColumnsIntention().isAvailable(getProject, myFixture.getEditor, myFixture.getFile))
+        assertTrue(sql, DbtSqlAnalysis.get(w, myFixture.getFile).forall(_.wildcards.isEmpty))
         assertEquals(before, myFixture.getFile.getText)
       }
   }

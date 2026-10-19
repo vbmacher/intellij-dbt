@@ -29,7 +29,31 @@ private[sql] object DbtSqlAnalyzer {
       try Some(CCJSqlParserUtil.parse(candidate, p => p.withTimeOut(1000))) catch { case _: JSQLParserException => None }
     val parsed = parse(sql).orElse(completionOffset.filter(i => i > 0 && i <= sql.length).flatMap { i =>
       parse(sql.updated(i - 1, if (sql(i - 1) == '.') ' ' else '*'))
-    }).getOrElse(return None)
+    }).getOrElse {
+      // A dialect modifier may be rejected by the parser. Parsing only through
+      // the star still proves a projection wildcard, without accepting a rewrite.
+      val unsupported = scala.util.Try(DbtSqlNavigation.tokens(sql)).toOption.toVector.flatten.sliding(2).flatMap {
+        case Vector(star, modifier) if star.image == "*" && Set("EXCEPT", "EXCLUDE", "REPLACE")(modifier.image.toUpperCase(java.util.Locale.ROOT)) =>
+          ProgressManager.checkCanceled()
+          val end = DbtSqlRelations.offset(text, star, end = true)
+          parse(sql.substring(0, end)).collect { case select: PlainSelect => select }.toVector.flatMap { select =>
+            Option(select.getSelectItems).toVector.flatMap(_.asScala).lastOption.toVector.flatMap { item =>
+              item.getExpression match {
+                case expression: AllColumns =>
+                  val ts = DbtSqlNavigation.nodeTokens(expression)
+                  ts.headOption.filter(_ => ts.lastOption.exists(t => DbtSqlRelations.offset(text, t, end = true) == end)).map { first =>
+                    DbtSqlProblem(new TextRange(DbtSqlRelations.offset(text, first), end),
+                      "Wildcard EXCEPT, EXCLUDE or REPLACE modifiers cannot be expanded safely. Write the required columns explicitly, or remove the modifier before expanding.")
+                  }
+                case _ => None
+              }
+            }
+          }
+        case _ => Vector.empty
+      }.toVector
+      return if (unsupported.nonEmpty) Some(DbtSqlAnalysis(Vector.empty, Vector.empty, Vector.empty, Vector.empty,
+        Vector("Wildcard modifier is unsupported by SQL analysis."), wildcardProblems = unsupported)) else None
+    }
     val references = DbtNavigation.inFile(file, includeSelections = false)
     val issues = ArrayBuffer.empty[String]
     if (DbtSqlNavigation.tokens(sql).sliding(2).exists(ts => ts.size == 2 && ts.head.image.equalsIgnoreCase("with") && ts(1).image.equalsIgnoreCase("recursive")))
@@ -38,6 +62,7 @@ private[sql] object DbtSqlAnalyzer {
     val ctes = ArrayBuffer.empty[DbtCte]
     val cteReferences = ArrayBuffer.empty[(String, TextRange)]
     val wildcards = ArrayBuffer.empty[(TextRange, Vector[String])]
+    val wildcardProblems = ArrayBuffer.empty[DbtSqlProblem]
     val intermediate = ArrayBuffer.empty[DbtSqlColumn]
     val problems = ArrayBuffer.empty[DbtSqlProblem]
     val deletions = ArrayBuffer.empty[(TextRange, TextRange)]
@@ -177,12 +202,23 @@ private[sql] object DbtSqlAnalyzer {
               val chosen = relations.filter { case (a, _) => qualifier.forall(_.equalsIgnoreCase(a)) }
               val columns = chosen.flatMap(_._2.columns)
               val safe = chosen.nonEmpty && chosen.forall(_._2.known) && columns.nonEmpty &&
+                (qualifier.isEmpty || chosen.size == 1) &&
                 !(relations.size > 1 && chosen.exists(_._1.startsWith("_dbt"))) &&
                 expression.toString.trim.matches("(?s)([^ ]+\\.)?\\*")
               if (safe) wildcards += range(expression) -> chosen.flatMap { case (a, r) =>
                 r.columns.map(c => (if (qualifier.nonEmpty || relations.size > 1) qualifiedAlias(a) + "." else "") + quoted(c))
               }
-              else issues += "Wildcard has an unknown schema or unsupported modifiers."
+              else {
+                issues += "Wildcard has an unknown schema or unsupported modifiers."
+                val reason = if (!expression.toString.trim.matches("(?s)([^ ]+\\.)?\\*"))
+                  "Wildcard EXCEPT, EXCLUDE or REPLACE modifiers cannot be expanded safely. Write the required columns explicitly, or remove the modifier before expanding."
+                else if (chosen.isEmpty || (qualifier.nonEmpty && chosen.size != 1))
+                  "No unique relation matches this wildcard. Use a declared relation alias, or write the required columns explicitly."
+                else if (relations.size > 1 && chosen.exists(_._1.startsWith("_dbt")))
+                  "This join needs explicit relation aliases before its wildcard can be expanded. Add an alias to each relation and use alias.*."
+                else "A complete column list is unavailable for this relation. Add or update its model/source column declarations, or generate current dbt documentation for this project and target. You can also write the required columns explicitly."
+                wildcardProblems += DbtSqlProblem(range(expression), reason)
+              }
               columns.map(c => DbtSqlColumn(c.name, range(expression), Vector(c), direct = true, expression.toString, safe))
             } else {
               val inputs = ArrayBuffer.empty[DbtSymbol]
@@ -230,7 +266,7 @@ private[sql] object DbtSqlAnalyzer {
       case s: Select =>
         val columns = select(s, Map.empty)
         Some(DbtSqlAnalysis(columns, scopes.toVector, ctes.toVector, wildcards.toVector,
-          issues.toVector.distinct ++ (if (scopes.exists(!_.complete)) Vector("Some relation schemas are unavailable.") else Vector.empty), intermediate.toVector, problems.toVector.distinct, deletions.toVector, declarations.toVector))
+          issues.toVector.distinct ++ (if (scopes.exists(!_.complete)) Vector("Some relation schemas are unavailable.") else Vector.empty), intermediate.toVector, problems.toVector.distinct, deletions.toVector, declarations.toVector, wildcardProblems.toVector))
       case _ => None
     }
   }

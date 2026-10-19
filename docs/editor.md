@@ -109,6 +109,18 @@ select o.order_id, o.customer_id from {{ ref('orders') }} o
 Expansion requires a complete, unambiguous column list and preserves its order
 and quoting. `count(*)` has no expansion action.
 
+For an unknown column list, an ambiguous relation alias or an unsupported
+`EXCEPT`, `EXCLUDE` or `REPLACE` modifier, the same action explains what to change
+in its preview and an editor message. The SQL stays unchanged. For example:
+
+```sql
+select * exclude id from {{ ref('orders') }}
+```
+
+The message asks you to write the required columns explicitly or remove the
+modifier before expanding. Missing column information may require updating the
+referenced model or source declarations, or [generating current documentation](workspace.md#runner).
+
 ## Rename and Safe Delete
 
 **Refactor → Rename** updates resolving references to local models, macros, CTEs,

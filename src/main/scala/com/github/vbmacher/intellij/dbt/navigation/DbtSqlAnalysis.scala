@@ -19,7 +19,8 @@ private[dbt] final case class DbtCte(name: String, range: TextRange, body: TextR
 private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scopes: Vector[DbtSqlScope],
   ctes: Vector[DbtCte], wildcards: Vector[(TextRange, Vector[String])], issues: Vector[String],
   intermediates: Vector[DbtSqlColumn] = Vector.empty, problems: Vector[DbtSqlProblem] = Vector.empty,
-  deletions: Vector[(TextRange, TextRange)] = Vector.empty, declarations: Vector[DbtSymbol] = Vector.empty) {
+  deletions: Vector[(TextRange, TextRange)] = Vector.empty, declarations: Vector[DbtSymbol] = Vector.empty,
+  wildcardProblems: Vector[DbtSqlProblem] = Vector.empty) {
   def scope(offset: Int): Option[DbtSqlScope] = scopes.filter(_.range.containsOffset(offset)).sortBy(_.range.getLength).headOption
 }
 
