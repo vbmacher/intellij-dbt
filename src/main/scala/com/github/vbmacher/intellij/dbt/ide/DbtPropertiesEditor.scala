@@ -18,7 +18,8 @@ import java.awt.BorderLayout
 import javax.swing.{JButton, JComponent, JPanel}
 import scala.jdk.CollectionConverters._
 
-private[ide] final case class DbtPropertyEdit(path: String, before: String, after: String, file: Option[PsiFile]) {
+private[ide] final case class DbtPropertyEdit(path: String, before: String, after: String, file: Option[PsiFile],
+  directory: Option[com.intellij.openapi.vfs.VirtualFile] = None) {
   def apply(project: Project): Unit = WriteCommandAction.writeCommandAction(project).withName("Edit dbt properties").run(new com.intellij.util.ThrowableRunnable[RuntimeException] {
     override def run(): Unit = {
       val documents = PsiDocumentManager.getInstance(project)
@@ -27,7 +28,9 @@ private[ide] final case class DbtPropertyEdit(path: String, before: String, afte
           if (documents.getDocument(source).getText != before) throw new IllegalStateException("Properties changed; reopen the editor to review current source.")
           documents.getDocument(source).setText(after); documents.commitAllDocuments()
         case None =>
-          val parent = com.intellij.openapi.vfs.LocalFileSystem.getInstance.findFileByPath(path.substring(0, path.lastIndexOf('/')))
+          val parent = directory.orElse(Option(com.intellij.openapi.vfs.LocalFileSystem.getInstance
+            .findFileByPath(path.substring(0, path.lastIndexOf('/'))))).getOrElse(
+            throw new IllegalStateException("The destination directory is unavailable. Reopen the editor."))
           if (parent.findChild(path.substring(path.lastIndexOf('/') + 1)) != null) throw new IllegalStateException("The destination already exists.")
           val created = parent.createChildData(this, path.substring(path.lastIndexOf('/') + 1))
           com.intellij.openapi.vfs.VfsUtil.saveText(created, after)
@@ -81,6 +84,17 @@ private[ide] object DbtPropertiesEditor {
                 if (com.intellij.psi.util.PsiTreeUtil.findChildOfType(existing.getValue, classOf[com.intellij.psi.PsiComment]) != null)
                   throw new IllegalArgumentException(s"'$key' contains comments. Edit its sequence in source to preserve those comments.")
                 existing.setValue(replacement.getValue)
+              case None if m.getFirstChild.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.LBRACE =>
+                val closing = m.getLastChild
+                m.getKeyValues.asScala.lastOption.foreach { previous =>
+                  val trailingComma = Iterator.iterate(previous.getNextSibling)(_.getNextSibling)
+                    .takeWhile(e => e != null && e != closing).exists(_.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.COMMA)
+                  if (!trailingComma) m.addAfter(generator.createComma(), previous)
+                }
+                // YAMLHashImpl.putKeyValue does not reliably attach its separator to the inserted copy.
+                // Append with explicit native PSI tokens, retaining existing key order and comments.
+                m.addBefore(generator.createSpace(), closing)
+                m.addBefore(replacement, closing)
               case _ => m.putKeyValue(replacement)
             }
           }
@@ -112,10 +126,20 @@ private[ide] object DbtPropertiesEditor {
               val insertion = if (flow) (if (sequence.getItems.isEmpty) "" else ", ") + values.mkString(", ")
                 else values.map(v => "\n" + " " * org.jetbrains.yaml.YAMLUtil.getIndentInThisLine(sequence) + "- " + v).mkString
               copy.getText.substring(0, offset) + insertion + copy.getText.substring(offset)
-            case None => put(mapping, "columns", values.mkString("[", ", ", "]")); copy.getText
+            case None =>
+              // YAML's key generator moves long flow sequences to a new line
+              // with root indentation. Insert at the native mapping range so
+              // new columns remain children of this resource.
+              val text = copy.getText
+              val flow = mapping.getText.trim.startsWith("{")
+              val offset = mapping.getTextRange.getEndOffset - (if (flow) 1 else 0)
+              val firstKey = mapping.getKeyValues.asScala.head.getTextOffset
+              val indent = firstKey - text.lastIndexOf('\n', firstKey - 1) - 1
+              val prefix = if (flow) (if (mapping.getKeyValues.isEmpty) "" else ", ") else "\n" + " " * indent
+              text.substring(0, offset) + prefix + "columns: " + values.mkString("[", ", ", "]") + text.substring(offset)
             case _ => throw new IllegalArgumentException("Columns must be a YAML sequence before synchronization.")
           }
-          DbtPropertyEdit(path, before, after, source)
+          DbtPropertyEdit(path, before, after, source, Some(resource.file.getVirtualFile.getParent))
         }.toEither.left.map(e => Option(e.getMessage).getOrElse("The properties edit could not preserve the current YAML structure.")) }
       }
     }

@@ -554,7 +554,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
             DbtGraphData.build(w, None, 1, 1, exposures = true).targets.get(id).map(e =>
               (if (kind == "column") DbtGraphData.columnPaths(w, e.symbol, field("value")) else DbtGraphData.documentation(w, e.symbol)) -> e)
           }
-        }).expireWith(this).inSmartMode(project).coalesceBy(docWork).finishOnUiThread(ModalityState.any(), (result: Option[(JsonObject, DbtSymbolElement)]) =>
+        }).expireWith(this).inSmartMode(project).coalesceBy(docWork).finishOnUiThread(ModalityState.defaultModalityState(), (result: Option[(JsonObject, DbtSymbolElement)]) =>
           if (!disposed && request == docGeneration.get()) result.foreach { case (doc, targetElement) =>
             if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), targetElement.symbol)
             else if (kind == "column") {

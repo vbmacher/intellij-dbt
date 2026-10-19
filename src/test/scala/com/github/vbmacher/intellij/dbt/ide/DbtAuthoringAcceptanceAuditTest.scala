@@ -25,6 +25,22 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     PsiDocumentManager.getInstance(getProject).commitAllDocuments()
   }
 
+  def testMissingPropertiesScaffoldAppliesAndOneUndoRemovesIt(): Unit = {
+    project()
+    val source = configure("models/orders.sql", "select 1 as id<caret>")
+    var planned: Either[String, DbtPropertyEdit] = Left("not planned")
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, model("orders"), "Orders", Vector(DbtColumnData("id", "int", "Identifier")), Vector.empty, Vector.empty))
+    val plan = planned.toOption.get
+    assertTrue(plan.file.isEmpty)
+    assertNull(source.getVirtualFile.getParent.findChild("orders.yml"))
+    plan.apply(getProject)
+    assertEquals("Orders", DbtResourceData.get(w, model("orders")).description)
+    assertEquals(plan.after + "\nColumns: " + w.columns(model("orders")).map(c => (c.name, c.attributes)) +
+      "\nMappings: " + w.properties(model("orders")).map(_.mapping.map(_.getText)),
+      "Identifier", DbtResourceData.get(w, model("orders")).columns.find(_.name == "id").get.description)
+    undo(); assertNull(source.getVirtualFile.getParent.findChild("orders.yml"))
+  }
+
   def testCompletionAndColumnAnalysisHonorCancellation(): Unit = {
     project()
     (1 to 100).foreach(i => add(s"models/orders_$i.sql", "select 1 as id"))
