@@ -1,6 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.lineage.DbtLineage
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.vfs.VirtualFile
@@ -16,6 +17,8 @@ private[ide] final case class DbtTestDefinition(id: String, name: String, kind: 
 private[ide] object DbtTestDiscovery {
   import DbtExecutionEvidence._
   def discover(w: DbtWorkspace): Vector[DbtTestDefinition] = {
+    lazy val sourceDependencies = DbtLineage.edges(w).filter(e => !e.ambiguous && DbtSymbol.RelationKinds(e.to.kind))
+      .groupMap(_.from.id)(_.to.uniqueId)
     val source = w.symbols.filter(s => Set("test", "unit_test")(s.kind) && !s.metadata && s.isEnabled && !w.symbols.exists(g => g.kind == "generic_test" && g.file == s.file)).flatMap { s =>
       w.owner(s).map { owner =>
         val root = w.executionRoot(owner)
@@ -26,7 +29,8 @@ private[ide] object DbtTestDiscovery {
         }
         val fqn = Vector(s.namespace) ++ owner.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2) ++ Vector(s.name)
         val dependencies = if (s.kind == "unit_test") w.declarations(Set("model"), group.split("\\.").last, owner,
-          if (group.contains(".")) group.split("\\.").headOption else None).map(_.uniqueId) else DbtResourceData.get(w, s).dependencies
+          if (group.contains(".")) group.split("\\.").headOption else None).map(_.uniqueId)
+          else (DbtResourceData.get(w, s).dependencies ++ sourceDependencies.getOrElse(s.id, Vector.empty)).distinct
         DbtTestDefinition(if (s.kind == "unit_test") "unit_test." + s.namespace + "." + group + "." + s.name else s.uniqueId, s.presentableText, if (s.kind == "unit_test") "Unit tests" else "Data tests", group,
           root.directory.getPath, s.file.getVirtualFile, s.range.getStartOffset,
           if (s.kind == "unit_test") "fqn:" + (Vector(s.namespace) ++ owner.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2) ++ Vector(group, s.name)).mkString(".") + ",test_type:unit" else "fqn:" + fqn.mkString("."), dependencies, fixtures)

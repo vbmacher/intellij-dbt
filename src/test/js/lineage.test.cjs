@@ -174,7 +174,7 @@ test('grouping preserves package and version collisions on representative large 
 test('execution badges expose provenance and route failed tests without relying on colors',async()=>{
  const execution={status:'failed',label:'Build failed',failingTests:2,details:'target: dev; invocation: run-1; run_results.json'};
  await page.evaluate(({fixture,execution})=>dbtUpdate({...fixture,nodes:fixture.nodes.map(n=>({...n,execution:n.id==='model'?execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'No compatible result artifact'}}))}),{fixture,execution});
- const badge=page.getByRole('button',{name:/orders: Build failed/});assert.equal(await badge.count(),1);assert.match(await badge.getAttribute('aria-label'),/run_results.json/);
+ const badge=page.getByRole('button',{name:/orders: 2 failing tests · Build failed/});assert.equal(await badge.count(),1);assert.match(await badge.getAttribute('aria-label'),/run_results.json/);
  await badge.click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
  await page.evaluate(d=>dbtShowDoc('model',d),doc);assert.match(await page.locator('#doc-content').innerText(),/test declarations/);
  assert.match(await page.locator('#execution-legend').innerText(),/unknown/);
@@ -207,4 +207,23 @@ test('column trace, declaration and provenance origins preserve owning identity 
  await origins.nth(1).click();
  assert.deepEqual(await page.evaluate(()=>JSON.parse(events.filter(e=>e.type==='origin').at(-1).value)),{column:'id',index:1});
  assert.deepEqual(errors,[]);
+});
+
+test('test-only failure counts are visible and remain accurate across theme and evidence refresh',async()=>{
+ const execution={status:'unknown',label:'Not run / result unavailable',failingTests:3,details:'prod · run-test-only · run_results.json'};
+ const payload={...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,execution}:n)};
+ await page.evaluate(p=>dbtUpdate(p),payload);
+ const badge=page.getByRole('button',{name:/orders: 3 failing tests/});
+ assert.match(await badge.innerText(),/^3 failing tests/);
+ assert.match(await badge.getAttribute('aria-label'),/prod.*run-test-only/);
+ await badge.focus();await page.keyboard.press('Enter');
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
+ for(const theme of [{bg:'#202124',fg:'#dfe1e5',panel:'#2b2d30'},{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}]){
+  await page.evaluate(p=>dbtUpdate(p),{...payload,theme});
+  assert.equal(await page.getByRole('button',{name:/3 failing tests/}).count(),1);
+  assert.match(await page.evaluate(()=>graphSvg()),/3 failing tests/);
+ }
+ await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>n.execution?{...n,execution:{...n.execution,failingTests:0}}:n)}),payload);
+ assert.equal(await page.getByRole('button',{name:/failing tests/}).count(),0);
+ await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
 });

@@ -60,8 +60,9 @@ private[ide] object DbtGraphData {
       node.add("tags", gson.toJsonTree(data.tags.asJava))
       node.addProperty("manifest", data.attributes.contains("artifact-project"))
       node.addProperty("candidate", groups(key(w, s)).size > 1)
-      val runs = w.owner(s).map(w.executionRoot).flatMap(r => executionRuns.get(r.directory.getPath)).getOrElse(Vector.empty)
-      node.add("execution", evidence.overlay(s, runs, testDefinitions))
+      val executionRoot = w.owner(s).map(w.executionRoot).map(_.directory.getPath)
+      val runs = executionRoot.flatMap(executionRuns.get).getOrElse(Vector.empty)
+      node.add("execution", evidence.overlay(s, runs, testDefinitions.filter(t => executionRoot.contains(t.root))))
       nodes.add(node)
     }
     val links = new JsonArray

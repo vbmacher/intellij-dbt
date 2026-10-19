@@ -55,13 +55,19 @@ private[ide] object DbtExecutionEvidence {
       else if (expectedInvocation.nonEmpty && invocation != expectedInvocation) invalid("Artifact invocation does not match the active run")
       else if (invocation.isEmpty || Try(Instant.parse(generated)).isFailure) invalid("Artifact run identity or timestamp unavailable")
       else {
+        val completeRecords = Option(top.get("results")).exists { records =>
+          if (records.isJsonArray) records.getAsJsonArray.asScala.forall(_.isJsonObject)
+          else if (records.isJsonObject) records.getAsJsonObject.entrySet.asScala.forall(_.getValue.isJsonObject)
+          else false
+        }
         val results = objects(top, "results").map { r =>
           DbtExecutionResult(string(r, "unique_id"), normalize(string(r, "status")), string(r, "message"),
             Try(string(r, "failures").toLong).getOrElse(0L), string(r, "relation_name"),
             Try((string(r, "execution_time").toDouble * 1000).toLong).getOrElse(0L))
         }
         DbtExecutionRun(context, target, invocation, generated, path.toString, results,
-          if (results.exists(r => r.id.isEmpty || r.status == "unknown")) "Partial results: missing identity or unsupported state" else "")
+          if (!completeRecords) "Partial results: malformed or missing result records"
+          else if (results.exists(r => r.id.isEmpty || r.status == "unknown")) "Partial results: missing identity or unsupported state" else "")
       }
     }
   }
@@ -157,12 +163,15 @@ final class DbtExecutionEvidence(project: Project) {
     val data = new JsonObject
     val direct = runs.flatMap(run => run.results.find(_.id == symbol.uniqueId).map(run -> _)).headOption
     val tests = definitions.filter(_.dependencies.contains(symbol.uniqueId)).map(_.id).toSet
-    val failures = runs.flatMap(_.results).distinctBy(_.id).filter(r => tests(r.id) && Set("failed", "error")(r.status))
+    val failures = runs.flatMap(run => run.results.map(run -> _)).distinctBy(_._2.id)
+      .filter { case (_, result) => tests(result.id) && Set("failed", "error")(result.status) }
     data.addProperty("status", direct.map(_._2.status).getOrElse("unknown"))
     data.addProperty("label", direct.map { case (run, r) => (if (symbol.kind == "source_table") "Freshness " else "Build ") + r.status + (if (run.problem.toLowerCase.contains("stale")) " (stale)" else "") }.getOrElse("Not run / result unavailable"))
     data.addProperty("failingTests", failures.size)
-    data.addProperty("details", direct.map { case (run, r) => s"${run.target} · ${run.timestamp} · ${run.invocation}\n${run.artifact}\n${r.message}\n${run.problem}" }
-      .getOrElse(runs.map(_.problem).filter(_.nonEmpty).distinct.mkString("\n")))
+    val related = (direct.toVector ++ failures).distinctBy { case (run, result) => (run.context, run.invocation, run.artifact, result.id) }
+    data.addProperty("details", if (related.nonEmpty) related.map { case (run, result) =>
+      s"${result.id} · ${run.target} · ${run.timestamp} · ${run.invocation}\n${run.artifact}\n${result.message}\n${run.problem}"
+    }.mkString("\n\n") else runs.map(_.problem).filter(_.nonEmpty).distinct.mkString("\n"))
     data
   }
 }
