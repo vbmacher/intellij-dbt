@@ -2,7 +2,7 @@
 
 [User guide](getting_started.md) · [Configuration](configuration.md)
 
-Open **View → Tool Windows → dbt** for **Runner**, **Lineage**, **Tests**, and **Status**.
+Open **View → Tool Windows → dbt** for the **Lineage**, **Runner**, **Tests**, and **Status** tabs.
 Browsing source, documentation, and existing results does not run dbt. Command buttons
 and explicit preview actions can execute warehouse queries. Configure execution in
 [workspace and runner settings](configuration.md#workspace-and-runner-settings).

@@ -1,6 +1,6 @@
 # Configuration
 
-[User guide](README.md) · [Navigation](navigation.md) · [Troubleshooting](troubleshooting.md)
+[User guide](getting_started.md) · [Navigation](navigation.md) · [Troubleshooting](troubleshooting.md)
 
 Most navigation needs no settings. Create **`.dbt-navigation.yml`** at the dbt
 project root to select a version, profile, overrides or metadata. Paths are relative
@@ -134,7 +134,7 @@ vars:
 ## Local builtin definitions
 
 Use `builtin-sources` to open local definitions instead of the selected dbt version's
-reference documentation. For documentation actions, see [Navigation](navigation.md).
+reference documentation. For documentation popups, see [Quick documentation](editor.md#quick-documentation).
 
 ```yaml
 # .dbt-navigation.yml
@@ -302,12 +302,10 @@ for environment prerequisites. In **Settings → dbt Workspace**, choose the own
 | **Format dbt SQL on save** | Off by default. Enables background formatting when saving a supported dbt SQL resource. |
 
 The formatter runs in the configured execution directory with the project's local
-environment and receives the raw SQL/Jinja source. SQLFluff receives the source
-filename so nested project configuration applies. Its `format` command uses
-formatting rules; its `lint` command uses the project's lint rules. The project's
-SQLFluff configuration and any templater dependencies must work in that environment.
-Failures, cancellation, a 60-second timeout or concurrent source edits leave the
-source unchanged.
+environment and receives the raw SQL/Jinja source. SQLFluff also receives the source
+filename so nested project configuration applies. The project's SQLFluff
+configuration and any templater dependencies must work in that environment.
+A run that does not finish within 60 seconds is canceled.
 
 For reformatting, inspection and fixes, see [Editor](editor.md#sql-linting-and-formatting).
 

@@ -38,6 +38,21 @@ help explain parameters; they do not validate the types of supplied values.
 The `dbtref`, `dbtsource` and `dbtconfig` live templates insert a `ref`, `source`
 or materialization configuration call through **Insert Live Template**.
 
+## Quick documentation
+
+Hover a model argument in `ref`, a table argument in `source`, or a macro name,
+or invoke **Quick Documentation**. The popup includes descriptions, known columns
+and dependencies. It shows up to 15 columns and eight dependencies in each
+direction, with counts. See the [documentation sidebar](workspace.md#documentation)
+for the full lists.
+
+Builtin names such as `ref`, `source` and `var` open the official dbt reference
+article in the Documentation tool window. Links to other dbt reference articles
+stay in that window. Source headings show logical names such as
+`analytics.raw.events`; known physical database, schema and relation names are
+listed separately. To open local definitions instead, see
+[local builtin definitions](configuration.md#local-builtin-definitions).
+
 ## Editor warnings
 
 Literal unresolved `ref()` and `source()` arguments receive warnings. Unknown
@@ -121,10 +136,8 @@ To edit descriptions, tags, tests and columns together, see
 Choose a formatter and executable in
 [SQL linting and formatting configuration](configuration.md#sql-linting-and-formatting).
 **Code → Reformat Code** formats the SQL/Jinja document in the background using
-sqlfmt or SQLFluff. The tool reads the current source and uses the owning project's
-environment and configuration. SQLFluff receives the source filename so nested
-configuration applies. Its `format` command uses the formatting-rule subset;
-inspection uses the project's configured lint rules.
+sqlfmt or SQLFluff. SQLFluff's `format` command applies only its formatting rules;
+inspection applies the project's configured lint rules.
 
 With SQLFluff selected, choose **Inspect dbt SQL** from Find Action or the editor
 context menu. Messages appear as editor warnings or parse errors. Choose
@@ -133,8 +146,8 @@ inspection result; run the action again to refresh it.
 
 Parse, templating and lexical errors disable automatic fixes for that result.
 Fixes with incompatible filenames or source positions are not offered. Formatting
-and fixes support Undo. Cancellation, tool errors and edits made while formatting
-is running leave the document unchanged. When the
+and fixes support Undo. Cancellation, tool errors, the formatter timeout and edits
+made while formatting is running leave the document unchanged. When the
 [format-on-save option](configuration.md#sql-linting-and-formatting) is enabled,
 saving starts background formatting and saves the result only if the document
 has not changed in the meantime.
@@ -170,7 +183,7 @@ Conversion needs documentation generated for the current project and target; see
 [Generate Docs](workspace.md#runner). If the manifest or execution configuration
 changes, regenerate it before converting. The action warns when it cannot confirm
 which project and target produced the metadata. Unsupported SQL remains unchanged.
-For shortcut conflicts, see [keymap configuration](configuration.md).
+Both shortcuts can be reassigned in **Settings → Keymap**.
 
 ## Syntax highlighting
 
@@ -187,4 +200,4 @@ Colors follow the IDE theme, including Jinja in SQL strings and comments,
 whitespace control and raw blocks. Highlighting applies to dbt resource paths
 and project configuration. Generated output, ignored files and unrelated files
 keep their existing highlighting. See [installation](installation.md) for the
-TextMate prerequisite. Navigation remains available when TextMate is disabled.
+TextMate prerequisite.

@@ -61,12 +61,12 @@ tests; warning and cancellation details remain visible in their output.
 
 ## Tool-window icons
 
-These are the IDE's standard action icons. See [the dbt window](workspace.md)
-for the corresponding controls.
+The dbt tool-window icon is a dbt resource icon; the buttons use the IDE's standard
+action icons. See [the dbt window](workspace.md) for the corresponding controls.
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| Table with dbt mark | dbt tool window | Tool-window stripe entry labeled **dbt**. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
 | Run triangle | Run | Runner **Run** button. |
 | Build/compile symbol | Build or Compile | Runner **Build** and **Compile** buttons; the button label distinguishes the command. |
 | Test/run symbol | Run tests | Runner **Test** button. |

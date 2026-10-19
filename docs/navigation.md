@@ -15,7 +15,6 @@ docs declarations show callers; unit tests link to their model and fixture files
 
 Markers also identify references with multiple definitions or metadata-only targets;
 tooltips show ambiguity and staleness. Targets on the same line share one popup.
-See [navigation configuration](configuration.md) to change gutter visibility.
 
 The **dbt Dependencies** popup groups dependencies under **Uses** and consumers
 under **Used by**. Choose a resource to open its declaration or a `file:line`
@@ -40,22 +39,6 @@ entry to open the corresponding reference.
 Quoted and multiline YAML values work in supported locations. Ordinary strings,
 variable definitions, selected run-file values and unrelated YAML do not gain Jinja
 navigation just by containing a call.
-
-## Hover documentation
-
-Hover a model argument in `ref`, a table argument in `source`, or a macro name,
-or invoke **Quick Documentation**. The popup includes descriptions, known columns
-and dependencies. It shows up to 15 columns and eight dependencies in each
-direction, with counts. See the [documentation sidebar](workspace.md#documentation)
-for the full lists.
-
-Builtin names such as `ref`, `source` and `var` open the official dbt reference
-article in the Documentation tool window. Links to other dbt reference articles
-stay in that window. Source headings show logical names such as
-`analytics.raw.events`; known physical database, schema and relation names are
-listed separately.
-
-See [documentation configuration](configuration.md) for hover preferences.
 
 ## Models, seeds, snapshots and sources
 

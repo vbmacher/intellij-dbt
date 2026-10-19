@@ -27,7 +27,7 @@
       Python model navigation additionally requires the free Python Community Edition plugin.</p>
       <p>Browse interactive lineage and documentation in the dbt tool window, run model commands and SQL previews,
       inspect native hover documentation and unresolved-reference warnings, and convert SQL relations with Copy for Target DB / Paste as dbt Refs.</p>
-      <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/README.md">User guide</a> ·
+      <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/getting_started.md">User guide</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt">Source code</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt/issues">Issue tracker</a></p>
     ]]></description>

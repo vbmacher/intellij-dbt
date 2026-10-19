@@ -6,7 +6,6 @@
 
 - [Getting started and features](docs/getting_started.md)
 - [Installation and development environment](docs/installation.md)
-- [User guide](docs/README.md)
 
 Contributions are welcome. Pick an existing [issue](https://github.com/vbmacher/intellij-dbt/issues) or open one to discuss an idea.
 
