@@ -16,7 +16,8 @@ import scala.jdk.CollectionConverters._
 
 /** A conservative, offset-preserving projection analysis. All dialect syntax is parsed by JSqlParser. */
 private[sql] object DbtSqlAnalyzer {
-  private final case class Relation(columns: Vector[DbtSymbol], known: Boolean)
+  private final case class Relation(columns: Vector[DbtSymbol], known: Boolean,
+    cte: Option[(String, TextRange)] = None)
   def analyze(file: PsiFile, w: DbtWorkspace, completionOffset: Option[Int]): Option[DbtSqlAnalysis] = {
     if (file.getVirtualFile.getExtension != "sql" || file.getTextLength > 1000000) return None
     val root = w.root(file).filter(r => r.resource(file) && !r.excluded(file.getVirtualFile)).getOrElse(return None)
@@ -35,6 +36,7 @@ private[sql] object DbtSqlAnalyzer {
       issues += "Recursive CTE analysis is partial; query inspection is unsupported."
     val scopes = ArrayBuffer.empty[DbtSqlScope]
     val ctes = ArrayBuffer.empty[DbtCte]
+    val cteReferences = ArrayBuffer.empty[(String, TextRange)]
     val wildcards = ArrayBuffer.empty[(TextRange, Vector[String])]
     val intermediate = ArrayBuffer.empty[DbtSqlColumn]
     val problems = ArrayBuffer.empty[DbtSqlProblem]
@@ -93,18 +95,19 @@ private[sql] object DbtSqlAnalyzer {
         Option(item.getParenthesedStatement).collect { case body: ParenthesedSelect => body }.foreach { body =>
           val name = item.getUnquotedAliasName
           val explicitColumns = Option(item.getWithItemList).toVector.flatMap(_.asScala)
+          val referencesStart = cteReferences.size
           val bodyColumns = select(body.getSelect, visible)
           if (explicitColumns.nonEmpty) issues += "Explicit CTE column lists are not supported by column analysis or refactoring."
           val columns = if (explicitColumns.nonEmpty) Vector.empty else bodyColumns
           // CTE output identities are retained; lineage can trace these local ranges back to their inputs.
-          visible += name.toLowerCase -> local(columns)
           val bodyRange = range(body.getSelect)
           val before = explicitColumns.headOption.map(range(_).getStartOffset).getOrElse(range(body).getStartOffset)
           val nameToken = DbtSqlNavigation.tokens(sql).filter(t => DbtSqlRelations.offset(text, t) < before)
             .filter(t => t.image.replace("\"", "").equalsIgnoreCase(name)).lastOption
           val itemRange = new TextRange(nameToken.map(DbtSqlRelations.offset(text, _)).getOrElse(range(body).getStartOffset), range(body).getEndOffset)
-          val dependencies = DbtSqlRelations.ranges(bodyRange.substring(sql)).map(_.substring(bodyRange.substring(sql)))
-            .filter(n => visible.contains(n.toLowerCase) && !n.equalsIgnoreCase(name)).distinct
+          val dependencies = cteReferences.drop(referencesStart).filterNot { case (_, declaration) => bodyRange.contains(declaration) }
+            .map(_._1).distinct.toVector
+          visible += name.toLowerCase -> local(columns).copy(cte = Some(name -> itemRange))
           ctes += DbtCte(name, itemRange, bodyRange, dependencies, bodyRange.substring(text))
           nameToken.foreach(t => declarations += DbtSymbol("cte", name, root.name, file,
             new TextRange(DbtSqlRelations.offset(text, t), DbtSqlRelations.offset(text, t, end = true))))
@@ -125,7 +128,10 @@ private[sql] object DbtSqlAnalyzer {
           val from = Option(p.getFromItem).toVector ++ Option(p.getJoins).toVector.flatMap(_.asScala).map(_.getFromItem)
           val relations = from.map { f =>
             val relation = f match {
-              case t: Table => visible.getOrElse(t.getUnquotedName.toLowerCase, external(t))
+              case t: Table =>
+                val resolved = visible.getOrElse(t.getUnquotedName.toLowerCase, external(t))
+                resolved.cte.foreach(cteReferences += _)
+                resolved
               case sub: ParenthesedSelect => local(select(sub.getSelect, visible))
               case _ => Relation(Vector.empty, known = false)
             }

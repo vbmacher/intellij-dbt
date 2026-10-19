@@ -3,7 +3,7 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.navigation.{DbtCte, DbtSqlAnalysis, DbtNavigation}
 import com.github.vbmacher.intellij.dbt.project._
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent, CommonDataKeys}
+import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.application.{ModalityState, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -125,6 +125,7 @@ private[ide] final class DbtCteSession {
 }
 
 final class DbtInspectCtesAction extends AnAction("Inspect dbt CTEs") {
+  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
     event.getProject != null && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
   override def actionPerformed(event: AnActionEvent): Unit = {
@@ -261,7 +262,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
         w.symbols.find(s => s.isCode && s.file.getVirtualFile.getPath == path).flatMap { model =>
           DbtSqlAnalysis.get(w, model.file).flatMap(a => a.ctes.filter(c => !a.ctes.exists(p => p.body.contains(c.range))).lift(index))
             .flatMap { cte =>
-              val models = DbtNavigation.inFile(model.file).filter(r => cte.body.contains(r.getRangeInElement)).flatMap(_.candidates)
+              val models = DbtNavigation.inFile(model.file).filter(r => cte.range.contains(r.getRangeInElement)).flatMap(_.candidates)
                 .collect { case e: DbtSymbolElement if e.symbol.kind == "model" && e.symbol.isCode => e.symbol }.distinctBy(_.id)
               if (models.size != 1) None else DbtSqlAnalysis.get(w, models.head.file).map(a => models.head.file.getVirtualFile.getPath ->
                 a.ctes.filter(c => !a.ctes.exists(p => p.body.contains(c.range))))

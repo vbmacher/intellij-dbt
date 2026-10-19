@@ -63,5 +63,21 @@ final class DbtPreviewAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue("A malformed fix retains the diagnostic but offers no source edit", diagnostic.edits.isEmpty)
   }
 
-
+  def testNestedCteShadowingDoesNotPullAnUnrelatedOuterDefinitionIntoThePreview(): Unit = {
+    project()
+    val file = configure("models/scopes.sql", """with a as (select 99 as id),
+container as (with a as (select 1 as id), picked as (select * from a) select * from picked)
+select * from container<caret>""")
+    val w = DbtWorkspace.get(getProject)
+    val analysis = DbtSqlAnalysis.get(w, file).get
+    val container = analysis.ctes.find(_.name == "container").get
+    assertTrue("The nested a shadows the unrelated outer a", container.dependencies.isEmpty)
+    val outerQuery = DbtCteInspection.sql(file.getText, analysis, container).toOption.get
+    assertFalse(outerQuery, outerQuery.contains("99"))
+    assertTrue(outerQuery, outerQuery.contains("with a as (select 1 as id)"))
+    val picked = DbtCteInspection.at(w, file, analysis, file.getText.lastIndexOf("picked")).get
+    assertEquals("picked", picked.name)
+    val innerQuery = DbtCteInspection.sql(file.getText, analysis, picked).toOption.get
+    assertEquals("with a as (select 1 as id),\npicked as (select * from a)\nselect * from picked", innerQuery)
+  }
 }
