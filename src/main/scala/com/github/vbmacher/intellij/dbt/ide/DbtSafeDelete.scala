@@ -10,9 +10,47 @@ import com.intellij.refactoring.safeDelete.usageInfo.SafeDeleteReferenceSimpleDe
 import com.intellij.usageView.UsageInfo
 import scala.jdk.CollectionConverters._
 
+private[ide] object DbtSafeDelete {
+  private val Kinds = Set("model", "macro", "cte", "sql_alias", "sql_projection", "column")
+  /** Translate native editor/file selections before the IDE opens its deletion dialog. */
+  def targets(element: PsiElement): Vector[DbtSymbolElement] = element match {
+    case symbol: DbtSymbolElement if Kinds(symbol.symbol.kind) => Vector(symbol)
+    case file: com.intellij.psi.PsiFile =>
+      val w = DbtWorkspace.get(file.getProject)
+      w.root(file).filter(_.resource(file)).toVector.flatMap { _ =>
+        (w.codeSymbols(file).filter(_.kind == "model") ++ w.symbols.filter(s =>
+          s.file == file && s.kind == "macro" && s.attributes.contains("block-start")))
+          .map(_.element).distinct
+      }
+    case _ => Option(element.getContainingFile).toVector.flatMap { file =>
+      val w = DbtWorkspace.get(file.getProject)
+      val editor = Option(com.intellij.openapi.fileEditor.FileEditorManager.getInstance(file.getProject).getSelectedTextEditor)
+        .filter(_.getDocument == com.intellij.psi.PsiDocumentManager.getInstance(file.getProject).getDocument(file))
+      editor.toVector.flatMap { active =>
+        val offset = active.getCaretModel.getOffset
+        val declarations = DbtSqlAnalysis.get(w, file).toVector.flatMap(_.declarations).filter(_.range.containsOffset(offset))
+        val authored = w.symbolAt(file, offset).filter(s => Kinds(s.kind))
+        val references = DbtNavigation.at(file, offset).flatMap(_.candidates).collect {
+          case target: DbtSymbolElement if Kinds(target.symbol.kind) => target.symbol
+        }
+        val exact = (if (declarations.nonEmpty) declarations else if (authored.nonEmpty) authored else references)
+          .filter(s => Kinds(s.kind)).map(_.element).distinct
+        if (exact.size == 1) exact else Vector.empty
+      }
+    }
+  }
+}
+
+/** The native Safe Delete action requires language support before consulting processor delegates. */
+final class DbtSafeDeleteSupport extends com.intellij.lang.refactoring.RefactoringSupportProvider {
+  override def isAvailable(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
+  override def isSafeDeleteAvailable(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
+}
+
 final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
-  override def handlesElement(element: PsiElement): Boolean = element.isInstanceOf[DbtSymbolElement]
-  override def getElementsToSearch(element: PsiElement, module: Module, all: java.util.Collection[_ <: PsiElement]): java.util.Collection[_ <: PsiElement] = java.util.List.of(element)
+  override def handlesElement(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
+  override def getElementsToSearch(element: PsiElement, module: Module, all: java.util.Collection[_ <: PsiElement]): java.util.Collection[_ <: PsiElement] =
+    DbtSafeDelete.targets(element).map(target => target: PsiElement).asJava
   override def getAdditionalElementsToDelete(element: PsiElement, all: java.util.Collection[_ <: PsiElement], ask: Boolean): java.util.Collection[PsiElement] = element match {
     case e: DbtSymbolElement if e.symbol.kind == "model" || e.symbol.kind == "macro" =>
       val w = DbtWorkspace.get(e.getProject)

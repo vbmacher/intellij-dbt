@@ -81,6 +81,11 @@
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
         <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
         <refactoring.safeDeleteProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtSafeDelete"/>
+        <lang.refactoringSupport language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
         <formattingService implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormattingService"/>
         <fileDocumentManagerListener implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormatOnSave"/>
         <localInspection language="" shortName="DbtSqlFluff" displayName="SQLFluff diagnostics (run Inspect dbt SQL)" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlFluffInspection"/>
