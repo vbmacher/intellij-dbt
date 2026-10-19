@@ -190,5 +190,57 @@ tasks:
     } finally { release.countDown(); server.stop(0) }
   }
 
+  def testAgentSchemasMatchRequiredArgumentsAndRejectAdditionalOrInvalidValues(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    val service = getProject.getService(classOf[DbtAgent])
+    val schemas = DbtAgentProtocol.schemas.asScala.map(_.getAsJsonObject).map(s => s.get("name").getAsString -> s).toMap
+    DbtAgentProtocol.Tools.foreach { case (name, _, required) =>
+      val schema = schemas(name).getAsJsonObject("inputSchema")
+      assertEquals(required.toSet, schema.getAsJsonArray("required").asScala.map(_.getAsString).toSet)
+      assertEquals(DbtAgentProtocol.allowedArguments(name).toSet, schema.getAsJsonObject("properties").keySet().asScala.toSet)
+      assertFalse(schema.get("additionalProperties").getAsBoolean)
+      assertTrue(schemas(name).getAsJsonObject("annotations").get("readOnlyHint").getAsBoolean)
+    }
+    Vector(
+      """{"project":"analytics","reference":"orders","offset":2147483648}""",
+      """{"project":"analytics","reference":"orders","offset":-1}""",
+      """{"project":"analytics","reference":"orders","offset":0.5}""",
+      """{"project":"analytics","reference":"orders","offset":"0"}""",
+      """{"project":"analytics","reference":"orders","shell":"dbt run"}""",
+      """{"project":"","reference":"orders"}"""
+    ).foreach { args =>
+      val request = json("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"resolve_reference","arguments":""" + args + "}}")
+      assertEquals(-32602, service.rpc(request).getAsJsonObject("error").get("code").getAsInt)
+    }
+    val initialized = service.rpc(json("""{"jsonrpc":"2.0","id":2,"method":"initialize"}""")).getAsJsonObject("result")
+    assertEquals(DbtAgentProtocol.Version, initialized.getAsJsonObject("serverInfo").get("version").getAsString)
+    assertTrue(initialized.getAsJsonObject("capabilities").has("tools"))
+    service.dispose()
+    assertEquals(-32000, service.rpc(json("""{"jsonrpc":"2.0","id":3,"method":"tools/list"}""")).getAsJsonObject("error").get("code").getAsInt)
+  }
 
+  def testAgentReadToolsRespectOwningFilesAndExclusionsWithoutStartingDbt(): Unit = {
+    project()
+    add(".dbtignore", "models/private/**\n")
+    val orders = add("models/orders.sql", "select 1 as amount")
+    add("models/private/secret.sql", "select 123 as hidden")
+    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
+    val other = add("other/models/report.sql", "select * from {{ ref('orders') }}")
+    val w = workspace
+    root.runOptions.executable = "dbt-acceptance-must-not-execute"
+    val resources = DbtAgentProtocol.call(w, "list_resources", DbtAgentProtocol.obj("project" -> root.directory.getPath))
+    val listed = resources.getAsJsonArray("resources").asScala.map(_.getAsJsonObject).toVector
+    assertTrue(listed.exists(_.get("resource_id").getAsString == "model.analytics.orders"))
+    assertFalse(listed.exists(_.get("path").getAsString.contains("/private/")))
+    assertFalse(listed.exists(_.get("path").getAsString.contains("/other/")))
+    val args = DbtAgentProtocol.obj("project" -> root.directory.getPath, "file" -> other.getVirtualFile.getPath, "reference" -> "orders")
+    args.addProperty("offset", other.getText.indexOf("orders"))
+    assertEquals("missing", DbtAgentProtocol.call(w, "resolve_reference", args).get("status").getAsString)
+    val docs = DbtAgentProtocol.call(w, "get_documentation", DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.orders"))
+    assertEquals(orders.getVirtualFile.getPath, docs.getAsJsonObject("resource").get("path").getAsString)
+    val lineage = DbtAgentProtocol.call(w, "get_lineage", DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.orders"))
+    assertEquals("partial", lineage.get("status").getAsString)
+    assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
+  }
 }
