@@ -25,6 +25,82 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     PsiDocumentManager.getInstance(getProject).commitAllDocuments()
   }
 
+  def testCreationCanReviewNewNameAndPropertiesAndUndoAllThreeChanges(): Unit = {
+    project("model-paths: [transforms]\n")
+    val before = "select * from {{ ref('missing') }}"
+    val caller = configure("transforms/report.sql", "select * from {{ ref('miss<caret>ing') }}")
+    val proposal = DbtCreateResourceFix.proposal(caller, myFixture.getCaretOffset).get
+    val root = proposal.root.directory
+    assertTrue(DbtCreateResourceFix.create(proposal, "transforms/new_orders.sql", includeProperties = true, logicalName = Some("new_orders")).isRight)
+    assertEquals("select * from {{ ref('new_orders') }}", caller.getText)
+    assertEquals("select\n    1 as id\n", root.findFileByRelativePath("transforms/new_orders.sql").contentsToByteArray().map(_.toChar).mkString)
+    val properties = w.files.find(_.getName == "new_orders.yml").get
+    assertEquals("version: 2\nmodels:\n  - name: new_orders\n    columns:\n      - name: id\n", properties.getText)
+    assertEquals("new_orders", DbtNavigation.inFile(caller).flatMap(_.candidates).collectFirst {
+      case element: DbtSymbolElement if element.symbol.kind == "model" => element.symbol.name
+    }.get)
+    undo()
+    assertEquals(before, caller.getText)
+    assertNull(root.findFileByRelativePath("transforms/new_orders.sql"))
+    assertNull(root.findFileByRelativePath("transforms/new_orders.yml"))
+  }
+
+  def testCreationRejectsIgnoredGeneratedForeignAndMismatchedDestinationsWithoutWrites(): Unit = {
+    project("model-paths: [models]\ntarget-path: models/generated\n")
+    add(".dbtignore", "models/private/\n")
+    add("models/foreign/dbt_project.yml", "name: foreign\n")
+    val caller = configure("models/report.sql", "select * from {{ ref('miss<caret>ing') }}")
+    val plan = DbtCreateResourceFix.proposal(caller, myFixture.getCaretOffset).get
+    Vector("models/private/missing.sql", "models/generated/missing.sql", "models/foreign/models/missing.sql",
+      "../missing.sql", "models/different.sql", "models/missing.yml").foreach { path =>
+      assertTrue(path, DbtCreateResourceFix.create(plan, path).isLeft)
+      assertNull(path, plan.root.directory.findFileByRelativePath(path))
+    }
+    assertEquals(plan.origin.get._3, caller.getText)
+  }
+
+  def testCreationRejectsNewDuplicateNameAndExistingPropertiesAndChangedCall(): Unit = {
+    project()
+    val caller = configure("models/report.sql", "select * from {{ ref('miss<caret>ing') }}")
+    val plan = DbtCreateResourceFix.proposal(caller, myFixture.getCaretOffset).get
+    val existing = add("models/missing.yml", "# Keep this file\nmodels: []\n")
+    assertTrue(DbtCreateResourceFix.create(plan, plan.path, includeProperties = true).isLeft)
+    assertEquals("# Keep this file\nmodels: []\n", existing.getText)
+    add("models/other.sql", "select 2 as id")
+    assertTrue(DbtCreateResourceFix.create(plan, "models/nested/other.sql", logicalName = Some("other")).isLeft)
+    edit(caller, "select * from {{ ref('different') }}")
+    assertTrue(DbtCreateResourceFix.create(plan, plan.path).isLeft)
+    assertNull(plan.root.directory.findFileByRelativePath(plan.path))
+  }
+
+  def testNewSourceCreationResolvesAndExistingSourceEditRejectsStaleYaml(): Unit = {
+    project()
+    val caller = configure("models/report.sql", "select * from {{ source('c<caret>rm', 'customers') }}")
+    val plan = DbtCreateResourceFix.proposal(caller, myFixture.getCaretOffset).get
+    assertTrue(plan.file.isEmpty)
+    assertTrue(DbtCreateResourceFix.create(plan, plan.path).isRight)
+    assertTrue(w.symbols.exists(s => s.kind == "source_table" && s.owner == "crm" && s.name == "customers"))
+    val yaml = w.files.find(_.getName == "crm_sources.yml").get
+    val missing = configure("models/another.sql", "select * from {{ source('crm', 'ord<caret>ers') }}")
+    val next = DbtCreateResourceFix.proposal(missing, myFixture.getCaretOffset).get
+    edit(yaml, yaml.getText + "# concurrent change\n")
+    val current = yaml.getText
+    assertTrue(DbtCreateResourceFix.create(next, next.path).isLeft)
+    assertEquals(current, yaml.getText)
+  }
+
+  def testPackagesVersionsAndDynamicCallsNeverOfferWritableCreation(): Unit = {
+    project()
+    Vector("ref('finance', 'missing')", "ref('missing', v=2)", "ref(var('name'))", "source(var('name'), 'missing')")
+      .zipWithIndex.foreach { case (call, index) =>
+        val file = configure(s"models/negative_$index.sql", "select * from {{ " + call + "<caret> }}")
+        assertTrue(call, DbtCreateResourceFix.proposal(file, file.getText.indexOf("missing") match {
+          case -1 => myFixture.getCaretOffset
+          case offset => offset
+        }).isEmpty)
+      }
+  }
+
   def testMissingPropertiesScaffoldAppliesAndOneUndoRemovesIt(): Unit = {
     project()
     val source = configure("models/orders.sql", "select 1 as id<caret>")
