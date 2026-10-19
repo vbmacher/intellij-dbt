@@ -19,7 +19,8 @@ private[ide] object DbtSqlFluff {
   private def string(o: JsonObject, key: String): Option[String] =
     Option(o.get(key)).filterNot(_.isJsonNull).map(_.getAsString)
   private def number(o: JsonObject, key: String): Option[Int] =
-    Option(o.get(key)).filterNot(_.isJsonNull).map(_.getAsInt)
+    Option(o.get(key)).filter(_.isJsonPrimitive).filter(_.getAsJsonPrimitive.isNumber)
+      .flatMap(value => scala.util.Try(value.getAsBigDecimal.intValueExact()).toOption)
   private def offset(source: String, position: Int): Option[Int] =
     if (position < 0 || position > source.codePointCount(0, source.length)) None
     else Some(source.offsetByCodePoints(0, position))
