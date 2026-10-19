@@ -79,10 +79,7 @@ final class DbtImpactAction extends AnAction {
     val build = DbtImpactUi.button("Build reviewed selection") {
       val command = DbtImpactUi.read {
         val current = DbtWorkspace.get(project)
-        val roots = result.affected.map(_._1).flatMap(w.owner).map(w.executionRoot).distinct
-        if (roots.size != 1 || result.selection.isEmpty) Left("Choose affected resources from a single execution project. Removed-only changes have no runnable selection.")
-        else DbtRunSelection.all(current, roots.head.directory.getPath).toRight("Execution project is no longer available.")
-          .flatMap(DbtCommand.create(current, _, "Build", fullRefresh = false)).map(c => c.copy(arguments = c.arguments ++ Vector("--select") ++ result.selection.split("\\s+")))
+        DbtImpact.validationCommand(current, result)
       }
       command match {
         case Left(error) => Messages.showErrorDialog(project, error, "dbt validation")

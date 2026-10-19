@@ -110,42 +110,7 @@ private[dbt] object DbtImpact {
       val w = DbtWorkspace.get(initial.project)
       val baseline = baselineResources(w, contents)
       val changes = compare(baseline, current(w))
-      val edges = DbtLineage.edges(w)
-      val downstream = edges.groupBy(e => key(w, e.to))
-      val resourceById = w.symbols.sortBy(s => (s.metadata, s.isProperty)).groupBy(key(w, _)).view.mapValues(_.head).toMap
-      val frontier = mutable.Queue.empty[(String, Vector[String])]
-      changes.foreach(c => frontier.enqueue(c.resource.id -> Vector(c.resource.id)))
-      val removed = changes.filter(_.state == "removed")
-      resources(w).filter(_.isCode).foreach { consumer =>
-        DbtSyntax.inFile(consumer.file).flatMap(DbtSyntax.calls).filter(c => c.name == "ref" && c.closed).foreach { call =>
-          call.qualifiedName.foreach { case (namespace, name) =>
-            val matches = removed.filter { change =>
-              val prefix = "|model." + namespace.getOrElse(consumer.namespace) + "." + name
-              change.resource.id.endsWith(prefix + call.version.flatten.map(".v" + _).getOrElse("")) ||
-                call.version.isEmpty && change.resource.id.contains(prefix + ".v")
-            }
-            if (matches.size == 1) frontier.enqueue(key(w, consumer) -> Vector(matches.head.resource.id,
-              "unresolved literal ref after deletion", key(w, consumer)))
-          }
-        }
-      }
-      val seen = mutable.Set.empty[String]
-      val affected = mutable.ArrayBuffer.empty[(DbtSymbol, Vector[String])]
-      while (frontier.nonEmpty && seen.size < 10000) {
-        ProgressManager.checkCanceled()
-        val (id, trace) = frontier.dequeue()
-        if (seen.add(id)) {
-          resourceById.get(id).foreach(s => affected += s -> trace)
-          downstream.getOrElse(id, Vector.empty).foreach(e => frontier.enqueue(key(w, e.from) -> (trace :+ key(w, e.from))))
-        }
-      }
-      // Also include column-derived dependencies when a model reference was absent from resource lineage.
-      val columnEdges = DbtColumnLineage.edges(w)
-      columnEdges.filter(e => changes.exists(c => c.resource.id.endsWith("|model." + e.input.namespace + "." + e.input.owner +
-        e.input.version.map(".v" + _).getOrElse("")) && c.columns.contains(e.input.name))).foreach { e =>
-        val trace = Vector(e.input.owner + "." + e.input.name, e.resource.uniqueId + "." + e.column + " via " + e.expression)
-        if (!affected.exists(a => key(w, a._1) == key(w, e.resource))) affected += e.resource -> trace
-      }
+      val affected = affectedResources(w, changes)
       val models = affected.map(_._1).filter(s => DbtSymbol.RefKinds(s.kind) && s.isEnabled).toVector.distinctBy(key(w, _))
       val selectors = models.map { s =>
         val folders = w.owner(s).flatMap(_.resourceFolders(s.file.getVirtualFile)).map(_._2).getOrElse(Vector.empty)
@@ -159,6 +124,62 @@ private[dbt] object DbtImpact {
           Vector("Project configuration changed; baseline paths use current configured paths.") else Vector.empty))
     }
   }
+  private[ide] def affectedResources(w: DbtWorkspace, changes: Vector[DbtImpactChange]): Vector[(DbtSymbol, Vector[String])] = {
+    val edges = DbtLineage.edges(w)
+    val downstream = edges.groupBy(e => key(w, e.to))
+    val resourceById = w.symbols.sortBy(s => (s.metadata, s.isProperty)).groupBy(key(w, _)).view.mapValues(_.head).toMap
+    val frontier = mutable.Queue.empty[(String, Vector[String])]
+    changes.foreach(c => frontier.enqueue(c.resource.id -> Vector(c.resource.id)))
+    val removed = changes.filter(_.state == "removed")
+    resources(w).filter(_.isCode).foreach { consumer =>
+      DbtSyntax.inFile(consumer.file).flatMap(DbtSyntax.calls).filter(c => c.name == "ref" && c.closed).foreach { call =>
+        call.qualifiedName.foreach { case (namespace, name) =>
+          val matches = removed.filter { change =>
+            val prefix = "|model." + namespace.getOrElse(consumer.namespace) + "." + name
+            val sameExecution = for {
+              changedRoot <- w.roots.find(_.directory.getPath == change.resource.id.takeWhile(_ != '|'))
+              consumerRoot <- w.owner(consumer)
+            } yield w.executionRoot(changedRoot) == w.executionRoot(consumerRoot)
+            sameExecution.contains(true) && (change.resource.id.endsWith(prefix + call.version.flatten.map(".v" + _).getOrElse("")) ||
+              call.version.isEmpty && change.resource.id.contains(prefix + ".v"))
+          }
+          if (matches.size == 1) frontier.enqueue(key(w, consumer) -> Vector(matches.head.resource.id,
+            "unresolved literal ref after deletion", key(w, consumer)))
+        }
+      }
+    }
+    // Seed column evidence before walking resource edges so its downstream consumers are included too.
+    DbtColumnLineage.edges(w).foreach { edge =>
+      val inputs = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && s.relationName == edge.input.owner &&
+        s.namespace == edge.input.namespace && s.version == edge.input.version && w.owner(s) == w.owner(edge.input))
+        .map(key(w, _)).toSet
+      changes.find(c => inputs(c.resource.id) && c.columns.exists(_.equalsIgnoreCase(edge.input.name))).foreach { change =>
+        frontier.enqueue(key(w, edge.resource) -> Vector(change.resource.id,
+          edge.input.owner + "." + edge.input.name, edge.resource.uniqueId + "." + edge.column + " via " + edge.expression))
+      }
+    }
+    val seen = mutable.Set.empty[String]
+    val affected = mutable.ArrayBuffer.empty[(DbtSymbol, Vector[String])]
+    while (frontier.nonEmpty && seen.size < 10000) {
+      ProgressManager.checkCanceled()
+      val (id, trace) = frontier.dequeue()
+      if (seen.add(id)) {
+        resourceById.get(id).foreach(s => affected += s -> trace)
+        downstream.getOrElse(id, Vector.empty).foreach(e => frontier.enqueue(key(w, e.from) -> (trace :+ key(w, e.from))))
+      }
+    }
+    affected.toVector
+  }
+
+  private[ide] def validationCommand(w: DbtWorkspace, result: DbtImpactResult): Either[String, DbtCommand] = {
+    val roots = result.affected.map(_._1).flatMap(w.owner).map(w.executionRoot).distinct
+    if (roots.size != 1 || result.selection.isEmpty)
+      Left("Choose affected resources from a single execution project. Removed-only changes have no runnable selection.")
+    else DbtRunSelection.all(w, roots.head.directory.getPath).toRight("Execution project is no longer available.")
+      .flatMap(DbtCommand.create(w, _, "Build", fullRefresh = false))
+      .map(command => command.copy(arguments = command.arguments ++ Vector("--select") ++ result.selection.split("\\s+")))
+  }
+
   private[ide] def baselineResources(w: DbtWorkspace, contents: Map[String, String]): Vector[DbtImpactResource] = {
     val result = mutable.ArrayBuffer.empty[DbtImpactResource]
     w.roots.foreach { root =>
