@@ -69,12 +69,14 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
       ProgressManager.checkCanceled()
       namespace.forall(_ == s.namespace) && visibleSymbol(s, from, namespace.nonEmpty)
     }
-    val local = candidates.filter(_.namespace == from.name)
-    val selected = if (namespace.isEmpty && local.nonEmpty) local else candidates
-    selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
-      .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
-        t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
-      .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
+    def usable(selected: Vector[DbtSymbol]): Vector[DbtSymbol] =
+      selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
+        .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
+          t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
+        .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
+    // Like dbt, an unqualified name falls back to packages when no enabled local declaration exists.
+    val local = if (namespace.isEmpty) usable(candidates.filter(_.namespace == from.name)) else Vector.empty
+    if (local.nonEmpty) local else usable(candidates)
   }
 
   private def functionSupported(symbol: DbtSymbol, from: DbtRoot): Boolean = {

@@ -49,10 +49,12 @@ private[dbt] object DbtSelectors {
       case "path" => w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).exists(p => glob(value, p) || p.startsWith(value.stripSuffix("/") + "/"))
       case "package" => glob(value, s.namespace)
       case "tag" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
-      case "source" => s.kind == "source_table" && (glob(value, s.owner + "." + s.name) || glob(value, s.owner))
+      case "source" => s.kind == "source_table" && (glob(value, s.owner + "." + s.name) || glob(value, s.owner) ||
+        glob(value, s.namespace + "." + s.owner + "." + s.name))
       case "resource_type" => s.kind == value
       case "group" => s.kind == "group" && glob(value, s.name) || s.attributes.get("group").exists(glob(value, _))
-      case "exposure" | "metric" | "saved_query" | "function" | "check" | "test" => s.kind == method && glob(value, s.name)
+      case "exposure" | "metric" | "saved_query" => s.kind == method && (glob(value, s.name) || glob(value, s.namespace + "." + s.name))
+      case "function" | "check" | "test" => s.kind == method && glob(value, s.name)
       case _ => false
     }}.distinct
     val expanded = if (includeGraph && (prefix.nonEmpty || suffix.nonEmpty)) {

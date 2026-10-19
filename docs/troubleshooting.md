@@ -13,16 +13,14 @@ Check:
 - The [engine/version](configuration.md#engine-and-version) supports the feature.
 - The call appears in a [supported location](navigation.md#where-references-work).
 
-Literals, constant assignments and simple wrappers can navigate. Names requiring
-query results, environment values, recursion or macro execution may remain unresolved.
+Names computed from query results, environment values or macro execution cannot
+be followed; use a literal or a constant assignment.
 
 ## Navigation offers several choices
 
 Choose a target, or qualify the reference with its project/package, version or
 table alias. Names, versions, columns and semantic paths can match several declarations;
 dependencies marked **candidate** are ambiguous.
-
-Separate dbt projects remain distinct even when their names match.
 
 ## Python navigation is unavailable
 
@@ -36,17 +34,13 @@ Python files have no Jinja navigation. SQL, Jinja and YAML work without the Pyth
 Declare the column, use a simple model projection or select fresh metadata.
 Qualify ambiguous columns with a table alias.
 
-Some SQL dialect syntax and dynamic queries are unsupported. `SELECT *` does not supply
-missing declarations; the plugin does not query warehouse schemas.
+Columns behind `SELECT *` are known only from declarations or metadata.
 
 ## Local metadata is missing or stale
 
 Check paths and [supported formats](configuration.md#local-metadata), and whether
 the metadata was generated for the current project and target. Local source takes
 precedence over metadata.
-
-Metadata does not prove warehouse existence or dbt's deferral choice.
-State-dependent selections need sufficient information in the selected files.
 
 ## A selector or template import has no target
 
@@ -57,26 +51,23 @@ Template `import`, `from`, `include` and `extends` have no target in standard db
 
 ## Rename, deletion or wildcard expansion is unavailable
 
-These actions need writable local declarations and enough column information to
-make the change unambiguous. Dynamic consumers, unknown output columns, shared
-version declarations and unsupported SQL can prevent a change. Review the
-[editing limits and supported actions](editor.md#rename-and-safe-delete).
+These actions need writable local declarations and a known, unambiguous column
+list. Dynamic consumers and shared version declarations also block them; see
+[Rename and Safe Delete](editor.md#rename-and-safe-delete).
 
 ## SQLFluff warnings disappear after editing
 
 An edit makes the previous inspection result out of date. Follow the
 [inspection workflow](editor.md#sql-linting-and-formatting) to inspect the current
-source. Tool failures and canceled formatting leave the source unchanged; check
-the [formatter configuration](configuration.md#sql-linting-and-formatting).
+source. If formatting fails, check the
+[formatter configuration](configuration.md#sql-linting-and-formatting).
 
 ## Clipboard conversion leaves a relation unchanged
 
-Conversion requires a unique match in metadata generated for the current target.
-Ambiguous or unknown relations and unsupported SQL remain as written. See
-[SQL clipboard conversion](editor.md#sql-clipboard-conversion) for the metadata
-requirements and warnings.
+Conversion requires a unique match in documentation generated for the current
+target; see [SQL clipboard conversion](editor.md#sql-clipboard-conversion).
 
 ## Lineage is blank or a command fails
 
-See the [Lineage limits](workspace.md#lineage) and [Runner output](workspace.md#runner).
-Runtime and browser prerequisites are listed in [installation](installation.md).
+Check the browser prerequisites in [installation](installation.md) and the
+[Runner](workspace.md#runner) log.

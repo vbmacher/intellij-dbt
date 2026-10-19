@@ -99,7 +99,7 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
         val localFiles = w.files.filter(f => w.root(f).exists(r => w.owner(e.symbol).exists(owner => w.executionRoot(r) == w.executionRoot(owner))))
         if (localFiles.exists(f => com.github.vbmacher.intellij.dbt.syntax.DbtSyntax.inFile(f)
           .flatMap(com.github.vbmacher.intellij.dbt.syntax.DbtSyntax.calls).exists(c =>
-            Set("ref", "source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
+            Set("ref", "source", "builtins.ref", "builtins.source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
           messages += "Dynamic consumers exist; the complete set of usages cannot be proven."
         if (Set("column", "sql_projection")(e.symbol.kind) && localFiles.filter(_.getName.endsWith(".sql"))
           .exists(f => DbtSqlAnalysis.get(w, f).forall(_.issues.nonEmpty)))

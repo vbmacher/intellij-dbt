@@ -117,10 +117,12 @@ private[ide] object DbtTestDiscovery {
     if (intended.isEmpty) Left("No failed tests from this run.")
     else if (intended.exists(_.selector.isEmpty)) Left("Exact failed-test identities unavailable. Refresh the matching manifest before rerunning.")
     else {
+      val selection = Set("--select", "--exclude", "--selector", "--indirect-selection", "-s", "-x")
       var skip = false
       val args = command.arguments.filter { arg =>
-        if (Set("--select", "--exclude", "--selector", "--indirect-selection", "-s", "-x")(arg)) { skip = true; false }
-        else if (skip && !arg.startsWith("--")) false
+        if (selection(arg)) { skip = true; false }
+        else if (selection.exists(option => arg.startsWith(option + "="))) { skip = false; false }
+        else if (skip && !arg.startsWith("-")) false
         else { skip = false; true }
       }
       Right(command.copy(arguments = args ++ Vector("--select") ++ intended.map(_.selector).distinct ++ Vector("--indirect-selection", "empty")))

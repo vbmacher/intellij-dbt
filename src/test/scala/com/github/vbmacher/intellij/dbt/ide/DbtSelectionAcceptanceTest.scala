@@ -36,6 +36,19 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertFalse(DbtSelection.resolve(w, root, "selector:missing").complete)
   }
 
+  def testGeneratedSourceAndExposureSelectorsResolveLocally(): Unit = {
+    project()
+    add("models/orders.sql", "select * from {{ source('raw', 'orders') }}")
+    add("models/schema.yml", "sources:\n- name: raw\n  tables:\n  - name: orders\nexposures:\n- name: board\n  type: dashboard\n  owner: {name: a}\n  depends_on: [ref('orders')]\n")
+    val w = workspace
+    val resources = DbtSelection.resolve(w, root, "").resources.filter(s => Set("source_table", "exposure")(s.kind))
+    assertEquals(Set("source_table", "exposure"), resources.map(_.kind).toSet)
+    resources.foreach { s =>
+      val selector = DbtSelection.selector(w, s)
+      assertEquals(selector, Vector(s.uniqueId), DbtSelection.resolve(w, root, selector).resources.map(_.uniqueId))
+    }
+  }
+
   def testMatchedVersionAndPackageIdentitiesAgreeWithAllSelectionCommands(): Unit = {
     project()
     add("models/orders_v1.sql", "select 1")

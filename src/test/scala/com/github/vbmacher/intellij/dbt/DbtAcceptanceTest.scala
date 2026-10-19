@@ -42,6 +42,27 @@ final class DbtAcceptanceTest extends BasePlatformTestCase {
     assertEquals(Vector(enabled), w.declarations(Set("test"), "keep", w.roots.head).map(_.file))
   }
 
+  def testDisabledLocalModelFallsBackToEnabledPackageModel(): Unit = {
+    root()
+    val local = add("models/orders.sql", "{{ config(enabled=false) }} select 1")
+    add("models/schema.yml", "models:\n- name: orders\n  description: local\n")
+    val packaged = add("dbt_packages/util/models/orders.sql", "select 2")
+    add("dbt_packages/util/dbt_project.yml", "name: util\n")
+    val use = add("models/use.sql", "select * from {{ ref('orders') }}")
+    assertEquals(Vector(packaged), targets(use, "orders").map(_.getContainingFile))
+
+    edit(local, "select 1")
+    val enabled = targets(use, "orders").map(_.getContainingFile)
+    assertTrue(enabled.contains(local)); assertFalse(enabled.contains(packaged))
+  }
+
+  def testRequireDbtVersionListDeterminesSupportedFeatures(): Unit = {
+    root("require-dbt-version: [\">=1.5.0\", \"<1.6.0\"]\n")
+    val w = DbtWorkspace.get(getProject)
+    assertEquals("1.5", w.roots.head.version)
+    assertFalse(w.roots.head.supportsKind("semantic_model"))
+  }
+
   def testSqlProjectionsFollowSourceAndPropertyChanges(): Unit = {
     val config = root()
     val orders = add("models/orders.sql", "select 1 as old_id")

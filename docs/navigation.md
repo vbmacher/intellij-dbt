@@ -36,9 +36,7 @@ entry to open the corresponding reference.
 | `dependencies.yml` and `package-lock.yml` | Declarative dependency references |
 | Python models | Supported `dbt` API calls |
 
-Quoted and multiline YAML values work in supported locations. Ordinary strings,
-variable definitions, selected run-file values and unrelated YAML do not gain Jinja
-navigation just by containing a call.
+Quoted and multiline YAML values work in these locations.
 
 ## Models, seeds, snapshots and sources
 
@@ -258,8 +256,8 @@ Named selectors, nested unions/intersections/exclusions and graph operators expo
 individual references. Inheritance uses YAML `method: selector`, or string
 `selector:nightly` terms in Core 1.12+.
 
-Configured selection files support `select`, `exclude` and `selector` navigation.
-State-dependent selections need explicitly selected state metadata.
+Configured selection files support `select`, `exclude` and `selector` navigation;
+`state:` terms need a [state manifest](configuration.md#local-metadata).
 
 ## Python models
 
@@ -273,8 +271,7 @@ def model(dbt, session):
     return orders
 ```
 
-Use the model's `dbt` parameter or a local alias. Unrelated objects, shadowed names,
-interpolated strings and comments do not navigate.
+Calls must use the model's `dbt` parameter or a local alias of it.
 
 ## Information Schema references
 

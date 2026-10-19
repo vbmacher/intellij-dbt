@@ -48,7 +48,7 @@ final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
             if (project.getService(classOf[DbtRunner]).start(command)) {
               val window = ToolWindowManager.getInstance(project).getToolWindow("dbt")
               if (window != null) { Option(window.getContentManager.findContent("Runner")).foreach(window.getContentManager.setSelectedContent(_)); window.show() }
-            }
+            } else com.intellij.openapi.ui.Messages.showInfoMessage(project, "Another dbt command is already running. Stop it before previewing this SQL.", "Preview selected dbt SQL")
         }
       }).submit(AppExecutorUtil.getAppExecutorService)
     }

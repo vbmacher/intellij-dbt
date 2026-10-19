@@ -79,7 +79,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val engine: String = setting("engine").getOrElse("core")
 
-  val version: String = setting("dbt-version").orElse(DbtYaml.string(config, "require-dbt-version")
+  val version: String = setting("dbt-version").orElse(Some(DbtYaml.strings(config, "require-dbt-version").mkString(","))
     .flatMap("[0-9]+\\.[0-9]+".r.findFirstIn)).getOrElse("1.10")
 
   /** Whether the configured engine supports a dbt Core 1.x feature; dbt v2 supports all of them. */
@@ -111,16 +111,8 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val packagePath: String = DbtYaml.string(config, "packages-install-path").getOrElse("dbt_packages")
 
-  private val ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])] = psiFile(".dbtignore").map(_.getText).getOrElse("")
-    .linesIterator.map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>
-      val negated = pattern.startsWith("!")
-      val raw = if (negated) pattern.drop(1) else pattern
-      val relative = raw.stripPrefix("/").stripSuffix("/")
-      val patterns = Vector(relative) ++
-        (if (!raw.startsWith("/") && !relative.contains("/")) Vector("**/" + relative) else Vector.empty) ++
-        (if (relative.startsWith("**/")) Vector(relative.stripPrefix("**/")) else Vector.empty)
-      (negated, raw.endsWith("/"), patterns.flatMap(p => Try(FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
-    }.toVector
+  private val ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])] =
+    DbtRoot.ignorePatterns(psiFile(".dbtignore").map(_.getText).getOrElse(""))
 
   private val configuredOutput = {
     val base = Paths.get(directory.getPath)
@@ -150,7 +142,15 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   def excluded(file: VirtualFile): Boolean = relative(file).exists(r => excludedPath(r, file.isDirectory))
 
-  def excludedPath(r: String, directory: Boolean = false): Boolean = {
+  def excludedPath(r: String, directory: Boolean = false): Boolean = excludedPath(r, directory, ignores)
+
+  /** Exclusions for a path under another `.dbtignore` text, such as one from a baseline revision. */
+  def excludedPathWith(ignoreText: String): String => Boolean = {
+    val parsed = DbtRoot.ignorePatterns(ignoreText)
+    r => excludedPath(r, directory = false, parsed)
+  }
+
+  private def excludedPath(r: String, directory: Boolean, ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])]): Boolean = {
     val parts = r.split("/").toVector
     val paths = parts.indices.map(i => Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || directory))
     exclusions.exists(pathContains(_, r)) || ignores.foldLeft(false) { case (ignored, (negated, directoriesOnly, matchers)) =>
@@ -166,4 +166,18 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def kind(file: VirtualFile): Option[String] = resourceFolders(file).map(_._1)
 
   def resource(file: PsiFile): Boolean = !excluded(file.getVirtualFile) && kind(file.getVirtualFile).nonEmpty
+}
+
+private[dbt] object DbtRoot {
+  /** Parsed `.dbtignore` rules as (negated, directories only, matchers). */
+  def ignorePatterns(text: String): Vector[(Boolean, Boolean, Vector[PathMatcher])] =
+    text.linesIterator.map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>
+      val negated = pattern.startsWith("!")
+      val raw = if (negated) pattern.drop(1) else pattern
+      val relative = raw.stripPrefix("/").stripSuffix("/")
+      val patterns = Vector(relative) ++
+        (if (!raw.startsWith("/") && !relative.contains("/")) Vector("**/" + relative) else Vector.empty) ++
+        (if (relative.startsWith("**/")) Vector(relative.stripPrefix("**/")) else Vector.empty)
+      (negated, raw.endsWith("/"), patterns.flatMap(p => Try(FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
+    }.toVector
 }

@@ -67,6 +67,16 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
     assertTrue(DbtImpact.compare(before, DbtImpact.current(workspace)).isEmpty)
   }
 
+  def testBaselineIgnoreRulesComeFromTheBaselineRevision(): Unit = {
+    val config = project()
+    add(".dbtignore", "models/legacy.sql\n")
+    val legacy = root.directory.getPath + "/models/legacy.sql"
+    val contents = Map(config.getVirtualFile.getPath -> config.getText, legacy -> "select 1 as id")
+    val ignores = Map(root.directory.getPath -> "")
+    val changes = DbtImpact.compare(DbtImpact.baselineResources(workspace, contents, Some(ignores)), DbtImpact.current(workspace))
+    assertEquals(Map("model.analytics.legacy" -> "removed"), changes.map(c => c.resource.id.split("\\|").last -> c.state).toMap)
+  }
+
   def testBaselineProjectNamePreservesRemovedAndAddedIdentityOnProjectRename(): Unit = {
     val config = project()
     val code = add("models/orders.sql", "select 1 as amount")

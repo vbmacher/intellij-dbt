@@ -115,6 +115,15 @@ unit_tests:
     assertEquals(Vector("--indirect-selection", "empty"), rerun.arguments.takeRight(2))
     assertEquals(Vector("--target", "dev"), rerun.arguments.sliding(2).find(_.head == "--target").get)
   }
+  def testRerunFailedKeepsShortOptionsAfterSelectorsAndStripsInlineSelectors(): Unit = {
+    project(); val file = add("tests/check_orders.sql", "select 1")
+    val dir = temporary(); val original = command(dir, fake(dir)).copy(arguments = Vector("wrapper", "test", "--select", "old+", "tag:x", "-t", "prod",
+      "--exclude=tag:ignored", "--selector=nightly", "--indirect-selection=cautious", "--threads", "4"))
+    val test = DbtTestDefinition("test.pkg.check_orders.hash", "check_orders", "Data tests", "", workspace.roots.head.directory.getPath,
+      file.getVirtualFile, 0, "fqn:pkg.tests.check_orders,resource_type:test", Vector.empty)
+    val rerun = DbtTestDiscovery.rerun(original, Vector(test), Vector(DbtExecutionResult(test.id, "failed", "rows"))).toOption.get
+    assertEquals(Vector("wrapper", "test", "-t", "prod", "--threads", "4", "--select", test.selector, "--indirect-selection", "empty"), rerun.arguments)
+  }
   def testNativeConsoleStreamsTestStateNavigatesDefinitionAndPreservesFailureOutput(): Unit = {
     project(); val file = add("tests/check_orders.sql", "select 1")
     val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()

@@ -52,7 +52,8 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
         val positional = arguments.filterNot(_.getClass.getSimpleName == "PyKeywordArgumentImpl")
         val literals = positional.map(arg => invoke(arg, "getStringValue").collect { case s: String if !invoke(arg, "isInterpolated").contains(java.lang.Boolean.TRUE) => arg -> s })
         val version = arguments.filter(_.getClass.getSimpleName == "PyKeywordArgumentImpl")
-          .find(a => invoke(a, "getName").exists(x => Set("v", "version").contains(x.toString))).flatMap(psi(_, "getValueExpression")).map(_.getText.stripPrefix("'").stripSuffix("'"))
+          .find(a => invoke(a, "getName").exists(x => Set("v", "version").contains(x.toString))).flatMap(psi(_, "getValueExpression"))
+          .map(v => invoke(v, "getStringValue").collect { case s: String => s }.getOrElse(v.getText))
         if (objectExpression.exists(modelParameter(_)) && Set("ref", "source", "config", "config.get").contains(operation)) operation match {
           case "ref" if literals.nonEmpty && literals.forall(_.nonEmpty) =>
             val ns = if (literals.size == 2) literals.head.map(_._2) else None

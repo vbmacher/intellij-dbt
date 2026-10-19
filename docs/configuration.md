@@ -50,8 +50,8 @@ models/experimental/
 
 ## Engine and version
 
-The default is dbt Core 1.10; scalar `require-dbt-version` in `dbt_project.yml` can
-provide a hint. To select explicitly:
+The default is dbt Core 1.10; `require-dbt-version` in `dbt_project.yml`, as a single
+string or a list, can provide a hint. To select explicitly:
 
 ```yaml
 # .dbt-navigation.yml
@@ -60,8 +60,7 @@ dbt-version: '1.12'
 ```
 
 A minor version such as `'1.10'` uses that series' supported patch level. Set a full
-version such as `'1.10.5'` for patch-specific behavior. Unsupported engine or schema
-versions do not enable newer features.
+version such as `'1.10.5'` for patch-specific behavior.
 
 | Feature | Required version or setting |
 | --- | --- |
@@ -84,7 +83,7 @@ adapter: postgres
 ```
 
 The selected profile output defines fields such as `target.schema`. The adapter
-narrows dispatch and function targets; an unknown adapter may yield several candidates.
+narrows dispatch and function targets; without it, navigation can offer several candidates.
 
 ### Function compatibility
 
@@ -93,8 +92,7 @@ narrows dispatch and function targets; an unknown adapter may yield several cand
 | Python | Snowflake, BigQuery, Databricks |
 | JavaScript | Snowflake, BigQuery |
 
-Overloads use supported Snowflake/Postgres combinations. Unknown adapters may retain
-source candidates; navigation does not prove warehouse installation or support.
+Overloads are supported on Snowflake and Postgres.
 
 ## Variables and environment
 
@@ -115,12 +113,8 @@ target: dev
 select: orders
 ```
 
-Run-config variable and environment keys override source defaults. Environment
-navigation shows names only. The plugin does not execute this file or infer values
-from terminal variables, shell scripts, `dbt --vars` or unselected IDE run configs.
-
-Selected profiles and `packages.yml` resolve environment keys and configured runtime
-variables. Project defaults do not count as CLI overrides.
+Run-config `vars` and `env` override project defaults. Values come only from the
+configured files; shell variables, `dbt --vars` and IDE run configurations are not read.
 
 Core 1.12+ supports a top-level `vars` mapping in `vars.yml`. Define variables there
 or in `dbt_project.yml`; nonempty mappings in both leave conflicts unresolved.
@@ -167,9 +161,7 @@ catalog: target/catalog.json
 state-manifest: state/manifest.json
 ```
 
-Metadata targets are labeled, including stale entries; metadata-only targets open
-read-only. They do not prove warehouse existence or runtime deferral. Unsupported
-versions and unreadable files provide no targets.
+Metadata targets are labeled, including stale ones, and open read-only.
 
 ### dbt v2 Information Schema and checks
 
@@ -183,15 +175,13 @@ info-schema-dir: target/info_schema/v1
 
 Files include resources (`dbt.models.parquet`), columns (`dbt.node_columns.parquet`)
 and dependencies (`dbt.edges.parquet`). Each file is limited to 100,000 rows and
-64 MiB. For example, `ref('remote_orders')` opens metadata when local source is absent.
-Supported pages: uncompressed, Snappy, Gzip, Zstd and LZ4 raw; other formats supply
-no targets.
+64 MiB, and must be uncompressed or use Snappy, Gzip, Zstd or LZ4 raw compression.
+For example, `ref('remote_orders')` opens metadata when local source is absent.
 
-Missing or old `ingested_at` marks resources stale. Columns and dependencies are
-ignored for stale resources or those with unsaved source edits.
+Resources with a missing or old `ingested_at` are marked stale; their columns and
+dependencies are ignored, as are those of resources with unsaved source edits.
 
-For check-view and column navigation examples, see [Navigation](navigation.md).
-Runtime tables, variable values and arbitrary Parquet are not navigation sources.
+For check-view and column navigation examples, see [Navigation](navigation.md#information-schema-references).
 
 See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
 and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
@@ -214,17 +204,12 @@ The settings are saved with the IDE project.
 | **Colored output** | Enabled. |
 | **Desktop notifications when dbt commands finish** | Enabled. Requires system notifications to be available and permitted. |
 
-A blank target uses the profile named in that root's `dbt_project.yml`. The plugin
-does not evaluate Jinja in profiles; dbt evaluates it when a command runs. Execution
-uses `DBT_TARGET_PATH`, `DBT_PROFILES_DIR` and the active `--target`.
-
-Existing `manifest.json` and `catalog.json` in the artifact directory load automatically.
-Explicit [local metadata paths](#local-metadata) can select additional files. Keep
-those files consistent with the active target when using both.
+Commands run with `DBT_TARGET_PATH`, `DBT_PROFILES_DIR` and `--target` set from
+these settings. `manifest.json` and `catalog.json` in the artifact directory load
+automatically; [local metadata paths](#local-metadata) can add other files.
 
 Desktop notifications also require **Settings → Appearance & Behavior → Notifications →
-Enable system notifications**, an inactive IDE window, and an available desktop
-notification service. See [Workspace](workspace.md) for command output and results.
+Enable system notifications** and appear only while the IDE window is inactive.
 
 ### Script wrappers
 
@@ -236,15 +221,10 @@ or type a command name. For example:
 | **dbt executable** | `zsh` |
 | **Executable arguments** | `scripts/dbt-wrapper.zsh analytics` |
 
-The command prefix is `zsh scripts/dbt-wrapper.zsh analytics`. The selected dbt
-command and its options follow it. The same prefix applies to command execution,
-documentation generation and previews. The wrapper supplies any additional
-project selection or environment setup it needs.
-
+Every command then runs as `zsh scripts/dbt-wrapper.zsh analytics <dbt command and options>`.
 Executable paths containing `/` or `\` resolve relative to the execution root.
-Arguments are passed directly to the process; shell expressions are not evaluated.
-When a local `.venv` or `venv` contains dbt, its executable directory is added to
-`PATH` for the wrapper's dbt and Python calls.
+Arguments are passed as-is; shell expressions are not evaluated. A local `.venv`
+or `venv` containing dbt is added to `PATH`.
 
 ## Lineage settings
 
@@ -267,26 +247,18 @@ manifest schema versions are 9–12. This setting supplies comparison and comman
 state; the `.dbt-navigation.yml` `state-manifest` option instead supplies navigation
 references to state metadata.
 
-The baseline must be separate from **Artifact directory**. Overlapping directories,
-including aliases through symbolic links, are rejected before a command runs.
-Missing, malformed or unsupported manifests also block state-dependent commands.
-The baseline reader accepts files up to 50 MB and 50,000 resource entries; larger
-baselines cannot be compared locally.
+The baseline must not overlap **Artifact directory**, including through symbolic
+links. Baselines larger than 50 MB or 50,000 resources cannot be compared.
 
 | Option | Effect and prerequisite |
 | --- | --- |
 | **Defer unselected upstream resources to baseline state** | Adds `--defer --state <directory>`. Requires a valid baseline and configured dbt Core. |
 | **Favor baseline relations (dbt Core 1.4+)** | Adds `--favor-state`. Requires deferral and configured Core 1.4+. |
 
-Both options are off by default. Core deferral flags are unavailable for configured
-`engine: v2`. Choose the [engine and version](#engine-and-version) that match your
-executable; these options do not change the executable itself.
-
-Ordinary deferral can use baseline relations for unselected upstream models, but
-an existing relation in the active target can take precedence. Favoring state asks
-dbt to use baseline relations instead. Ephemeral models compile locally;
-`source()` references use current source configuration. The plugin does not query
-the warehouse to determine whether a relation exists.
+Both options are off by default and unavailable for `engine: v2`. Set the
+[engine and version](#engine-and-version) to match your executable. Without
+**Favor baseline relations**, dbt uses a relation that already exists in the active
+target instead of the baseline one.
 
 For comparison results, selections and dependency review, see [Workspace](workspace.md#selection-and-state).
 
@@ -301,11 +273,9 @@ for environment prerequisites. In **Settings → dbt Workspace**, choose the own
 | **Formatter executable (optional)** | Blank disables both formatting and SQL inspection. Enter a command name or choose an executable with the browse button. Relative paths resolve from the execution root. |
 | **Format dbt SQL on save** | Off by default. Enables background formatting when saving a supported dbt SQL resource. |
 
-The formatter runs in the configured execution directory with the project's local
-environment and receives the raw SQL/Jinja source. SQLFluff also receives the source
-filename so nested project configuration applies. The project's SQLFluff
-configuration and any templater dependencies must work in that environment.
-A run that does not finish within 60 seconds is canceled.
+The formatter runs in the execution directory with the project's environment, so
+the project's SQLFluff configuration and templater must work there. Runs longer
+than 60 seconds are canceled.
 
 For reformatting, inspection and fixes, see [Editor](editor.md#sql-linting-and-formatting).
 
@@ -320,15 +290,12 @@ Open **Settings → dbt Integrations**:
 | **Remove saved Metabase API key** | Deletes the stored key when settings are applied. |
 
 The API key needs read access to questions, databases and their table/field metadata,
-and any dashboards you want to see. Requests use `x-api-key` authentication.
-Redirects are refused; enter the final server URL. Applying integration settings
-clears the in-memory Metabase cache. Metadata refresh is explicit; see
-[Downstream consumers](integrations.md#find-downstream-consumers).
+and any dashboards you want to see. Redirects are refused, so enter the final server
+URL. Applying these settings clears the cached Metabase data; see
+[Downstream consumers](integrations.md#find-downstream-consumers) to refresh it.
 
-A refresh reads up to 20 databases, 1,000 questions and 100 dashboards. Each response
-is limited to 4 MB, each request to 10 seconds, and the refresh to 60 seconds. Larger
-or inaccessible collections can leave consumers missing; the dialog shows refresh
-errors and retains the previous cache when refresh fails.
+A refresh reads at most 20 databases, 1,000 questions and 100 dashboards; consumers
+beyond these limits are missing.
 
 ## Airflow task mappings
 
@@ -354,46 +321,40 @@ a dbt project within the same consuming project and its packages. Use either
 `select` with optional `exclude`, or `selector` naming a definition in `selectors.yml`.
 Selections support the same local forms as [Workspace selection review](workspace.md#selection-and-state).
 
-A missing selection records a task with unknown resources. Dynamic values such as
-`{{ ... }}` or `${...}`, missing projects and unsupported selections stay unresolved.
-Declare `upstream_ingestion` to display known ingestion task names; no associations
-are inferred from DAG Python. `airflow_url` supplies browser links and must be an
-HTTP or HTTPS URL without embedded credentials.
-
-Files larger than 1 MB are skipped; only the first 1,000 task entries are read.
+Tasks without a selection, or with dynamic values such as `{{ ... }}` or `${...}`,
+are shown as unresolved. `upstream_ingestion` lists ingestion task names to display.
+`airflow_url` supplies browser links and must be an HTTP or HTTPS URL without
+embedded credentials. Files larger than 1 MB are skipped, and only the first 1,000
+tasks are read.
 For viewing and opening mappings, see [Airflow context](integrations.md#inspect-airflow-context).
 
 ## Local agent tools
 
 In **Settings → dbt Integrations**, select **Enable local read-only agent tools
-(start explicitly from Tools)** and apply. The option is off by default. It permits
-an explicit start; opening a project does not start the service. Clearing the option
-stops it immediately. See [Local agent actions](integrations.md#give-a-local-assistant-read-only-project-access).
+(start explicitly from Tools)** and apply. The option is off by default; the service
+still starts only when you click **Start**. Clearing the option stops it. See
+[Local agent actions](integrations.md#give-a-local-assistant-read-only-project-access).
 
-A client must support authenticated HTTP JSON-RPC requests or provide a bridge.
-The endpoint supports `initialize`, `ping`, `tools/list` and `tools/call`; it is not
-a complete MCP Streamable HTTP or SSE endpoint. It listens only on `127.0.0.1` at a
-random port under `/tools`. Requests with a browser origin are rejected.
+The client must send authenticated HTTP JSON-RPC requests, directly or through a
+bridge. The endpoint supports `initialize`, `ping`, `tools/list` and `tools/call`;
+it is not a full MCP Streamable HTTP or SSE endpoint. It listens on `127.0.0.1` at
+a random port under `/tools` and rejects requests from browsers.
 
-Use the endpoint and temporary token displayed by **dbt Local Agent Tools**. Send
-POST requests with `Authorization: Bearer <temporary-token>` and JSON bodies, for example:
+Send POST requests to the displayed endpoint with `Authorization: Bearer <token>`
+and a JSON body, for example:
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/list"}
 ```
 
-Use `tools/list` for the tool names, required arguments and JSON schemas. Project
-arguments accept the exact owning directory returned by `list_projects`, or a
-project name if unique. Treat resource IDs together with their owning project.
+`tools/list` returns the tool names and argument schemas. The `project` argument
+accepts a directory returned by `list_projects`, or a unique project name.
 For example:
 
 ```json
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_column_lineage","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report","column":"amount","direction":"upstream"}}}
 ```
 
-Requests are limited to 64 KiB, responses to 2 MB, and authenticated calls to 30 seconds.
-Excess queued connections can be rejected. Results beyond a tool's resource or path
-limit are marked partial. Use the returned status and explanations before relying
-on a result. No profile values, environment values, connection secrets or warehouse
-rows are returned. Descriptions and SQL expression evidence can contain project-authored
-information; review them before sharing results with an external assistant.
+Requests are limited to 64 KiB, responses to 2 MB, and calls to 30 seconds; results
+cut short by a limit are marked partial. Responses never include profile or
+environment values, connection secrets or warehouse rows.

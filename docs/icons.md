@@ -56,8 +56,7 @@ separate Project-window entries.
 | Declared resource's icon | YAML resource properties | Project window and navigation results: named entries such as `models:`, `sources:`, `macros:` and `unit_tests:` in configured resource paths. Use the declared resource's icon, except test-only files above. |
 
 The same resource icons also identify completion suggestions. Test results use
-the IDE's status icons and text labels for running, passed, failed and ignored
-tests; warning and cancellation details remain visible in their output.
+the IDE's standard status icons.
 
 ## Tool-window icons
 
@@ -82,8 +81,7 @@ action icons. See [the dbt window](workspace.md) for the corresponding controls.
 
 ## Lineage resource symbols
 
-The graph uses compact symbols next to resource kinds. Execution badges display
-status text separately; a resource symbol never means that a command succeeded.
+The graph shows these symbols next to resource kinds.
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |

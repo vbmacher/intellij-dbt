@@ -48,6 +48,25 @@ final class DbtSafeDeleteActionTest extends DbtCodeInsightTestCase {
     assertEquals("select * from {{ ref('orders') }}", consumer.getText)
   }
 
+  def testDynamicBuiltinsRefBlocksModelDeletion(): Unit = {
+    project()
+    val source = add("models/orders.sql", "select 1 as id")
+    add("models/report.sql", "select * from {{ builtins.ref(var('model_name')) }}")
+    val action = ActionManager.getInstance.getAction("SafeDelete")
+    val context = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject)
+      .add(CommonDataKeys.PSI_ELEMENT, source)
+      .add(PlatformCoreDataKeys.PSI_ELEMENT_ARRAY, Array[PsiElement](source))
+      .add(LangDataKeys.CONTEXT_LANGUAGES, Array(source.getLanguage)).build()
+    val event = TestActionEvent.createTestEvent(action, context)
+    action.update(event)
+    val conflict = intercept(() => action.actionPerformed(event))
+    assertTrue(conflict.getMessage, conflict.getMessage.contains("Dynamic consumers exist"))
+    assertTrue(source.isValid)
+  }
+
+  private def intercept(run: () => Unit): BaseRefactoringProcessor.ConflictsInTestsException =
+    assertThrows(classOf[BaseRefactoringProcessor.ConflictsInTestsException], () => run())
+
   def testForeignYamlAndPlainTextDoNotGainDbtDeletionTargets(): Unit = {
     project()
     val foreign = configure("services/service.yml", "services: {name: ord<caret>ers}\n")

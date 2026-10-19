@@ -23,6 +23,16 @@ final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
     markers.head
   }
 
+  def testMarkerCacheFollowsWorkspaceSettings(): Unit = {
+    project()
+    add("models/input.sql", "select 1 as id")
+    val model = configure("models/orders.sql", "<caret>select * from {{ ref('input') }}")
+    val before = DbtLineMarkerProvider.markers(model)
+    assertSame(before, DbtLineMarkerProvider.markers(model))
+    com.github.vbmacher.intellij.dbt.project.DbtProjectSettings.get(getProject).changed()
+    assertNotSame("Settings changes must recompute markers", before, DbtLineMarkerProvider.markers(model))
+  }
+
   def testPlainSqlModelOffersPropertiesAndBothDependencyDirections(): Unit = {
     project()
     val source = add("models/input.sql", "select 1 as id")

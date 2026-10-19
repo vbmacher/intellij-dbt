@@ -311,4 +311,24 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     assertTrue(calls(f).isEmpty)
   }
 
+  def testPreviewSelectedSqlReportsABusyRunner(): Unit = {
+    val f = setup()
+    Files.writeString(f.directory.resolve("hold"), "")
+    click(f.panel, "Step")
+    await("The held CTE query occupies the runner") { calls(f).size == 1 && f.runner.isRunning }
+    var shown = ""
+    val previous = com.intellij.openapi.ui.TestDialogManager.setTestDialog((message: String) => { shown = message; 0 })
+    try {
+      myFixture.getEditor.getSelectionModel.setSelection(0, myFixture.getEditor.getDocument.getTextLength)
+      myFixture.testAction(new DbtPreviewSqlAction)
+      flushReads()
+      await("Busy runner is reported") { shown.contains("Another dbt command is already running") }
+    } finally {
+      com.intellij.openapi.ui.TestDialogManager.setTestDialog(previous)
+      Files.delete(f.directory.resolve("hold"))
+      await("Held query finishes") { !f.runner.isRunning }
+    }
+    assertEquals(1, calls(f).size)
+  }
+
 }

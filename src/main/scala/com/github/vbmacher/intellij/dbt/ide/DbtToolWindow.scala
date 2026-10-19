@@ -355,12 +355,18 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     event.preview.foreach(preview.setText)
     if (event.running && event.command.exists(_.action == "Preview")) previewEvidence.showEvidence(None)
     if (!event.running && event.previewEvidence.nonEmpty) previewEvidence.showEvidence(event.previewEvidence)
-    if (event.running && event.command.exists(_.action == "Resolve Selection")) lsRequest = Some(reviewRequest)
+    if (event.running && event.command.exists(_.action == "Resolve Selection")) { lsRequest = Some(reviewRequest); cliReview = None }
+    val lsFinished = !event.running && event.command.exists(_.action == "Resolve Selection") && lsRequest.contains(reviewRequest)
+    if (lsFinished && event.selectionOutput.isEmpty) {
+      reviewCommand = None; selectionCopy.setEnabled(false)
+      selectionReview.setText("dbt ls did not complete. See the Runner console, then review the selection again.")
+    }
     event.selectionOutput.foreach { output =>
       if (lsRequest.contains(reviewRequest)) {
         val header = "CLI selector preview · target: " + event.command.map(_.target).filter(_.nonEmpty).getOrElse("profile default")
         val parsed = DbtSelectionReview.cliResources(output)
         cliReview = parsed.toOption
+        if (cliReview.isEmpty) { reviewCommand = None; selectionCopy.setEnabled(false) }
         selectionReview.setText(parsed.fold(error => header + "\n" + error,
           ids => header + "\nMatched resources: " + ids.size + "\n" + ids.mkString("\n")))
         selectionReview.setCaretPosition(0)

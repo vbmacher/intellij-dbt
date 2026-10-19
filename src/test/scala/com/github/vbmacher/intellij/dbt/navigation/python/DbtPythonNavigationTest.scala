@@ -67,6 +67,11 @@ final class DbtPythonNavigationTest extends BasePlatformTestCase {
     val py = add("models/python_model.py", "def model(dbt, session):\n    return dbt.ref('versioned', version=1)\n")
     val target = DbtNavigation.inFile(py).find(_.label == "versioned").get.candidates.head
     assertTrue(target.getContainingFile.getName.endsWith("_v1.sql"))
+    Vector("version=\"1\"", "v='1'").zipWithIndex.foreach { case (argument, index) =>
+      val quoted = add("models/quoted_" + index + ".py", "def model(dbt, session):\n    return dbt.ref(\"versioned\", " + argument + ")\n")
+      val quotedTarget = DbtNavigation.inFile(quoted).find(_.label == "versioned").get.candidates
+      assertTrue(argument, quotedTarget.headOption.exists(_.getContainingFile.getName.endsWith("_v1.sql")))
+    }
   }
 
   def testPythonSourcesRespectDuplicateRootsAndDisabledTables(): Unit = {

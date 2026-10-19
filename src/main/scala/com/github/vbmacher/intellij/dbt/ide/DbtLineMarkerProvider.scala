@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.lineage.DbtLineage
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.github.vbmacher.intellij.dbt.project.{DbtIcons, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtIcons, DbtProjectSettings, DbtSymbolElement, DbtWorkspace}
 import com.intellij.codeInsight.daemon.{LineMarkerInfo, LineMarkerProviderDescriptor}
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.util.{Key, TextRange}
@@ -47,7 +47,7 @@ private[ide] object DbtLineMarkerProvider {
     if (!file.isPhysical || file.getVirtualFile == null) Vector.empty
     else CachedValuesManager.getManager(file.getProject).getCachedValue(file, MarkerCache,
       () => CachedValueProvider.Result.create(compute(file),
-        PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS), false)
+        PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(file.getProject)), false)
 
   private def targets(symbols: Vector[DbtSymbolElement], heading: String): Vector[DbtNavigationItem] =
     symbols.distinct.zipWithIndex.map { case (target, index) =>

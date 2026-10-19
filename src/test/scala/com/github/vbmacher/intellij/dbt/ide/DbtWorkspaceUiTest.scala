@@ -142,6 +142,35 @@ print('started from the Run button',flush=True)
     } finally toolWindow.remove()
   }
 
+  def testFailedDbtLsRefreshDiscardsThePreviousCliReview(): Unit = {
+    setupEditor()
+    val chosen = add("models/chosen.sql", "select 42")
+    val runner = new DbtRunner(getProject)
+    Disposer.register(ui, runner)
+    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
+    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
+    val executable = add("fake-dbt", """#!/usr/bin/python3
+import json,os,sys
+if os.path.exists('fail-ls'): sys.exit(2)
+if 'ls' in sys.argv: print(json.dumps({'unique_id':'model.analytics.chosen'}),flush=True)
+""").getVirtualFile
+    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
+    val options = DbtProjectSettings.get(getProject).options(directory)
+    options.executable = executable.getPath; options.notifications = false
+    val panel = new DbtToolWindowPanel(getProject)
+    Disposer.register(ui, panel)
+    panel.refresh(follow = true)
+    choose(panel, chosen.getVirtualFile.getPath)
+    val review = children(panel.runnerPanel).collectFirst { case a: JTextArea if a.getName == "dbt.selectionReview" => a }.get
+    ApplicationManager.getApplication.invokeLater(() => button(panel, "Refresh with dbt ls").doClick(), ModalityState.nonModal())
+    await("dbt ls review succeeds")(review.getText.contains("model.analytics.chosen") && button(panel, "Copy command").isEnabled)
+    Files.writeString(Paths.get(directory, "fail-ls"), "")
+    ApplicationManager.getApplication.invokeLater(() => button(panel, "Refresh with dbt ls").doClick(), ModalityState.nonModal())
+    await("Failed dbt ls replaces the review")(review.getText.contains("dbt ls did not complete") && !runner.isRunning)
+    assertFalse(review.getText.contains("model.analytics.chosen"))
+    assertFalse(button(panel, "Copy command").isEnabled)
+  }
+
   def testRunnerEditsSharedPrefixAndGeneratesRenderableDocs(): Unit = {
     setupEditor()
     val editorOptions = com.intellij.openapi.editor.ex.EditorSettingsExternalizable.getInstance()

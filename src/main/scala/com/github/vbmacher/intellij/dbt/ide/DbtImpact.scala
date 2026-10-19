@@ -12,6 +12,7 @@ import java.nio.file.{Path, Paths}
 import java.util.concurrent.TimeUnit
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 import scala.util.control.NonFatal
 
 private[dbt] final case class DbtImpactResource(id: String, path: String, fingerprint: String, columns: Vector[String])
@@ -88,6 +89,16 @@ private[dbt] object DbtImpact {
       repository <- git(directory, Vector("rev-parse", "--show-toplevel")).map(_.trim)
       commit <- git(directory, Vector("rev-parse", "--verify", "--end-of-options", revision + "^{commit}")).map(_.trim)
       listed <- git(repository, Vector("ls-tree", "-rz", "--name-only", commit))
+      listedPaths = listed.split("\u0000").toSet
+      ignores <- initial.roots.foldLeft[Either[String, Map[String, String]]](Right(Map.empty)) { (result, root) =>
+        val relative = Try(Paths.get(repository).relativize(Paths.get(root.directory.getPath)).toString.replace('\\', '/')).getOrElse("..")
+        val ignore = if (relative.isEmpty) ".dbtignore" else relative + "/.dbtignore"
+        result.flatMap { m =>
+          if (!listedPaths(ignore)) Right(m.updated(root.directory.getPath, ""))
+          else git(repository, Vector("show", s"$commit:$ignore")).map(text => m.updated(root.directory.getPath, text))
+        }
+      }
+      baselineExcluded = initial.roots.map(r => r.directory.getPath -> r.excludedPathWith(ignores(r.directory.getPath))).toMap
       paths = listed.split("\u0000").toVector.filter(p => Set("sql", "py", "csv", "yml", "yaml", "md", "jinja", "jinja2", "js").exists(e => p.endsWith("." + e)))
       relevant = paths.filter { p => initial.roots.exists { root =>
         val absolute = Paths.get(repository).resolve(p).toString
@@ -95,7 +106,7 @@ private[dbt] object DbtImpact {
         absolute.startsWith(prefix) && {
           val relative = absolute.stripPrefix(prefix)
           (relative == "dbt_project.yml" || root.pathKinds.exists(k => root.pathContains(k._2, relative))) &&
-            !root.excludedPath(relative)
+            !baselineExcluded(root.directory.getPath)(relative)
         }
       }}
       _ <- Either.cond(relevant.size <= MaxFiles, (), s"Baseline exceeds the $MaxFiles file analysis limit.")
@@ -108,7 +119,7 @@ private[dbt] object DbtImpact {
       }
     } yield DbtImpactUi.read {
       val w = DbtWorkspace.get(initial.project)
-      val baseline = baselineResources(w, contents)
+      val baseline = baselineResources(w, contents, Some(ignores))
       val changes = compare(baseline, current(w))
       val affected = affectedResources(w, changes)
       val models = affected.map(_._1).filter(s => DbtSymbol.RefKinds(s.kind) && s.isEnabled).toVector.distinctBy(key(w, _))
@@ -180,15 +191,18 @@ private[dbt] object DbtImpact {
       .map(command => command.copy(arguments = command.arguments ++ Vector("--select") ++ result.selection.split("\\s+")))
   }
 
-  private[ide] def baselineResources(w: DbtWorkspace, contents: Map[String, String]): Vector[DbtImpactResource] = {
+  /** Baseline resources; `ignores` holds each root's baseline `.dbtignore` text, otherwise current rules apply. */
+  private[ide] def baselineResources(w: DbtWorkspace, contents: Map[String, String],
+                                     ignores: Option[Map[String, String]] = None): Vector[DbtImpactResource] = {
     val result = mutable.ArrayBuffer.empty[DbtImpactResource]
     w.roots.foreach { root =>
+      val excluded = ignores.flatMap(_.get(root.directory.getPath)).map(root.excludedPathWith).getOrElse((r: String) => root.excludedPath(r))
       val projectConfig = contents.getOrElse(root.directory.getPath + "/dbt_project.yml", root.config.getContainingFile.getText)
       val baselineConfig = PsiFileFactory.getInstance(w.project).createFileFromText("baseline-project.yml", YAMLFileType.YML, projectConfig)
       val projectName = DbtYaml.mapping(baselineConfig).flatMap(DbtYaml.string(_, "name")).getOrElse(root.name)
       val owned = contents.filter { case (path, _) => path.startsWith(root.directory.getPath + "/") &&
         !w.roots.exists(r => r != root && r.directory.getPath.startsWith(root.directory.getPath + "/") && path.startsWith(r.directory.getPath + "/")) &&
-        !root.excludedPath(path.stripPrefix(root.directory.getPath + "/")) }
+        !excluded(path.stripPrefix(root.directory.getPath + "/")) }
       val properties = owned.toVector.filter { case (p, _) => p.endsWith(".yml") || p.endsWith(".yaml") }.flatMap { case (path, text) =>
         val file = PsiFileFactory.getInstance(w.project).createFileFromText("baseline.yml", YAMLFileType.YML, text)
         DbtYaml.mapping(file).toVector.flatMap(m => DbtDeclarations.ResourceKeys.toVector.filterNot(_._2 == "source").flatMap { case (plural, kind) =>
