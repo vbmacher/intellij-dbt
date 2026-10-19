@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.lineage
 
 import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigationContext, DbtNavigationReference, DbtReferenceProvider}
-import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtSymbol, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.{PsiElement, PsiFile, PsiRecursiveElementWalkingVisitor}
@@ -24,6 +24,8 @@ private[dbt] object DbtSelectors {
   private val MethodKeys = Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test", "function",
     "check", "resource_type")
 
+  def selectable(symbol: DbtSymbol): Boolean = SelectableKinds(symbol.kind) && symbol.isEnabled
+
   private def glob(pattern: String, value: String): Boolean =
     Try(FileSystems.getDefault.getPathMatcher("glob:" + pattern).matches(Paths.get(value))).getOrElse(false)
 
@@ -36,12 +38,14 @@ private[dbt] object DbtSelectors {
     val value = split.last
     if (method == "selector") return if (root.supports(12)) w.symbols.filter(s => s.kind == "selector" &&
       s.name == value && w.root(s.file).contains(root)).map(_.element) else Vector.empty
-    val candidates = w.symbols.filter(s => SelectableKinds(s.kind) &&
+    val candidates = w.symbols.filter(s => selectable(s) &&
       w.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
     val selected = candidates.filter { s => method match {
       case "fqn" =>
         val relative = w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).map(_.stripSuffix("." + s.file.getVirtualFile.getExtension).replace('/', '.')).getOrElse("")
-        glob(value, s.name) || glob(value, s.namespace + "." + s.name) || glob(value, s.namespace + "." + relative.stripPrefix("models."))
+        val folders = w.owner(s).flatMap(_.resourceFolders(s.file.getVirtualFile)).map(_._2).getOrElse(Vector.empty)
+        val identity = (Vector(s.namespace) ++ folders ++ Vector(s.name) ++ s.version.map("v" + _)).mkString(".")
+        glob(value, identity) || glob(value, s.name) || glob(value, s.namespace + "." + s.name) || glob(value, s.namespace + "." + relative.stripPrefix("models."))
       case "path" => w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).exists(p => glob(value, p) || p.startsWith(value.stripSuffix("/") + "/"))
       case "package" => glob(value, s.namespace)
       case "tag" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
@@ -57,7 +61,7 @@ private[dbt] object DbtSelectors {
       val children = suffix.toVector.flatMap(p => selected.flatMap(s => DbtLineage.traverse(edges, s, downstream = true, p.drop(1).toIntOption.getOrElse(Int.MaxValue))))
       selected ++ parents ++ children
     } else selected
-    expanded.map(_.element).distinct
+    expanded.filter(selectable).map(_.element).distinct
   }
 
   private[lineage] def references(file: PsiFile, w: DbtWorkspace, root: DbtRoot, includeGraph: Boolean): Vector[DbtNavigationReference] = {

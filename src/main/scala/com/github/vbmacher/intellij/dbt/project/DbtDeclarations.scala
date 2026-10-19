@@ -40,7 +40,22 @@ private[dbt] object DbtDeclarations {
 
   private def configLiterals(blocks: Vector[DbtSyntax.Block]): Vector[(String, String)] =
     blocks.flatMap(DbtSyntax.calls).filter(_.name == "config")
-      .flatMap(_.arguments.flatMap(a => for (key <- a.keyword; value <- a.literal) yield key -> value))
+      .flatMap(_.arguments.flatMap(a => for (key <- a.keyword; value <- a.literal.orElse(literalTags(a))) yield key -> value))
+
+  private def literalTags(argument: DbtSyntax.Argument): Option[String] = {
+    val tokens = argument.tokens
+    if (!argument.keyword.contains("tags") || tokens.size < 2 || tokens.head.string || tokens.last.string ||
+      tokens.head.image != "[" || tokens.last.image != "]") None
+    else {
+      val values = tokens.slice(1, tokens.size - 1)
+      val entries = if (values.lastOption.exists(t => !t.string && t.image == ",")) values.dropRight(1) else values
+      val literal = entries.zipWithIndex.forall { case (token, index) =>
+        if (index % 2 == 0) token.string else !token.string && token.image == ","
+      }
+      Option.when(literal && (entries.isEmpty || entries.size % 2 == 1))(
+        entries.zipWithIndex.collect { case (token, index) if index % 2 == 0 => token.image }.mkString(","))
+    }
+  }
 
   /** Resources defined by the file itself: fixtures, models, seeds, snapshots, analyses, tests, checks and functions. */
   private def code(symbol: Builder, file: PsiFile, root: DbtRoot): Vector[DbtSymbol] = {

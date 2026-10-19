@@ -97,6 +97,6 @@ private[dbt] object DbtSelection {
       .map(part => intersect(part.split(",", -1).toVector.map(term(_, visiting)))))
     val selected = terms(if (expression.trim.isEmpty) "*" else expression, Set.empty)
     val removed = if (exclude.trim.isEmpty) Set.empty[String] else terms(exclude, Set.empty).map(identity).toSet
-    DbtSelection(selected.filterNot(s => removed(identity(s))).distinctBy(identity), problems.toVector.distinct)
+    DbtSelection(selected.filter(DbtSelectors.selectable).filterNot(s => removed(identity(s))).distinctBy(identity), problems.toVector.distinct)
   }
 }
