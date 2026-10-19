@@ -101,6 +101,43 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
       }
   }
 
+  def testWildcardExpansionHasExactJoinOrderingAndSingleUndo(): Unit = {
+    project()
+    add("models/left_orders.sql", "select 1 as id, 2 as amount")
+    add("models/right_orders.sql", "select 3 as id, 4 as total")
+    val before = "select * from {{ ref('left_orders') }} l join {{ ref('right_orders') }} r on l.id = r.id"
+    configure("models/report.sql", before.replace("select *", "select <caret>*"))
+    myFixture.launchAction(myFixture.findSingleIntention("Expand dbt SQL columns"))
+    assertEquals("select l.id, l.amount, r.id, r.total from {{ ref('left_orders') }} l join {{ ref('right_orders') }} r on l.id = r.id", myFixture.getFile.getText)
+    undo(); assertEquals(before, myFixture.getFile.getText)
+  }
+
+  def testRegisteredWildcardIntentionLoadsNativeSettingsDescriptionAndExamples(): Unit = {
+    val entries = com.intellij.codeInsight.intention.impl.config.IntentionManagerSettings.getInstance.getMetaData.asScala
+      .filter(_.getAction.getText == "Expand dbt SQL columns")
+    assertEquals("One registered native intention", 1, entries.size)
+    val metadata = entries.head
+    assertTrue("Settings must load the intention description", metadata.getDescription.getText.trim.nonEmpty)
+    val before = metadata.getExampleUsagesBefore.toVector.map(_.getText)
+    val after = metadata.getExampleUsagesAfter.toVector.map(_.getText)
+    assertTrue("Settings must show a wildcard example", before.exists(_.contains("*")))
+    assertTrue("Settings must show the changed projection", after.nonEmpty && after != before)
+  }
+
+  def testUnknownSchemasWildcardModifiersAndCommentsNeverExpand(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id, 2 as amount")
+    Vector("select * except (id) from {{ ref('orders') }}", "select * exclude id from {{ ref('orders') }}",
+      "select * replace (3 as id) from {{ ref('orders') }}", "select * from unknown_relation",
+      "select count(*) from {{ ref('orders') }}", "select '*' as value", "select 1 /* * */")
+      .zipWithIndex.foreach { case (sql, index) =>
+        configure(s"models/negative_star_$index.sql", sql.replaceFirst("\\*", "<caret>*"))
+        val before = myFixture.getFile.getText
+        assertFalse(sql, new DbtExpandColumnsIntention().isAvailable(getProject, myFixture.getEditor, myFixture.getFile))
+        assertEquals(before, myFixture.getFile.getText)
+      }
+  }
+
   def testMissingPropertiesScaffoldAppliesAndOneUndoRemovesIt(): Unit = {
     project()
     val source = configure("models/orders.sql", "select 1 as id<caret>")
