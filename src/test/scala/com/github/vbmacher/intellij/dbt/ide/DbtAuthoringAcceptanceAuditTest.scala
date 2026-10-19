@@ -64,6 +64,24 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     assertTrue("Unsaved source edits invalidate prior origins", DbtColumnLineage.inherited(w, model("report")).isEmpty)
   }
 
+  def testNativeSchemaCompletionAlsoCoversProjectPackagesAndSelectors(): Unit = {
+    val settings = com.intellij.codeInsight.CodeInsightSettings.getInstance()
+    val previous = settings.AUTOCOMPLETE_ON_CODE_COMPLETION
+    settings.AUTOCOMPLETE_ON_CODE_COMPLETION = false
+    try {
+    val config = project()
+    open(config, config.getText.length)
+    def keys: Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet
+    assertTrue(keys.contains("model-paths"))
+    com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
+    configure("packages.yml", "<caret>\n")
+    assertTrue(keys.contains("packages"))
+    com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
+    configure("selectors.yml", "<caret>\n")
+    assertTrue(keys.contains("selectors"))
+    } finally settings.AUTOCOMPLETE_ON_CODE_COMPLETION = previous
+  }
+
   def testCompletionAndColumnAnalysisHonorCancellation(): Unit = {
     project()
     (1 to 100).foreach(i => add(s"models/orders_$i.sql", "select 1 as id"))
