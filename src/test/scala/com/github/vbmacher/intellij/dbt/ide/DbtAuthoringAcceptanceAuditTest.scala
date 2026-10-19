@@ -41,6 +41,29 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     undo(); assertNull(source.getVirtualFile.getParent.findChild("orders.yml"))
   }
 
+  def testDescriptionInheritanceKeepsExactOriginAndRejectsUnionAggregateAndExistingDoc(): Unit = {
+    project()
+    val upstream = add("models/orders.sql", "select 1 as id, 2 as amount")
+    add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - {name: id, description: Identifier}\n  - {name: amount, description: Amount}\n- name: report\n  columns:\n  - {name: kept, description: \"{{ doc('keep_me') }}\"}\n")
+    add("models/report.sql", "select id as inherited, id as kept, sum(amount) as calculated from {{ ref('orders') }} group by id")
+    val inherited = DbtColumnLineage.inherited(w, model("report"))
+    val editable = DbtPropertiesEditor.editableColumns(w, model("report"))
+    assertEquals("Opening Edit must not implicitly accept an inherited description", "", editable.find(_.name == "inherited").get.description)
+    assertEquals("{{ doc('keep_me') }}", editable.find(_.name == "kept").get.description)
+    assertEquals(Vector("inherited"), inherited.map(_._1))
+    assertEquals("Identifier", inherited.head._2)
+    assertEquals("id", inherited.head._3.name)
+    assertEquals("orders", inherited.head._3.owner)
+    val review = DbtPropertiesEditor.origins(w, model("report"), "inherited")
+    assertTrue(review._1, review._1.contains("Passthrough") && review._1.contains("analytics.orders.id"))
+    assertEquals(inherited.head._3.id, review._2.head.id)
+    assertTrue(DbtPropertiesEditor.origins(w, model("report"), "calculated")._1.startsWith("Calculated"))
+    add("models/unioned.sql", "select id from {{ ref('orders') }} union all select id from {{ ref('orders') }}")
+    assertTrue(DbtColumnLineage.inherited(w, model("unioned")).isEmpty)
+    edit(upstream, "select 1 as changed")
+    assertTrue("Unsaved source edits invalidate prior origins", DbtColumnLineage.inherited(w, model("report")).isEmpty)
+  }
+
   def testCompletionAndColumnAnalysisHonorCancellation(): Unit = {
     project()
     (1 to 100).foreach(i => add(s"models/orders_$i.sql", "select 1 as id"))

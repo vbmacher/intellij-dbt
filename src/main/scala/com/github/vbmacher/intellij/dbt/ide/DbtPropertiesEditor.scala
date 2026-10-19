@@ -39,6 +39,21 @@ private[ide] final case class DbtPropertyEdit(path: String, before: String, afte
   })
 }
 private[ide] object DbtPropertiesEditor {
+  def editableColumns(w: DbtWorkspace, resource: DbtSymbol): Vector[DbtColumnData] =
+    DbtResourceData.get(w, resource).columns.map(c => c.copy(description = w.columns(resource).find(_.name == c.name)
+      .flatMap(_.mapping).flatMap(DbtYaml.string(_, "description")).getOrElse("")))
+
+  /** Review text and exact navigable definitions for the selected output column. */
+  def origins(w: DbtWorkspace, resource: DbtSymbol, column: String): (String, Vector[DbtSymbol]) = {
+    val edges = DbtColumnLineage.upstream(w, resource, column).filter(_.kind == "value")
+    val inputs = edges.map(_.input).distinctBy(_.id)
+    val state = if (edges.isEmpty || !edges.forall(_.complete)) "Unknown lineage"
+      else if (inputs.size == 1 && edges.forall(_.direct)) "Passthrough"
+      else "Calculated / multiple inputs"
+    val names = inputs.map(input => input.namespace + "." + Option(input.owner).filter(_.nonEmpty).map(_ + ".").getOrElse("") +
+      input.name + input.version.map(" v" + _).getOrElse("") + " · " + input.file.getName)
+    (state + (if (names.isEmpty) "" else ": " + names.mkString(", ")), inputs)
+  }
   def plan(w: DbtWorkspace, resource: DbtSymbol, description: String, columns: Vector[DbtColumnData],
     tags: Vector[String], tests: Vector[String], updateTags: Boolean = false, updateTests: Boolean = false): Either[String, DbtPropertyEdit] = {
     val root = w.owner(resource).toRight("The owning project is unavailable.")
@@ -165,13 +180,13 @@ private[ide] object DbtPropertiesEditor {
       yaml.setEditable(false)
       private val sync = new JButton("Sync columns and preview YAML")
       private val inherit = new JButton("Inherit empty descriptions")
-      private var columns = data.columns.map(c => c.copy(description = w.columns(resource).find(_.name == c.name)
-        .flatMap(_.mapping).flatMap(DbtYaml.string(_, "description")).getOrElse(c.description)))
-      private val tableModel = new javax.swing.table.DefaultTableModel(Array[AnyRef]("Column", "Type", "Description"), 0) {
-        override def isCellEditable(row: Int, column: Int): Boolean = column != 0
+      private var columns = editableColumns(w, resource)
+      private val tableModel = new javax.swing.table.DefaultTableModel(Array[AnyRef]("Column", "Type", "Description", "Origin / dependencies"), 0) {
+        override def isCellEditable(row: Int, column: Int): Boolean = column == 1 || column == 2
       }
       private val table = new JBTable(tableModel)
-      columns.foreach(c => tableModel.addRow(Array[AnyRef](c.name, c.dataType, c.description)))
+      private val origins = columns.map(c => c.name -> DbtPropertiesEditor.origins(w, resource, c.name)).toMap
+      columns.foreach(c => tableModel.addRow(Array[AnyRef](c.name, c.dataType, c.description, origins(c.name)._1)))
       private def readColumns(): Unit = {
         if (table.isEditing) table.getCellEditor.stopCellEditing()
         columns = columns.indices.map(i => columns(i).copy(dataType = String.valueOf(tableModel.getValueAt(i, 1)),
@@ -194,17 +209,32 @@ private[ide] object DbtPropertiesEditor {
       sync.addActionListener(_ => preview())
       inherit.addActionListener(_ => {
         readColumns()
+        val selected = table.getSelectedRows.toSet
         val inherited = DbtColumnLineage.inherited(w, resource).map { case (name, text, _) => name -> text }.toMap
-        columns = columns.map(c => if (c.description.isEmpty) c.copy(description = inherited.getOrElse(c.name, "")) else c)
+        columns = columns.zipWithIndex.map { case (c, index) =>
+          if (c.description.isEmpty && (selected.isEmpty || selected(index))) c.copy(description = inherited.getOrElse(c.name, "")) else c
+        }
         columns.indices.foreach(i => tableModel.setValueAt(columns(i).description, i, 2))
         preview()
+      })
+      inherit.setToolTipText("Fill selected empty descriptions; with no selection, fill all proven passthroughs. Review origins and the YAML diff before Apply.")
+      private val origin = new JButton("Open column origin")
+      origin.addActionListener(_ => Option(table.getSelectedRow).filter(_ >= 0).foreach { row =>
+        val targets = origins(columns(table.convertRowIndexToModel(row)).name)._2
+        if (targets.size == 1) targets.head.element.navigate(true)
+        else if (targets.nonEmpty) {
+          val labels = targets.map(t => t.presentableText + " · " + t.file.getVirtualFile.getPath + ":" + t.range.getStartOffset)
+          com.intellij.openapi.ui.popup.JBPopupFactory.getInstance.createPopupChooserBuilder(labels.asJava)
+            .setTitle("Column origins").setItemChosenCallback(label => targets(labels.indexOf(label)).element.navigate(true))
+            .createPopup().showInCenterOf(table)
+        }
       })
       private val diff = new JButton("View YAML diff")
       diff.addActionListener(_ => { preview(); proposed.foreach(edit => {
         val factory = DiffContentFactory.getInstance()
         DiffManager.getInstance().showDiff(w.project, new SimpleDiffRequest(edit.path, factory.create(edit.before), factory.create(edit.after), "Current source", "Proposed properties"))
       }) })
-      val actions = new JPanel; actions.add(sync); actions.add(inherit); actions.add(diff)
+      val actions = new JPanel; actions.add(sync); actions.add(inherit); actions.add(origin); actions.add(diff)
       val editor = new JPanel(new BorderLayout); editor.add(new JBLabel("Description (doc() expressions are preserved):"), BorderLayout.NORTH)
       editor.add(new JBScrollPane(description), BorderLayout.CENTER)
       val fields = new JPanel(new java.awt.GridLayout(2, 2)); fields.add(new JBLabel("Tags (comma-separated):")); fields.add(tags)
