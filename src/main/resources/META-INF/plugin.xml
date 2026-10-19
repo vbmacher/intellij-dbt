@@ -89,10 +89,10 @@
             <className>com.github.vbmacher.intellij.dbt.ide.DbtExpandColumnsIntention</className>
             <category>dbt</category>
         </intentionAction>
-        <lang.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
-        <lang.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
-        <lang.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
-        <lang.parameterInfo language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <platform.backend.documentation.symbolTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtSymbolDocumentationTargetProvider"/>
         <platform.backend.documentation.psiTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinPsiDocumentationTargetProvider"/>
         <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLinkHandler"/>

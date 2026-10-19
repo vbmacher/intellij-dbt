@@ -11,6 +11,27 @@ final class DbtParameterInfoTest extends DbtCodeInsightTestCase {
     add("macros/money.sql", "{% macro money(amount, scale=2, currency='USD') %}{{ amount }}{% endmacro %}")
     add("macros/schema.yml", "macros: [{name: money, arguments: [{name: amount, type: decimal}, {name: scale, type: integer}]}]\n")
   }
+  def testNativeParameterInfoActionDispatchCreatesControllerForDbtSql(): Unit = {
+    macroFixture()
+    val file = configure("models/report.sql", "select {{ money(12, <caret>2) }} as amount")
+    val editor = myFixture.getEditor
+    val language = com.intellij.psi.util.PsiUtilCore.getLanguageAtOffset(file, myFixture.getCaretOffset)
+    val handlers = com.intellij.codeInsight.hint.ShowParameterInfoHandler.getHandlers(getProject,
+      language, file.getViewProvider.getBaseLanguage)
+    assertTrue("Registered handler for " + language + " / " + file.getFileType.getName,
+      handlers.exists(_.isInstanceOf[DbtParameterInfoHandler]))
+    myFixture.performEditorAction("ParameterInfo")
+    com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
+    com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents()
+    val controller = com.intellij.codeInsight.hint.ParameterInfoControllerBase.findControllerAtOffset(editor,
+      file.getText.indexOf("money(") + "money".length)
+    assertNotNull("The native Parameter Info action must create a hint controller for " + language + " / " + file.getFileType.getName, controller)
+    try {
+      val signature = controller.getObjects.head.asInstanceOf[DbtMacroSignature]
+      assertEquals("money", signature.name)
+      assertEquals(Vector("amount: decimal", "scale=2: integer", "currency='USD'"), signature.parameters.map(_._2))
+    } finally com.intellij.openapi.util.Disposer.dispose(controller)
+  }
   def testNativeNamedArgumentHintHasExactSignatureAnchorAndHighlightRange(): Unit = {
     macroFixture()
     val file = configure("models/report.sql", "{{ money(42, currency='EUR', scale=<caret>3) }}")
