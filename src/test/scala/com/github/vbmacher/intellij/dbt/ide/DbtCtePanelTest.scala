@@ -45,6 +45,21 @@ import json,os,sys,time
 args=sys.argv[1:]
 with open('calls.jsonl','a') as f: f.write(json.dumps(args)+'\n')
 while os.path.exists('hold'): time.sleep(.01)
+if os.path.exists('evidence'):
+ def emit(name,data,level='debug',message='',stream=sys.stdout):
+  data['node_info']={'unique_id':'sql_operation.analytics.inline_query','node_status':'executing'}
+  print(json.dumps({'info':{'name':name,'invocation_id':'cte-preview-run','level':level,'msg':message},'data':data}),file=stream,flush=True)
+ query=args[args.index('--inline')+1]
+ sql='/* adapter query comment */\nselect * from (\n'+query+'\n) as preview limit '+args[args.index('--limit')+1]
+ emit('MainReportVersion',{})
+ emit('SQLQuery',{'sql':sql})
+ if os.path.exists('fail'):
+  before=sql[:sql.index('missing')]
+  message='SQL compilation error: line '+str(before.count('\n')+1)+' at position '+str(len(before.rsplit('\n',1)[-1]))
+  emit('CatchableExceptionOnRun',{},message=message,stream=sys.stderr)
+  print('raw stderr retained',file=sys.stderr,flush=True)
+  sys.exit(1)
+ emit('ShowNode',{'unique_id':'sql_operation.analytics.inline_query'},level='info')
 if os.path.exists('fail'):
  print('query failed at CTE',file=sys.stderr,flush=True)
  sys.exit(1)
@@ -68,6 +83,42 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     if (!Files.exists(f.directory.resolve("calls.jsonl"))) Vector.empty
     else Files.readAllLines(f.directory.resolve("calls.jsonl")).asScala.toVector
       .map(line => JsonParser.parseString(line).getAsJsonArray.asScala.map(_.getAsString).toVector)
+
+  def testManagedPreviewPreservesAdapterSqlAndStderrAndNavigatesItsAuthoredCteError(): Unit = {
+    val source = "with orders as (select missing as id) select * from orders"
+    val f = setup(source)
+    Files.writeString(f.directory.resolve("evidence"), "")
+    Files.writeString(f.directory.resolve("fail"), "")
+    click(f.panel, "Step")
+    await("Failed process publishes preview evidence without a result") {
+      f.events.exists(e => !e.running && e.previewEvidence.nonEmpty) && !f.runner.isRunning
+    }
+    val failed = f.events.reverse.find(e => !e.running && e.previewEvidence.nonEmpty).get
+    assertTrue(failed.result.isEmpty)
+    assertFalse("A completed failed frame must not retain a running grid label", messages(f.panel).contains("Query running"))
+    val report = failed.previewEvidence.get
+    assertTrue(report.raw.contains("raw stderr retained"))
+    assertTrue(report.adapterSql.get.startsWith("/* adapter query comment */"))
+    assertEquals(source.indexOf("missing"), report.location.get.offset)
+    val navigate = components(f.panel).collectFirst { case b: JButton if b.getText == "Go to CTE error" => b }.get
+    assertTrue(navigate.isEnabled)
+    navigate.doClick()
+    assertEquals(source.indexOf("missing"), com.intellij.openapi.fileEditor.FileEditorManager.getInstance(getProject)
+      .getSelectedTextEditor.getCaretModel.getOffset)
+    assertEquals(1, calls(f).size)
+    click(f.panel, "Restart")
+    assertFalse(navigate.isEnabled)
+    Files.delete(f.directory.resolve("fail"))
+    click(f.panel, "Step")
+    await("Successful process retains its adapter-wrapped SQL") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    val result = f.events.reverseIterator.flatMap(_.result).next()
+    assertTrue(result.sql.contains("Adapter SQL reported by dbt"))
+    assertTrue(result.sql.contains(") as preview limit " + f.root.runOptions.previewLimit))
+    assertTrue(result.sql.contains("Submitted SQL (before dbt compilation)"))
+    assertTrue(calls(f).last.sliding(2).exists(_ == Vector("--log-format", "json")))
+    assertTrue(calls(f).last.sliding(2).exists(_ == Vector("--log-level", "debug")))
+    assertFalse(navigate.isEnabled)
+  }
 
   def testStopDuringPreparationNeverLaunchesAQueryAndRestartRequiresExplicitStep(): Unit = {
     val f = setup()

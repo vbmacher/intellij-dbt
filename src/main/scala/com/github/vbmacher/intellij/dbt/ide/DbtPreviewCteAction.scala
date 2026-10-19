@@ -35,8 +35,8 @@ final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
             analysis <- DbtSqlAnalysis.get(w, file).toRight("This SQL cannot be inspected safely.")
             cte <- DbtCteInspection.at(w, file, analysis, offset)
               .toRight("Place the caret at a recognized CTE definition or reference.")
-            sql <- DbtCteInspection.sql(snapshot.source, analysis, cte)
-            command <- DbtCteInspection.command(w, resource, sql)
+            query <- DbtCteInspection.plan(snapshot.source, analysis, cte)
+            command <- DbtCteInspection.command(w, resource, query.sql, query.spans)
           } yield snapshot -> command
         }
       }).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, (DbtCteContext, DbtCommand)]) => result match {

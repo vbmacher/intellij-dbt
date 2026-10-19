@@ -91,8 +91,12 @@ the local state review can be incomplete when comparison information is unavaila
 The result grid shows the target, returned row count, limit, and elapsed time.
 **May be truncated** means the query reached its limit, not that the full relation
 contains exactly that many rows. Empty results, invalid output, failure, and
-cancellation are reported separately. **SQL / raw output** opens the inline query
-or the model source captured before dbt compilation, together with original output.
+cancellation are reported separately. **SQL / raw output** opens the SQL evidence
+and original output for the successful query. **Preview SQL / raw output** also
+works after a failed preview. Submitted source is labeled as being captured before
+dbt compilation. Adapter SQL is shown only when dbt's structured output identifies
+one preview statement from the current invocation; otherwise it is explicitly
+unavailable.
 For available compiled model SQL, use the documentation sidebar's **SQL** tab.
 
 Click column headers to sort; numeric values sort numerically. Resize or reorder
@@ -139,6 +143,14 @@ cached results and cancel the inspection's active query. **Step** refreshes the 
 list afterward. Recursive CTEs, explicit CTE column lists, unavailable dependencies,
 and template setup that cannot be preserved are reported before execution; preview
 the complete model in those cases.
+
+Inline CTE previews request structured debug output to capture adapter SQL. After
+a failure, **Go to CTE error** opens an authored location only when the adapter
+reports a supported, unambiguous line/column and the query contains that unchanged
+source span exactly once. Locations in generated SQL, Jinja rewrites, ambiguous
+statements, and unsupported adapter error formats remain unavailable; inspect
+**Preview SQL / raw output** instead. Editing the source disables navigation until
+the preview is rerun.
 
 ## Lineage
 

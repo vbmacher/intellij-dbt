@@ -26,7 +26,8 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 private[ide] final case class DbtCommand(arguments: Vector[String], directory: String, environment: Map[String, String],
-  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String], commandOffset: Int = 1, root: String = "", sourceSql: String = "")
+  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String], commandOffset: Int = 1, root: String = "", sourceSql: String = "",
+  previewSource: Option[DbtPreviewSource] = None)
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
@@ -143,7 +144,7 @@ private[ide] object DbtCommand {
 
 private[ide] final case class DbtRunnerEvent(running: Boolean, message: String, refresh: Boolean = false, preview: Option[String] = None,
   result: Option[DbtQueryResult] = None, execution: Option[DbtExecutionRun] = None, command: Option[DbtCommand] = None,
-  selectionOutput: Option[String] = None)
+  previewEvidence: Option[DbtPreviewEvidence] = None, selectionOutput: Option[String] = None)
 
 @Service(Array(Service.Level.PROJECT))
 final class DbtRunner(project: Project) extends Disposable {
@@ -197,12 +198,13 @@ final class DbtRunner(project: Project) extends Disposable {
               val success = event.getExitCode == 0 && !wasCancelled
               val message = if (wasCancelled) s"${command.action} cancelled" else s"${command.action} finished (exit ${event.getExitCode})"
               val capturedOutput = output.synchronized(output.toString)
+              val previewEvidence = Option.when(command.action == "Preview")(
+                DbtPreviewEvidence.capture(command, capturedOutput, failed = !success, canceled = wasCancelled))
               val preview = if (success && command.action == "Preview") Some(DbtPreview.format(capturedOutput)) else None
               def argument(name: String): String = command.arguments.drop(command.commandOffset + 1).sliding(2).find(_.head == name).map(_(1)).getOrElse("")
               val result = if (success && command.action == "Preview") DbtQueryResult.parse(capturedOutput,
                 command.target, argument("--limit").toIntOption.getOrElse(10), (System.nanoTime() - started) / 1000000L,
-                Option(argument("--inline")).filter(_.nonEmpty).getOrElse("Model: " + argument("--select") +
-                  "\n\nSource SQL captured before execution (before dbt compilation):\n" + command.sourceSql)).toOption else None
+                previewEvidence.map(_.displaySql).getOrElse(command.sourceSql)).toOption else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
                 if (DbtArtifactContext.fingerprint(command.artifactDirectory) != manifestBefore)
@@ -215,8 +217,8 @@ final class DbtRunner(project: Project) extends Disposable {
               onUi {
                 handler = null; busy.set(false)
                 console.print("\n" + message + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-                fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command),
-                  selectionOutput = Option.when(success && command.action == "Resolve Selection")(capturedOutput)))
+                fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command), previewEvidence,
+                  Option.when(success && command.action == "Resolve Selection")(capturedOutput)))
                 DbtNotifications.publish(project, command, message, success, wasCancelled)
               }
             }

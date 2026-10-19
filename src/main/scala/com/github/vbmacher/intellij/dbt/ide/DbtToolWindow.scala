@@ -92,6 +92,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val preview = new JBTextArea
   private var lastPreviewCommand = Option.empty[DbtCommand]
   private val resultGrid = new DbtResultGrid(limit => rerunPreview(limit))
+  private val previewEvidence = new DbtPreviewEvidencePanel(project)
   private val status = new JBTextArea
   private val toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 3))
   private val commands = scala.collection.mutable.Map.empty[String, JButton]
@@ -302,7 +303,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   preview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
   val output = new OnePixelSplitter(true, .75f)
   output.setFirstComponent(runner.console.getComponent)
-  output.setSecondComponent(resultGrid)
+  val resultArea = new JPanel(new BorderLayout)
+  resultArea.add(resultGrid, BorderLayout.CENTER)
+  resultArea.add(previewEvidence, BorderLayout.SOUTH)
+  output.setSecondComponent(resultArea)
   runner.console match {
     case console: com.intellij.execution.impl.ConsoleViewImpl => console.getEditor.getSettings.setUseSoftWraps(true)
     case _ => ()
@@ -349,6 +353,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     updateButtons()
     browser.foreach(_.runnerState(event.running, event.message))
     event.preview.foreach(preview.setText)
+    if (event.running && event.command.exists(_.action == "Preview")) previewEvidence.showEvidence(None)
+    if (!event.running && event.previewEvidence.nonEmpty) previewEvidence.showEvidence(event.previewEvidence)
     if (event.running && event.command.exists(_.action == "Resolve Selection")) lsRequest = Some(reviewRequest)
     event.selectionOutput.foreach { output =>
       if (lsRequest.contains(reviewRequest)) {

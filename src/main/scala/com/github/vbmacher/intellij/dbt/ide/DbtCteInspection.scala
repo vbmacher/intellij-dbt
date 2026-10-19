@@ -41,7 +41,10 @@ private[ide] object DbtCteInspection {
     }
   }
 
-  def sql(text: String, analysis: DbtSqlAnalysis, cte: DbtCte, count: Boolean = false): Either[String, String] = {
+  def sql(text: String, analysis: DbtSqlAnalysis, cte: DbtCte, count: Boolean = false): Either[String, String] =
+    plan(text, analysis, cte, count).map(_.sql)
+
+  def plan(text: String, analysis: DbtSqlAnalysis, cte: DbtCte, count: Boolean = false): Either[String, DbtCteQuery] = {
     if (analysis.issues.exists(_.startsWith("Explicit CTE column lists"))) return Left("Explicit CTE column lists cannot be inspected safely. Preview the complete model instead.")
     val selected = scala.collection.mutable.LinkedHashSet.empty[DbtCte]
     val visiting = scala.collection.mutable.Set.empty[DbtCte]
@@ -62,8 +65,16 @@ private[ide] object DbtCteInspection {
     if (analysis.issues.exists(_.toLowerCase.contains("recursive"))) Left("Recursive CTE inspection is unsupported.")
     else visit(cte).flatMap(_ => prefix(text, analysis, selected.toVector, cte)).map { setup =>
       val name = if (com.github.vbmacher.intellij.dbt.syntax.DbtSyntax.isIdentifier(cte.name)) cte.name else "\"" + cte.name.replace("\"", "\"\"") + "\""
-      setup + "with " + selected.toVector.map(_.range.substring(text)).mkString(",\n") +
-        "\nselect " + (if (count) "count(*) as full_row_count" else "*") + " from " + name
+      val query = new StringBuilder(setup + "with ")
+      val spans = Vector.newBuilder[DbtPreviewSpan]
+      if (setup.nonEmpty) spans += DbtPreviewSpan(0, 0, setup.length)
+      selected.toVector.zipWithIndex.foreach { case (frame, index) =>
+        if (index > 0) query.append(",\n")
+        spans += DbtPreviewSpan(query.length, frame.range.getStartOffset, frame.range.getLength)
+        query.append(frame.range.substring(text))
+      }
+      query.append("\nselect " + (if (count) "count(*) as full_row_count" else "*") + " from " + name)
+      DbtCteQuery(query.toString, spans.result())
     }
   }
   def context(w: DbtWorkspace, model: DbtSymbol): Option[DbtCteContext] = w.owner(model).map(w.executionRoot).map { root =>
@@ -81,7 +92,8 @@ private[ide] object DbtCteInspection {
       .sortBy(_._1)
     DbtCteContext(source, document.map(_.getModificationStamp).getOrElse(model.file.getModificationStamp), execution, dependencies)
   }
-  def command(w: DbtWorkspace, resource: DbtSymbol, sql: String): Either[String, DbtCommand] = for {
+  def command(w: DbtWorkspace, resource: DbtSymbol, sql: String,
+    spans: Vector[DbtPreviewSpan] = Vector.empty): Either[String, DbtCommand] = for {
     owner <- w.owner(resource).toRight("Owning dbt project is unavailable.")
     _ <- Either.cond(w.packageOwner(owner).isEmpty, (), "Inline SQL previews cannot preserve installed-package context. Preview the complete model instead.")
     _ <- Either.cond(DbtNavigation.projectedColumns(sql).nonEmpty, (), "Inline preview requires one supported SELECT query without data or schema modification.")
@@ -93,7 +105,10 @@ private[ide] object DbtCteInspection {
     val index = base.arguments.indexOf("--select", base.commandOffset + 1)
     val end = if (index < 0) base.arguments.size else
       base.arguments.indexWhere(_.startsWith("--"), index + 1) match { case -1 => base.arguments.size; case n => n }
-    base.copy(arguments = base.arguments.take(if (index < 0) base.arguments.size else index) ++ Vector("--inline", sql) ++ base.arguments.drop(end))
+    base.copy(arguments = base.arguments.take(if (index < 0) base.arguments.size else index) ++
+      Vector("--inline", sql, "--log-format", "json", "--log-level", "debug") ++ base.arguments.drop(end),
+      previewSource = Some(DbtPreviewSource(resource.file.getVirtualFile.getPath, resource.file.getText, sql, spans,
+        s"sql_operation.${root.name}.inline_query", resource.file.getVirtualFile.getUrl)))
   }
 }
 
@@ -160,6 +175,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
   private val frames = new DefaultListModel[String]
   private val frameList = new JBList[String](frames)
   private val grid = new DbtResultGrid(value => run(count = false, rerunSelected = true, limitOverride = Some(value)))
+  private val previewEvidence = new DbtPreviewEvidencePanel(project)
   private val status = new JBLabel("Each frame is a separate query and can use warehouse compute; nondeterministic values may change.")
   private val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
   private var generation = 0L
@@ -178,6 +194,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
   button("Step Back") {
     invalidateIfChanged()
     if (pending.isEmpty && !runner.isRunning && !session.stopped && session.position > 0) {
+      previewEvidence.showEvidence(None)
       session.position -= 1; frameList.setSelectedIndex(session.position)
       session.result(frames.get(session.position)).fold(grid.clear("Cached result unavailable; explicitly Step to query again."))(grid.showResult)
     }
@@ -187,12 +204,13 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
     cancelPreparation()
     if (active.nonEmpty) runner.stop()
     active = None; continuing = false; session.restart()
+    previewEvidence.showEvidence(None)
     grid.clear("Restarted; Step explicitly to query.")
   }
   button("Stop") {
     cancelPreparation(); continuing = false; session.stop()
     if (active.nonEmpty) runner.stop()
-    active = None; grid.clear("Inspection stopped"); status.setText("Inspection stopped")
+    active = None; previewEvidence.showEvidence(None); grid.clear("Inspection stopped"); status.setText("Inspection stopped")
   }
   button("Step into referenced model") { stepInto() }
   private val breakpoint = new JCheckBox("Break at selected CTE")
@@ -202,7 +220,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
   frameList.addListSelectionListener(_ => breakpoint.setSelected(Option(frameList.getSelectedValue).exists(session.breakpoints)))
   buttons.add(breakpoint)
   private val north = new JPanel(new BorderLayout)
-  north.add(buttons, BorderLayout.NORTH); north.add(status, BorderLayout.SOUTH)
+  north.add(buttons, BorderLayout.NORTH); north.add(previewEvidence, BorderLayout.CENTER); north.add(status, BorderLayout.SOUTH)
   add(north, BorderLayout.NORTH); add(new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JBScrollPane(frameList), grid), BorderLayout.CENTER)
   runner.listen(this, onRunnerEvent)
   private[ide] def onRunnerEvent(event: DbtRunnerEvent): Unit = {
@@ -210,15 +228,18 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
     active.filter(a => !event.running && event.command.exists(_ eq a.command)).foreach { finished =>
       active = None
       if (!disposed && !session.stopped && currentContext().contains(finished.context)) {
+        previewEvidence.showEvidence(event.previewEvidence)
         event.result.foreach { result =>
           if (!finished.count) session.record(finished.name, result)
           grid.showResult(result)
         }
+        if (event.result.isEmpty) grid.clear(event.message)
         status.setText(event.message)
         if (continuing && !finished.count && event.result.nonEmpty && !session.breakpoints(finished.name)) run(count = false)
         else continuing = false
       } else {
         session.invalidate(); continuing = false
+        previewEvidence.showEvidence(None)
         grid.clear("Source or execution settings changed; the completed query result was discarded.")
       }
     }
@@ -248,6 +269,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
       cancelPreparation(); continuing = false; session.invalidate(); session.position = -1
       if (active.nonEmpty) runner.stop()
       active = None; observed = currentContext()
+      previewEvidence.showEvidence(None)
       grid.clear("Source or execution settings changed. Step explicitly to refresh the CTE stack.")
       status.setText("Source or execution settings changed. Step explicitly to refresh the CTE stack.")
     }
@@ -300,8 +322,8 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
           available = analysis.ctes.filter(c => !analysis.ctes.exists(p => p.body.contains(c.range)))
           index = if (count || rerunSelected) selectedName.map(name => available.indexWhere(_.name == name)).getOrElse(0) else nextIndex
           cte <- available.lift(index).toRight("End of CTE stack. Restart to query again.")
-          sql <- DbtCteInspection.sql(snapshot.source, analysis, cte, count)
-          command <- DbtCteInspection.command(w, model, sql)
+          query <- DbtCteInspection.plan(snapshot.source, analysis, cte, count)
+          command <- DbtCteInspection.command(w, model, query.sql, query.spans)
         } yield {
           val limit = command.arguments.indexOf("--limit", command.commandOffset + 1)
           val query = if (limit >= 0 && limitOverride.nonEmpty) command.copy(arguments =
@@ -323,6 +345,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
             session.position = prepared.index; frameList.setSelectedIndex(prepared.index)
             val name = prepared.frames(prepared.index).name
             active = Some(new Active(name, prepared.command, prepared.context, count)); grid.clear("Query running…")
+            previewEvidence.showEvidence(None)
             if (!runner.start(prepared.command)) { active = None; continuing = false; status.setText("Another dbt command is already running.") }
         }
       }
