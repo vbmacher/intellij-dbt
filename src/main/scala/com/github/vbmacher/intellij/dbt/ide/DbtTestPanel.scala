@@ -43,6 +43,7 @@ private[ide] final class DbtTestPanel(project: Project) extends JPanel(new Borde
   private var commands = Map.empty[String, DbtCommand]
   private var lastCommand: Option[DbtCommand] = None
   private var lastResults = Vector.empty[DbtExecutionResult]
+  private var renderedExecution: Option[DbtExecutionRun] = None
   private var requestedResource: Option[(String, String)] = None
   private var observingTests = false
   private var view: SMTRunnerConsoleView = _
@@ -68,6 +69,7 @@ private[ide] final class DbtTestPanel(project: Project) extends JPanel(new Borde
     val properties = new SMTRunnerConsoleProperties(project, profile, "dbt", DefaultRunExecutor.getRunExecutorInstance)
     properties.setPrintTestingStartedTime(true)
     view = SMTestRunnerConnectionUtil.createConsole(properties)
+    renderedExecution = None
     Disposer.register(this, view)
     center.add(view.getComponent, BorderLayout.CENTER)
     center.revalidate(); center.repaint()
@@ -111,18 +113,23 @@ private[ide] final class DbtTestPanel(project: Project) extends JPanel(new Borde
       }
     }).expireWith(this).expireWhen(() => generation.get() != stamp).finishOnUiThread(ModalityState.any(), data => {
       if (generation.get() == stamp) {
+        // onTestingFinished schedules native tree selection asynchronously. Keep that
+        // console alive when discovery only confirms the result already rendered.
+        val keepView = view != null && definitions == data._1 && execution.exists(renderedExecution.contains)
         definitions = data._1; commands = data._2
         val prior = Option(roots.getSelectedItem).map(_.toString)
         roots.removeAllItems(); commands.keys.toVector.sorted.foreach(roots.addItem)
         prior.filter(commands.contains).foreach(roots.setSelectedItem)
-        newView()
-        failed.setEnabled(false)
-        header.setText(s"${definitions.size} test declarations. Not run / result unavailable until explicitly executed.")
+        if (!keepView) {
+          newView()
+          failed.setEnabled(false)
+          header.setText(s"${definitions.size} test declarations. Not run / result unavailable until explicitly executed.")
+        }
         execution.orElse(data._3).foreach { recorded =>
           val root = Option(recorded.root).filter(_.nonEmpty).getOrElse(recorded.context.headOption.getOrElse(""))
           if (commands.contains(root)) roots.setSelectedItem(root)
           if (execution.isEmpty || lastCommand.isEmpty) lastCommand = commands.get(root)
-          update(recorded)
+          if (!keepView) update(recorded)
         }
         requestedResource.foreach { case (root, resource) =>
           val affected = definitions.filter(t => t.root == root && t.dependencies.contains(resource))
@@ -223,6 +230,7 @@ private[ide] final class DbtTestPanel(project: Project) extends JPanel(new Borde
     }
   })
   private[ide] def update(execution: DbtExecutionRun): Unit = {
+    renderedExecution = Some(execution)
     header.setText(s"Target: ${execution.target} · Run: ${execution.invocation} · ${execution.timestamp} · ${execution.artifact} · ${execution.problem}")
     execution.results.foreach { result => proxies.get(Option(execution.root).filter(_.nonEmpty).getOrElse(execution.context.headOption.getOrElse("")) + "|" + result.id).foreach { proxy =>
       if (!proxy.isFinal) {

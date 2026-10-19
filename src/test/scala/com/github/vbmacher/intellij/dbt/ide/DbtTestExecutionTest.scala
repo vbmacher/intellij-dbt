@@ -147,6 +147,41 @@ unit_tests:
     assertFalse(result.toVector.flatMap(_.results).exists(_.status == "passed"))
     assertFalse(Files.exists(DbtExecutionEvidence.marker(dir.resolve("target/run_results.json"))))
   }
+  def testTerminalDiscoveryKeepsLiveConsoleAndNextRunCanPassAndDiscoverNewTests(): Unit = {
+    project(); add("tests/check_orders.sql", "select 1")
+    val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
+    await("Test discovery completes") { panel.testView != null && panel.testDefinitions.nonEmpty }
+    val dir = temporary(); val script = fake(dir); val runner = getProject.getService(classOf[DbtRunner])
+    def node = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.find(_.getName == "analytics.check_orders").get
+    def completeRefresh(): Unit = {
+      com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
+      com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents()
+    }
+    assertTrue(runner.start(command(dir, script, "fail").copy(arguments = command(dir, script, "fail").arguments :+ "hold")))
+    await("First native run starts") { node.isInProgress }
+    val failingView = panel.testView
+    Files.writeString(dir.resolve("release"), "done")
+    await("Failure finishes") { !runner.isRunning && node.isDefect }
+    completeRefresh()
+    assertSame("Terminal discovery must not dispose a tree with pending native selection", failingView, panel.testView)
+    assertTrue(node.getErrorMessage.contains("unexpected rows"))
+
+    Files.delete(dir.resolve("release"))
+    assertTrue(runner.start(command(dir, script, "hold")))
+    await("Second native run resets the previous failure") { node.isInProgress }
+    val passingView = panel.testView
+    assertNotSame(failingView, passingView)
+    Files.writeString(dir.resolve("release"), "done")
+    await("Second run passes") { !runner.isRunning && node.isPassed }
+    completeRefresh()
+    assertSame(passingView, panel.testView)
+    assertFalse(node.isDefect)
+
+    add("tests/new_check.sql", "select 2")
+    panel.refresh()
+    await("Changed source definitions are rediscovered") { panel.testDefinitions.exists(_.name == "analytics.new_check") }
+    assertNotSame("Real discovery changes still replace the console", passingView, panel.testView)
+  }
   def testNativeStatesKeepWarningsSkipsErrorsAndMissingTestsDistinct(): Unit = {
     project()
     Vector("pass", "fail", "warn", "error", "skip", "cancel", "missing").foreach(n => add(s"tests/$n.sql", "select 1"))
