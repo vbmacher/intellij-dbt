@@ -1,14 +1,15 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.github.vbmacher.intellij.dbt.syntax.{DbtYaml, DbtSyntax}
+import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiFileFactory
 import org.jetbrains.yaml.YAMLFileType
+
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Path, Paths}
+import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._

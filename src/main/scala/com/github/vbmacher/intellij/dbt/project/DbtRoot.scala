@@ -79,8 +79,10 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val engine: String = setting("engine").getOrElse("core")
 
-  val version: String = setting("dbt-version").orElse(Some(DbtYaml.strings(config, "require-dbt-version").mkString(","))
-    .flatMap("[0-9]+\\.[0-9]+".r.findFirstIn)).getOrElse("1.10")
+  val version: String = setting("dbt-version").getOrElse {
+    val requirements = DbtYaml.strings(config, "require-dbt-version")
+    if (requirements.isEmpty) "1.10" else DbtRoot.requiredVersion(requirements).getOrElse("unknown")
+  }
 
   /** Whether the configured engine supports a dbt Core 1.x feature; dbt v2 supports all of them. */
   def supports(minor: Int, patch: Int = 0): Boolean = engine == "v2" || engine == "core" &&
@@ -169,6 +171,36 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 }
 
 private[dbt] object DbtRoot {
+  private val VersionConstraint = """(>=|<=|>|<|=)?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?""".r
+
+  /** Lowest stable version satisfying every bound; unsupported or inconsistent ranges have no hint. */
+  private def requiredVersion(requirements: Vector[String]): Option[String] = {
+    val parsed = requirements.flatMap(_.split(",", -1)).map(_.trim).map {
+      case VersionConstraint(operator, major, minor, patch) =>
+        Some(Option(operator).getOrElse("=") -> (BigInt(major), BigInt(minor), BigInt(Option(patch).getOrElse("0"))))
+      case _ => None
+    }
+    if (parsed.isEmpty || parsed.exists(_.isEmpty)) None
+    else {
+      val constraints = parsed.flatten
+      val lowest = constraints.collect {
+        case (">", (major, minor, patch)) => (major, minor, patch + 1)
+        case (">=" | "=", version) => version
+      }.maxOption.getOrElse((BigInt(0), BigInt(0), BigInt(0)))
+      val compatible = constraints.forall { case (operator, bound) =>
+        val comparison = Ordering[(BigInt, BigInt, BigInt)].compare(lowest, bound)
+        operator match {
+          case ">" => comparison > 0
+          case ">=" => comparison >= 0
+          case "<" => comparison < 0
+          case "<=" => comparison <= 0
+          case _ => comparison == 0
+        }
+      }
+      Option.when(compatible)(s"${lowest._1}.${lowest._2}.${lowest._3}")
+    }
+  }
+
   /** Parsed `.dbtignore` rules as (negated, directories only, matchers). */
   def ignorePatterns(text: String): Vector[(Boolean, Boolean, Vector[PathMatcher])] =
     text.linesIterator.map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>

@@ -57,10 +57,60 @@ final class DbtAcceptanceTest extends BasePlatformTestCase {
   }
 
   def testRequireDbtVersionListDeterminesSupportedFeatures(): Unit = {
-    root("require-dbt-version: [\">=1.5.0\", \"<1.6.0\"]\n")
-    val w = DbtWorkspace.get(getProject)
-    assertEquals("1.5", w.roots.head.version)
-    assertFalse(w.roots.head.supportsKind("semantic_model"))
+    val config = root()
+    add("models/semantic.yml", "semantic_models: [{name: orders, model: ref('orders')}]\n")
+    Vector("[\">=1.5.0\", \"<1.6.0\"]", "[\"<1.6.0\", \">=1.5.0\"]", "\"<1.6.0,>=1.5.0\"").foreach { range =>
+      edit(config, "name: analytics\nrequire-dbt-version: " + range + "\n")
+      val w = DbtWorkspace.get(getProject)
+      val from = w.roots.head
+      assertEquals(range, "1.5.0", from.version)
+      assertTrue(range, from.supports(5))
+      assertFalse(range, from.supportsKind("semantic_model"))
+      assertTrue(range, w.declarations(Set("semantic_model"), "orders", from).isEmpty)
+    }
+  }
+
+  def testRequireDbtVersionUsesEveryLowerBound(): Unit = {
+    val config = root()
+    add("models/orders.sql", "select 1 as id")
+    val unit = add("models/unit.yml", "unit_tests: [{name: sample, model: orders, given: [], expect: {rows: []}}]\n")
+    Vector(">=1.4.0", ">=1.8.0", "<1.9.0").permutations.foreach { bounds =>
+      edit(config, "name: analytics\nrequire-dbt-version: [" + bounds.map(b => "\"" + b + "\"").mkString(", ") + "]\n")
+      val w = DbtWorkspace.get(getProject)
+      val from = w.roots.head
+      assertEquals(bounds.toString, "1.8.0", from.version)
+      assertTrue(bounds.toString, from.supportsKind("unit_test"))
+      assertFalse(bounds.toString, from.supportsKind("function"))
+      assertEquals(bounds.toString, Vector(unit), w.declarations(Set("unit_test"), "sample", from).map(_.file))
+    }
+  }
+
+  def testRequireDbtVersionRetainsPatchBounds(): Unit = {
+    val config = root()
+    Vector("=1.10.4" -> false, "1.10.5" -> true, "1.10.5+build.7" -> true, ">1.10.4,<1.11.0" -> true,
+      ">=1.10.4,<=1.10.4" -> false).foreach { case (range, supportsArguments) =>
+      edit(config, "name: analytics\nrequire-dbt-version: \"" + range + "\"\n")
+      assertEquals(range, supportsArguments, DbtWorkspace.get(getProject).roots.head.supports(10, 5))
+    }
+  }
+
+  def testUnusableVersionRangesDoNotEnableVersionedFeatures(): Unit = {
+    val config = root()
+    Vector("<1.5.0", ">=1.8.0,<1.8.0", ">1.8.0,<=1.8.0", "=1.8.0,=1.9.0",
+      ">=1.8.0,invalid", ">=1.8.0,", ">=1.8.0-beta.1").foreach { range =>
+      edit(config, "name: analytics\nrequire-dbt-version: \"" + range + "\"\n")
+      assertFalse(range, DbtWorkspace.get(getProject).roots.head.supports(5))
+    }
+  }
+
+  def testExplicitDbtVersionOverridesRangeAndDefaultIsUnchanged(): Unit = {
+    val config = root()
+    assertEquals("1.10", DbtWorkspace.get(getProject).roots.head.version)
+    edit(config, "name: analytics\nrequire-dbt-version: [\">=1.5.0\", \"<1.6.0\"]\n")
+    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    val from = DbtWorkspace.get(getProject).roots.head
+    assertEquals("1.12", from.version)
+    assertTrue(from.supportsKind("function"))
   }
 
   def testSqlProjectionsFollowSourceAndPropertyChanges(): Unit = {

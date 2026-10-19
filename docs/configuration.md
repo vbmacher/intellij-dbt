@@ -50,8 +50,12 @@ models/experimental/
 
 ## Engine and version
 
-The default is dbt Core 1.10; `require-dbt-version` in `dbt_project.yml`, as a single
-string or a list, can provide a hint. To select explicitly:
+The default is dbt Core 1.10. When `require-dbt-version` is set in `dbt_project.yml`,
+the plugin uses the lowest stable version allowed by all its bounds, including the
+patch number. Bounds can be a comma-separated string or a list, in any order.
+Invalid, contradictory or prerelease bounds leave version-dependent features
+disabled. A range with only upper bounds establishes no minimum feature support.
+Set `dbt-version` explicitly to override this hint:
 
 ```yaml
 # .dbt-navigation.yml
@@ -68,7 +72,7 @@ version such as `'1.10.5'` for patch-specific behavior.
 | Semantic models and Mesh source dependencies | Core 1.6+ |
 | Saved queries | Core 1.7+ |
 | Unit tests and `data_tests` | Core 1.8+ |
-| Generic-test `arguments` mapping | Core 1.10.5+ when selecting an explicit patch version |
+| Generic-test `arguments` mapping | Core 1.10.5+ |
 | UDF resources | Core 1.11+ |
 | `vars.yml`, model-embedded semantics, UDF overloads, JavaScript UDFs and string `selector:` terms | Core 1.12+ |
 | Checks and Information Schema v1 | `engine: v2` |
