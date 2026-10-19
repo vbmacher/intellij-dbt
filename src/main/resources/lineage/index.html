@@ -8,7 +8,7 @@
 <!-- SCRIPTS -->
 <script>
 'use strict';
-const $=id=>document.getElementById(id),send=(type,id='',value='')=>window.dbtSend&&window.dbtSend(JSON.stringify({type,id,value}));
+const $=id=>document.getElementById(id),send=(type,id='',value='',shared=false)=>window.dbtSend&&window.dbtSend(JSON.stringify({type,id,value,...(shared?{shared:true}:{})}));
 let cy=null,current=null,doc=null,tab='Columns',selected='',selectedTimer=null,cards=new Map();
 let grouping='',collapsed=new Set(),filter=null,groupMembers=new Map(),minimapBounds=null,minimapFrame=null;
 const icon={model:'▤',source_table:'⇥',seed:'▦',snapshot:'◷',exposure:'◈'};
@@ -36,7 +36,7 @@ function graphElements(p){
  return {nodes,edges};
 }
 function toggleGroup(id){if(collapsed.has(id))collapsed.delete(id);else collapsed.add(id);window.dbtUpdate({...current,relayout:true});cy.fit(undefined,35)}
-window.dbtShowFilter=p=>{if(p.expression!==$('selector').value||p.exclude!==$('exclude').value)return;filter=p;window.dbtUpdate({...current,relayout:true})};
+window.dbtShowFilter=p=>{if(p.fromRunner){$('selector').value=p.expression;$('exclude').value=p.exclude}else if(p.expression!==$('selector').value||p.exclude!==$('exclude').value)return;filter=p;window.dbtUpdate({...current,relayout:true})};
 function drawMinimap(){
  const svg=$('minimap');if(!cy||!$('show-minimap').checked)return;svg.replaceChildren();const bb=cy.elements().boundingBox();if(!Number.isFinite(bb.w)||!bb.w)return;
  const scale=Math.min(170/(bb.w+30),100/(bb.h+30)),offset={x:(180-bb.w*scale)/2,y:(110-bb.h*scale)/2};minimapBounds={...bb,scale,offset};
@@ -107,8 +107,8 @@ for(const button of document.querySelectorAll('button')){
  button.addEventListener('pointerenter',show);button.addEventListener('pointerleave',hide);button.addEventListener('focus',show);button.addEventListener('blur',hide);button.addEventListener('pointerdown',hide);button.addEventListener('click',hide);
 }
 $('group-by').onchange=e=>{grouping=e.target.value;window.dbtUpdate({...current,relayout:true});cy.fit(undefined,35)};
-$('filter-form').onsubmit=e=>{e.preventDefault();$('filter-status').textContent='Resolving selector…';send('filter',$('selector').value,$('exclude').value)};
-$('clear-filter').onclick=()=>{$('selector').value='';$('exclude').value='';filter=null;window.dbtUpdate({...current,relayout:true})};
+$('filter-form').onsubmit=e=>{e.preventDefault();$('filter-status').textContent='Resolving selector…';send('filter',$('selector').value,$('exclude').value,true)};
+$('clear-filter').onclick=()=>{$('selector').value='';$('exclude').value='';filter=null;window.dbtUpdate({...current,relayout:true});send('filter','','',true)};
 $('pin-focus').onclick=()=>{const pinned=$('pin-focus').getAttribute('aria-pressed')!=='true';current.pinned=pinned;$('pin-focus').setAttribute('aria-pressed',String(pinned));$('pin-focus').textContent=pinned?'Unpin focus':'Pin focus';send('pin',current.focus,String(pinned))};
 $('show-minimap').onchange=e=>{$('minimap').style.display=e.target.checked?'block':'none';drawMinimap()};
 $('minimap').onpointerdown=e=>{$('minimap').setPointerCapture(e.pointerId);minimapNavigate(e)};$('minimap').onpointermove=e=>{if(e.buttons===1)minimapNavigate(e)};

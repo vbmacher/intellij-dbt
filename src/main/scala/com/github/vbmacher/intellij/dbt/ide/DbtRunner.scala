@@ -30,13 +30,20 @@ private[ide] final case class DbtCommand(arguments: Vector[String], directory: S
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
-  def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
+  def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean,
+    requested: Option[DbtRunSelection] = None, cliIds: Option[Vector[String]] = None): Either[String, DbtCommand] = {
     val options = root.runOptions
     if (Set("Generate Docs", "Source Freshness")(action))
       return DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
         .flatMap(create(w, _, action, fullRefresh = false))
-    val expression = options.selection.trim
-    val resolved = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
+    val expression = DbtSelectionReview.expression(w, root, requested)
+    val local = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
+    val available = cliIds.map(_ => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, "").resources)
+    val resolved = cliIds.fold(local) { ids =>
+      val resources = available.toVector.flatten.filter(s => ids.contains(s.uniqueId))
+      com.github.vbmacher.intellij.dbt.lineage.DbtSelection(resources,
+        ids.filterNot(id => resources.exists(_.uniqueId == id)).map(id => "CLI resource is unavailable locally: " + id))
+    }
     val stateSelection = (expression + " " + options.exclude).split("[\\s,]+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
     val state = if (options.defer || options.favorState || stateSelection || options.stateDirectory.nonEmpty) DbtState.manifest(root).map(_ => ()) else Right(())
     for {
@@ -50,14 +57,39 @@ private[ide] object DbtCommand {
       incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
         DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
       base <- create(w, all, action, fullRefresh && incremental)
+      excluded <- DbtSelectionReview.cliTerms(w, root, options.exclude)
     } yield {
-      val selections = if (action == "Generate Docs" || expression.isEmpty) Vector.empty
-      else if (stateSelection) Vector("--select") ++ expression.split("\\s+").filter(_.nonEmpty)
+      val selections = if (action == "Generate Docs" || expression.isEmpty && cliIds.isEmpty) Vector.empty
+      else if (stateSelection && cliIds.isEmpty) Vector("--select") ++ expression.split("\\s+").filter(_.nonEmpty)
       else Vector("--select") ++ resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).distinct
       // Preserve explicit exclusions as well: dbt may otherwise select their tests indirectly.
-      val excludes = if (action == "Generate Docs" || options.exclude.trim.isEmpty) Vector.empty
-      else Vector("--exclude") ++ options.exclude.trim.split("\\s+")
+      val excludes = if (excluded.isEmpty) Vector.empty else Vector("--exclude") ++ excluded
       base.copy(arguments = base.arguments ++ selections ++ excludes)
+    }
+  }
+  /** Explicit CLI resolution shares the normal managed process and execution context. */
+  def resolveSelection(w: DbtWorkspace, root: DbtRoot, requested: Option[DbtRunSelection]): Either[String, DbtCommand] = {
+    val expression = DbtSelectionReview.expression(w, root, requested)
+    val exclude = root.runOptions.exclude.trim
+    for {
+      all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
+      base <- create(w, all, "Generate Docs", fullRefresh = false)
+      baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Vector("--state", p.toString))
+        else Right(Vector.empty[String])
+      exclusions <- DbtSelectionReview.cliTerms(w, root, exclude)
+      selected <- {
+        val named = "^selector:([^+,\\s]+)$".r
+        expression match {
+          case "" => Right(Vector.empty[String])
+          case named(name) => Right(Vector("--selector", name))
+          case other => DbtSelectionReview.cliTerms(w, root, other).flatMap(terms =>
+            Either.cond(terms.nonEmpty, Vector("--select") ++ terms, "Selection matches no locally known resources."))
+        }
+      }
+    } yield {
+      val excluded = if (exclusions.isEmpty) Vector.empty else Vector("--exclude") ++ exclusions
+      base.copy(action = "Resolve Selection", arguments = base.arguments.take(base.commandOffset) ++
+        Vector("ls", "--quiet", "--output", "json") ++ selected ++ excluded ++ baseline ++ base.arguments.drop(base.commandOffset + 2))
     }
   }
   def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
@@ -110,7 +142,8 @@ private[ide] object DbtCommand {
 }
 
 private[ide] final case class DbtRunnerEvent(running: Boolean, message: String, refresh: Boolean = false, preview: Option[String] = None,
-  result: Option[DbtQueryResult] = None, execution: Option[DbtExecutionRun] = None, command: Option[DbtCommand] = None)
+  result: Option[DbtQueryResult] = None, execution: Option[DbtExecutionRun] = None, command: Option[DbtCommand] = None,
+  selectionOutput: Option[String] = None)
 
 @Service(Array(Service.Level.PROJECT))
 final class DbtRunner(project: Project) extends Disposable {
@@ -163,9 +196,10 @@ final class DbtRunner(project: Project) extends Disposable {
               val wasCancelled = cancelled.get()
               val success = event.getExitCode == 0 && !wasCancelled
               val message = if (wasCancelled) s"${command.action} cancelled" else s"${command.action} finished (exit ${event.getExitCode})"
-              val preview = if (success && command.action == "Preview") Some(DbtPreview.format(output.synchronized(output.toString))) else None
+              val capturedOutput = output.synchronized(output.toString)
+              val preview = if (success && command.action == "Preview") Some(DbtPreview.format(capturedOutput)) else None
               def argument(name: String): String = command.arguments.drop(command.commandOffset + 1).sliding(2).find(_.head == name).map(_(1)).getOrElse("")
-              val result = if (success && command.action == "Preview") DbtQueryResult.parse(output.synchronized(output.toString),
+              val result = if (success && command.action == "Preview") DbtQueryResult.parse(capturedOutput,
                 command.target, argument("--limit").toIntOption.getOrElse(10), (System.nanoTime() - started) / 1000000L,
                 Option(argument("--inline")).filter(_.nonEmpty).getOrElse("Model: " + argument("--select") +
                   "\n\nSource SQL captured before execution (before dbt compilation):\n" + command.sourceSql)).toOption else None
@@ -181,7 +215,8 @@ final class DbtRunner(project: Project) extends Disposable {
               onUi {
                 handler = null; busy.set(false)
                 console.print("\n" + message + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-                fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command)))
+                fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command),
+                  selectionOutput = Option.when(success && command.action == "Resolve Selection")(capturedOutput)))
                 DbtNotifications.publish(project, command, message, success, wasCancelled)
               }
             }

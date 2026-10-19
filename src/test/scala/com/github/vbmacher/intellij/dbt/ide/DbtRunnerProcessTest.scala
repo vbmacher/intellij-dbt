@@ -24,6 +24,7 @@ if '--write-manifest' in sys.argv:
  os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
  with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
   json.dump({'target':sys.argv[sys.argv.index('--target')+1],'generated_at':time.time_ns()},f)
+if 'ls' in sys.argv: print(json.dumps({'unique_id':'model.analytics.orders'}),flush=True)
 if 'show' in sys.argv: print(json.dumps({'preview':json.dumps([{'id':1,'name':None}])}),flush=True)
 sys.exit(7 if '--fail' in sys.argv else 0)
 """)
@@ -141,6 +142,23 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     assertEquals(Vector(directory.toString, "prod"), recorded.take(2))
     assertEquals(DbtArtifactContext.fingerprint(artifact.toString), recorded.lastOption)
     assertEquals("prod", JsonParser.parseString(Files.readString(artifact.resolve("manifest.json"))).getAsJsonObject.get("target").getAsString)
+  }
+
+  def testExplicitSelectorRefreshSharesSingleProcessStopAndCapturedOutput(): Unit = {
+    val (runner, directory, executable, events) = setup()
+    val ls = command(directory, executable, Vector("ls", "--output", "json", "--hold")).copy(action = "Resolve Selection")
+    assertTrue(runner.start(ls))
+    assertFalse(runner.start(command(directory, executable, Vector("run"))))
+    await("Selector process starts") { Files.exists(directory.resolve("invocation.json")) }
+    runner.stop()
+    await("Selector cancellation restores idle") { !runner.isRunning }
+    assertTrue(events.last.selectionOutput.isEmpty)
+    assertTrue(events.last.message.contains("cancelled"))
+    assertTrue(runner.start(ls.copy(arguments = ls.arguments.filterNot(_ == "--hold"))))
+    await("Selector refresh finishes") { !runner.isRunning }
+    assertEquals(Right(Vector("model.analytics.orders")), DbtSelectionReview.cliResources(events.last.selectionOutput.get))
+    assertFalse(events.last.refresh)
+    assertTrue(events.last.result.isEmpty)
   }
 
 }

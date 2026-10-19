@@ -145,4 +145,83 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertEquals("", other.runOptions.stateDirectory)
     assertFalse(other.runOptions.defer); assertFalse(other.runOptions.favorState)
   }
+  def testSelectorCompletionPreservesIntersectionsDepthsAndOwningIdentities(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("selectors.yml", "selectors: [{name: finance, definition: orders}]\n")
+    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
+    add("other/models/orders.sql", "select 2")
+    val candidates = DbtSelectionReview.completions(workspace, root)
+    assertTrue(candidates.contains("fqn:analytics.orders"))
+    assertTrue(candidates.contains("selector:finance"))
+    assertFalse(candidates.exists(_.contains("other")))
+    val text = "tag:finance,2+fqn:anal+1 package:pkg"
+    val caret = text.indexOf("+1")
+    val completed = DbtSelectionReview.complete(text, caret, candidates).find(_._1 == "fqn:analytics.orders").get
+    assertEquals("tag:finance,2+fqn:analytics.orders+1 package:pkg", completed._2)
+    assertTrue(DbtSelectionReview.complete("bad", 3, candidates).isEmpty)
+  }
+
+  def testExplicitCliRefreshKeepsTargetWrapperProfilesAndUsesLegacyNamedSelectorFlag(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    root.runOptions.executableArguments = "'a project'"
+    root.runOptions.target = "qa"
+    root.runOptions.profilesDirectory = "profiles with spaces"
+    root.runOptions.selection = "selector:finance"
+    root.runOptions.exclude = "tag:slow"
+    val command = DbtCommand.resolveSelection(workspace, root, None).toOption.get
+    assertEquals(Vector("dbt", "a project", "ls", "--quiet", "--output", "json", "--selector", "finance", "--exclude", "tag:slow"), command.arguments.take(10))
+    assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "qa")))
+    assertTrue(command.environment("DBT_PROFILES_DIR").endsWith("profiles with spaces"))
+    assertEquals("Resolve Selection", command.action)
+    assertEquals(root.directory.getPath, command.root)
+  }
+
+  def testExcludesWithoutAnExpressionStayInsideTheSelectedDirectory(): Unit = {
+    project()
+    val file = add("models/finance/orders.sql", "select 1")
+    add("models/finance/slow.sql", "select 2")
+    add("models/unrelated.sql", "select 3")
+    val w = workspace
+    val selected = DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getParent.getPath).get
+    root.runOptions.exclude = "slow"
+    val command = DbtCommand.selection(w, root, "Build", fullRefresh = false, Some(selected)).toOption.get
+    assertEquals(Vector("fqn:analytics.finance.orders"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(!_.startsWith("--")))
+    assertFalse(command.arguments.exists(_.contains("unrelated")))
+  }
+
+  def testCliReviewedRuntimeSelectionUsesOnlyKnownExactResources(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("models/unrelated.sql", "select 2")
+    root.runOptions.selection = "config.materialized:view"
+    assertTrue(DbtCommand.selection(workspace, root, "Build", fullRefresh = false).isLeft)
+    val ids = Vector("model.analytics.orders")
+    val command = DbtCommand.selection(workspace, root, "Build", fullRefresh = false, None, Some(ids)).toOption.get
+    assertEquals(Vector("fqn:analytics.orders"), command.arguments.dropWhile(_ != "--select").drop(1))
+    assertTrue(DbtCommand.selection(workspace, root, "Build", fullRefresh = false, None, Some(Vector("model.other.orders"))).isLeft)
+    assertEquals(Right(ids), DbtSelectionReview.cliResources("log line\n{\"unique_id\":\"model.analytics.orders\"}\n"))
+    assertTrue(DbtSelectionReview.cliResources("{\"info\":{\"msg\":\"log\"}}\n").isLeft)
+    assertEquals(Right(Vector.empty), DbtSelectionReview.cliResources(""))
+  }
+
+  def testNamedExclusionsReachBothManagedCommandsAsCanonicalResources(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("models/slow.sql", "select 2")
+    add("selectors.yml", "selectors: [{name: omit, definition: slow}]\n")
+    val w = workspace
+    root.runOptions.selection = "*"
+    root.runOptions.exclude = "selector:omit"
+    val commands = Vector(DbtCommand.selection(w, root, "Build", fullRefresh = false), DbtCommand.resolveSelection(w, root, None))
+    commands.foreach { built =>
+      val command = built.toOption.get
+      assertTrue(command.arguments.sliding(2).exists(_ == Vector("--exclude", "fqn:analytics.slow")))
+      assertFalse(command.arguments.contains("selector:omit"))
+    }
+    root.runOptions.selection = "+selector:omit"
+    assertTrue(DbtCommand.resolveSelection(w, root, None).toOption.get.arguments.contains("fqn:analytics.slow"))
+  }
+
 }

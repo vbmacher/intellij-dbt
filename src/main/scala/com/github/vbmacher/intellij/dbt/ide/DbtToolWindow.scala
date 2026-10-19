@@ -58,7 +58,7 @@ final class DbtToolWindowFactory extends ToolWindowFactory {
 }
 
 private[ide] final case class DbtViewContext(root: Option[String], selection: Option[DbtRunSelection], incremental: Boolean,
-  targets: Vector[String], target: String, status: String, choices: Vector[DbtRunSelection] = Vector.empty)
+  targets: Vector[String], target: String, status: String, choices: Vector[DbtRunSelection] = Vector.empty, completions: Vector[String] = Vector.empty, currentModel: String = "", artifacts: String = "")
 
 /** All PSI/artifact work is performed in cancellable nonblocking read actions. Only immutable UI payloads cross to the EDT. */
 private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable {
@@ -68,12 +68,25 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private val settings = DbtProjectSettings.get(project)
   private val runner = project.getService(classOf[DbtRunner])
   private val contextLabel = new JBLabel("Choose a model or directory to run commands.")
+  contextLabel.setName("dbt.context")
   private val runSelection = new TextFieldWithBrowseButton
   private val target = new JComboBox[String]()
   private val executableArguments = new JBTextField(24)
   private val selectionExpression = new JBTextField(24)
   private val selectionExclude = new JBTextField(18)
   private val selectionPreview = new JButton("Review selection")
+  private val selectionReview = new JBTextArea("Review selection to see locally matched resources.", 5, 80)
+  private val selectionRefresh = new JButton("Refresh with dbt ls")
+  private val selectionLineage = new JButton("Show in Lineage")
+  private val selectionCopy = new JButton("Copy command")
+  private var reviewCommand = Option.empty[DbtCommand]
+  private var reviewRequest = 0L
+  private var commandRequest = 0L
+  private var cliIncremental = false
+  private var lsRequest = Option.empty[Long]
+  private var cliReview = Option.empty[Vector[String]]
+  private var completionItems = Vector.empty[String]
+  private val selectionShortcuts = scala.collection.mutable.ArrayBuffer.empty[JButton]
   private val fullRefresh = new JCheckBox("Full Refresh")
   private val stop = new JButton("Stop", AllIcons.Actions.Suspend)
   private val preview = new JBTextArea
@@ -92,6 +105,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var downstreamExtra = 0
   private var context = DbtViewContext(None, None, incremental = false, Vector.empty, "", "")
   private var fillingTarget = false
+  private var fillingSelection = false
   private var loadedArguments = ""
   private var loadedTarget = ""
   private var disposed = false
@@ -129,6 +143,9 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   fullRefresh.setToolTipText("<html>Rebuild incremental models in the selected model or directory from all source data.<br>" +
     "Applies to Run and Build. Can take longer and use more warehouse compute.</html>")
   executableArguments.setToolTipText("Arguments passed before the dbt command. Quote arguments containing spaces.")
+  executableArguments.getDocument.addDocumentListener(new DocumentAdapter {
+    override def textChanged(event: DocumentEvent): Unit = if (executableArguments.getText != loadedArguments) invalidateReview()
+  })
   executableArguments.addActionListener(_ => saveExecutableArguments())
   executableArguments.addFocusListener(new FocusAdapter {
     override def focusLost(event: FocusEvent): Unit = saveExecutableArguments()
@@ -192,18 +209,22 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   selectionBar.add(new JBLabel("Selection:")); selectionBar.add(selectionExpression)
   selectionBar.add(new JBLabel("Exclude:")); selectionBar.add(selectionExclude); selectionBar.add(selectionPreview)
   selectionPreview.addActionListener(_ => {
+    cliReview = None
+    cliIncremental = false
     saveSelection()
+    saveTarget(); saveExecutableArguments()
+    val request = reviewRequest
+    val refresh = fullRefresh.isSelected
     val rootPath = context.root
     val currentSelection = context.selection
-    ReadAction.nonBlocking(new Callable[String] {
-      override def call(): String = {
+    ReadAction.nonBlocking(new Callable[(String, Option[DbtCommand])] {
+      override def call(): (String, Option[DbtCommand]) = {
         val w = DbtWorkspace.get(project)
         w.roots.find(r => rootPath.contains(r.directory.getPath)).map { root =>
-          val expression = if (root.runOptions.selection.trim.nonEmpty) root.runOptions.selection
-            else currentSelection.filter(s => s.path.nonEmpty && s.path != root.directory.getPath)
-              .map(DbtRunSelection.selectors(w, _).mkString(" ")).getOrElse("")
+          val expression = DbtSelectionReview.expression(w, root, currentSelection)
+          val command = DbtCommand.selection(w, root, "Build", refresh, currentSelection)
           val result = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, root.runOptions.exclude)
-          "Local selector preview · " + root.name + " · target: " + DbtExecutionContext.activeTarget(root).getOrElse("profile default") +
+          val text = "Local selector preview · " + root.name + " · target: " + DbtExecutionContext.activeTarget(root).getOrElse("profile default") +
             "\nMatched resources: " + result.resources.size + "\n" + result.resources.map(_.uniqueId).mkString("\n") +
             (if (result.problems.nonEmpty) "\nIncomplete: " + result.problems.mkString("\n") else "") +
             (if (root.runOptions.stateDirectory.nonEmpty) "\n\nBaseline: " + root.runOptions.stateDirectory + "\n" +
@@ -213,17 +234,65 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
                   "\n\nUnselected upstream dependencies:\n" + plan.dependencies.map(d =>
                     s"${d.resolution}: ${d.id} ${d.relation}\n  ${d.reason}\n  ${d.evidence}").mkString("\n") +
                   (if (plan.problems.nonEmpty) "\nIncomplete: " + plan.problems.mkString("; ") else "")) else "") +
-            "\n\nCommand:\n" + (if (root.runOptions.selection.trim.nonEmpty) DbtCommand.selection(w, root, "Build", fullRefresh = false)
-              else currentSelection.toRight("Choose a model or directory in the Runner.")
-                .flatMap(DbtCommand.create(w, _, "Build", fullRefresh = false))).fold(identity, _.arguments.mkString(" "))
-        }.getOrElse("Choose an owning dbt project in the Runner.")
+            "\n\nCommand:\n" + command.fold(identity, c => com.intellij.util.execution.ParametersListUtil.join(c.arguments.asJava))
+          text -> command.toOption
+        }.getOrElse("Choose an owning dbt project in the Runner." -> None)
       }
-    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (text: String) => {
-      DbtTextDialog.show("dbt selection and state", text)
+    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (result: (String, Option[DbtCommand])) => {
+      if (request == reviewRequest) {
+        selectionReview.setText(result._1); selectionReview.setCaretPosition(0)
+        reviewCommand = result._2
+        updateButtons()
+      }
     }).submit(AppExecutorUtil.getAppExecutorService)
   })
+  selectionReview.setName("dbt.selectionReview")
+  selectionReview.setEditable(false)
+  selectionReview.setLineWrap(false)
+  selectionReview.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12))
+  val reviewControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0))
+  Vector(("Current model", "", ""), ("Upstream", "+", ""), ("Downstream", "", "+"), ("Both", "+", "+")).foreach {
+    case (label, before, after) =>
+      val button = new JButton(label)
+      button.addActionListener(_ => if (context.currentModel.nonEmpty) {
+        selectionExpression.setText(before + context.currentModel + after)
+        selectionPreview.doClick()
+      })
+      selectionShortcuts += button; reviewControls.add(button)
+  }
+  reviewControls.add(selectionLineage); reviewControls.add(selectionCopy); reviewControls.add(selectionRefresh)
+  selectionCopy.addActionListener(_ => reviewCommand.foreach(command =>
+    com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(new java.awt.datatransfer.StringSelection(
+      com.intellij.util.execution.ParametersListUtil.join(command.arguments.asJava)))))
+  selectionLineage.addActionListener(_ => {
+    saveSelection()
+    showSelectionInLineage(selectionExpression.getText, selectionExclude.getText, cliReview)
+    val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
+    if (window != null) Option(window.getContentManager.findContent("Lineage")).foreach(window.getContentManager.setSelectedContent(_))
+  })
+  selectionRefresh.setToolTipText("Run dbt ls explicitly using the current project, target and profile. Uses the shared Stop control.")
+  selectionRefresh.addActionListener(_ => start("Resolve Selection"))
+  Vector(selectionExpression, selectionExclude).foreach { field =>
+    field.setToolTipText("dbt selector expression. Press Ctrl+Space for completion; spaces form unions and commas form intersections.")
+    new com.intellij.openapi.project.DumbAwareAction("Complete dbt selection") {
+      override def actionPerformed(event: com.intellij.openapi.actionSystem.AnActionEvent): Unit = {
+        val choices = DbtSelectionReview.complete(field.getText, field.getCaretPosition, completionItems)
+        if (choices.nonEmpty) com.intellij.openapi.ui.popup.JBPopupFactory.getInstance.createPopupChooserBuilder(choices.map(_._1).asJava)
+          .setTitle("dbt selectors").setItemChosenCallback((chosen: String) => choices.find(_._1 == chosen).foreach { case (_, text, caret) =>
+            field.setText(text); field.setCaretPosition(caret)
+          }).createPopup().showUnderneathOf(field)
+      }
+    }.registerCustomShortcutSet(com.intellij.openapi.actionSystem.ActionManager.getInstance.getAction(com.intellij.openapi.actionSystem.IdeActions.ACTION_CODE_COMPLETION).getShortcutSet, field, this)
+    field.getDocument.addDocumentListener(new DocumentAdapter {
+      override def textChanged(event: DocumentEvent): Unit = if (!fillingSelection) { saveSelection(); invalidateReview() }
+    })
+  }
+  val selectionControls = new JPanel(new BorderLayout)
+  selectionControls.add(selectionBar, BorderLayout.NORTH)
+  selectionControls.add(reviewControls, BorderLayout.CENTER)
+  selectionControls.add(new JBScrollPane(selectionReview), BorderLayout.SOUTH)
   val configurationRows = new JPanel(new BorderLayout)
-  configurationRows.add(configuration, BorderLayout.NORTH); configurationRows.add(selectionBar, BorderLayout.SOUTH)
+  configurationRows.add(configuration, BorderLayout.NORTH); configurationRows.add(selectionControls, BorderLayout.SOUTH)
   north.add(configurationRows, BorderLayout.NORTH)
   north.add(toolbar, BorderLayout.CENTER)
   north.add(contextLabel, BorderLayout.SOUTH)
@@ -250,6 +319,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       if (settings.getState.runnerSelection != path) {
         saveTarget()
         saveExecutableArguments()
+        invalidateReview()
         settings.getState.runnerSelection = path
         generation.incrementAndGet()
         fullRefresh.setSelected(false)
@@ -261,19 +331,53 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     }
   })
   target.addActionListener(_ => if (!fillingTarget) saveTarget())
+  target.getEditor.getEditorComponent match {
+    case field: javax.swing.JTextField => field.getDocument.addDocumentListener(new DocumentAdapter {
+      override def textChanged(event: DocumentEvent): Unit = if (!fillingTarget) invalidateReview()
+    })
+    case _ => ()
+  }
+  fullRefresh.addActionListener(_ => {
+    val ids = cliReview
+    val text = selectionReview.getText.split("\n\nBuild command:", 2).head
+    invalidateReview()
+    cliReview = ids
+    if (ids.nonEmpty) selectionReview.setText(text)
+    ids.foreach(updateCliCommand(_, reviewRequest))
+  })
   runner.listen(this, event => {
     updateButtons()
     browser.foreach(_.runnerState(event.running, event.message))
     event.preview.foreach(preview.setText)
+    if (event.running && event.command.exists(_.action == "Resolve Selection")) lsRequest = Some(reviewRequest)
+    event.selectionOutput.foreach { output =>
+      if (lsRequest.contains(reviewRequest)) {
+        val header = "CLI selector preview · target: " + event.command.map(_.target).filter(_.nonEmpty).getOrElse("profile default")
+        val parsed = DbtSelectionReview.cliResources(output)
+        cliReview = parsed.toOption
+        selectionReview.setText(parsed.fold(error => header + "\n" + error,
+          ids => header + "\nMatched resources: " + ids.size + "\n" + ids.mkString("\n")))
+        selectionReview.setCaretPosition(0)
+        cliReview.foreach(ids => updateCliCommand(ids, reviewRequest))
+      }
+    }
     if (event.running) resultGrid.clear("dbt command running…")
     event.result.foreach(resultGrid.showResult)
     if (event.result.nonEmpty) lastPreviewCommand = event.command.filter(_.action == "Preview")
     if (!event.running && event.result.isEmpty) resultGrid.clear(event.preview.getOrElse(event.message))
     if (event.refresh || event.execution.nonEmpty) schedule(follow = false)
   })
+  com.intellij.openapi.editor.EditorFactory.getInstance.getEventMulticaster.addDocumentListener(
+    new com.intellij.openapi.editor.event.DocumentListener {
+      override def documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent): Unit = {
+        val file = FileDocumentManager.getInstance.getFile(event.getDocument)
+        if (file != null && isReviewSource(file.getPath))
+          invalidateReviewLater()
+      }
+    }, this)
   val connection = project.getMessageBus.connect(this)
   connection.subscribe(DbtProjectSettings.Changed, new DbtSettingsListener {
-    override def settingsChanged(): Unit = schedule(follow = false)
+    override def settingsChanged(): Unit = { invalidateReviewLater(); schedule(follow = false) }
   })
   connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, new FileEditorManagerListener {
     override def fileOpened(source: FileEditorManager, file: VirtualFile): Unit = schedule(follow = false)
@@ -286,7 +390,10 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     override def modificationCountChanged(): Unit = schedule(follow = false)
   })
   connection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener {
-    override def after(events: java.util.List[_ <: VFileEvent]): Unit = schedule(follow = false)
+    override def after(events: java.util.List[_ <: VFileEvent]): Unit = {
+      if (events.asScala.exists(e => isReviewSource(e.getPath))) invalidateReviewLater()
+      schedule(follow = false)
+    }
   })
   connection.subscribe(LafManagerListener.TOPIC, new LafManagerListener {
     override def lookAndFeelChanged(source: com.intellij.ide.ui.LafManager): Unit = schedule(follow = false)
@@ -307,12 +414,61 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
 
   private def targetText: String = Option(target.getEditor.getItem).fold("")(_.toString.trim)
 
+  private def isReviewSource(path: String): Boolean = {
+    val artifacts = context.artifacts
+    val inArtifacts = artifacts.nonEmpty && (path == artifacts || path.startsWith(artifacts + "/"))
+    !inArtifacts && Vector(".sql", ".py", ".yml", ".yaml", ".json").exists(path.endsWith)
+  }
+
+  private def updateCliCommand(ids: Vector[String], request: Long): Unit = {
+    val rootPath = context.root
+    val selected = context.selection
+    val refresh = fullRefresh.isSelected
+    ReadAction.nonBlocking(new Callable[(Either[String, DbtCommand], Boolean)] {
+      override def call(): (Either[String, DbtCommand], Boolean) = {
+        val w = DbtWorkspace.get(project)
+        val owner = w.roots.find(r => rootPath.contains(r.directory.getPath))
+        val command = owner.toRight("The owning execution project is unavailable.")
+          .flatMap(DbtCommand.selection(w, _, "Build", refresh, selected, Some(ids)))
+        val incremental = owner.toVector.flatMap(r => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, r, "").resources)
+          .exists(s => ids.contains(s.uniqueId) && DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+        command -> incremental
+      }
+    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), (result: (Either[String, DbtCommand], Boolean)) => {
+      val (command, incremental) = result
+      if (request == reviewRequest) {
+        reviewCommand = command.toOption
+        cliIncremental = incremental
+        fullRefresh.setVisible(context.incremental || cliIncremental)
+        selectionReview.append("\n\nBuild command:\n" + command.fold(identity,
+          c => com.intellij.util.execution.ParametersListUtil.join(c.arguments.asJava)))
+        updateButtons()
+      }
+    }).submit(AppExecutorUtil.getAppExecutorService)
+  }
+
+  private def invalidateReviewLater(): Unit = {
+    if (ApplicationManager.getApplication.isDispatchThread) { if (!disposed) invalidateReview() }
+    else ApplicationManager.getApplication.invokeLater(() => if (!disposed) invalidateReview())
+  }
+
+  private def invalidateReview(): Unit = {
+    reviewRequest += 1
+    commandRequest += 1
+    cliIncremental = false
+    reviewCommand = None
+    selectionReview.setText("Selection or execution context changed. Review selection again.")
+    selectionCopy.setEnabled(false)
+    cliReview = None
+  }
+
   private def saveTarget(): Unit = context.root.foreach { path =>
     val options = settings.options(path)
     val value = targetText
     if (value != loadedTarget) {
       loadedTarget = value
       if (options.target != value) {
+        invalidateReview()
         options.target = value
         settings.changed()
       }
@@ -376,8 +532,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           "\nCLI version: " + data.flatMap(_.attributes.get("dbt_version")).getOrElse("Not available in the manifest; see Runner output.") +
           "\nTarget: " + selectedTarget + "\nAdapter: " + profile.flatMap(_.adapter).getOrElse("Unavailable") +
           "\nSelection: " + selection.map(_.label).getOrElse("None") + "\nLineage focus: " + editorModel.map(_.presentableText).getOrElse("None") + "\nResources: " + graph.payload.getAsJsonArray("nodes").size() + "\n" + artifacts
-        val incremental = models.exists(s => DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
-        graph -> DbtViewContext(owner.map(_.directory.getPath), selection, incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary, choices)
+        val scope = owner.filter(_.runOptions.selection.trim.nonEmpty).map(r =>
+          com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, r, r.runOptions.selection, r.runOptions.exclude).resources).getOrElse(models)
+        val incremental = scope.exists(s => DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+        graph -> DbtViewContext(owner.map(_.directory.getPath), selection, incremental, profile.toVector.flatMap(_.targets), selectedTarget, summary, choices,
+          owner.map(DbtSelectionReview.completions(w, _)).getOrElse(Vector.empty), editorModel.filter(s =>
+            owner.exists(r => w.owner(s).exists(o => w.executionRoot(o).directory == r.directory))).map(
+            com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).getOrElse(""), owner.map(_.artifactDirectory.toString).getOrElse(""))
       }
     }).inSmartMode(project).expireWith(this).coalesceBy(graphWork).finishOnUiThread(ModalityState.any(), (result: (DbtGraphSnapshot, DbtViewContext)) =>
       if (!disposed && request == generation.get()) {
@@ -387,18 +548,22 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         val changedTargets = context.targets != next.targets
         val pendingTarget = targetText
         val targetEdited = pendingTarget != loadedTarget
+        if (changedRoot || changedSelection) invalidateReview()
         context = next
+        completionItems = next.completions
         if (changedRoot) {
+          fillingSelection = true
           selectionExpression.setText(context.root.map(settings.options(_).selection).getOrElse(""))
           selectionExclude.setText(context.root.map(settings.options(_).exclude).getOrElse(""))
+          fillingSelection = false
         }
         context.root.foreach(settings.getState.runnerRoot = _)
         if (changedRoot || executableArguments.getText == loadedArguments) {
           loadedArguments = context.root.map(settings.options(_).executableArguments).getOrElse("")
           executableArguments.setText(loadedArguments)
         }
-        if (changedSelection || !context.incremental) fullRefresh.setSelected(false)
-        fullRefresh.setVisible(context.incremental)
+        if (changedSelection || !context.incremental && !cliIncremental) fullRefresh.setSelected(false)
+        fullRefresh.setVisible(context.incremental || cliIncremental)
         fillingTarget = true
         if (changedRoot || changedTargets) {
           target.removeAllItems()
@@ -450,6 +615,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
 
   private def updateButtons(): Unit = {
     resultGrid.setRunning(runner.isRunning)
+    selectionCopy.setEnabled(reviewCommand.nonEmpty && !runner.isRunning)
+    selectionPreview.setEnabled(context.root.nonEmpty && !runner.isRunning)
+    selectionRefresh.setEnabled(context.root.nonEmpty && !runner.isRunning)
+    selectionLineage.setEnabled(context.root.nonEmpty && !runner.isRunning)
+    selectionShortcuts.foreach(_.setEnabled(context.currentModel.nonEmpty && !runner.isRunning))
+    selectionExpression.setEnabled(!runner.isRunning)
+    selectionExclude.setEnabled(!runner.isRunning)
     commands.foreach { case (name, button) => button.setEnabled(!runner.isRunning && context.root.nonEmpty &&
       context.selection.exists(s => name != "Preview" || !s.directory)) }
     runSelection.setEnabled(!runner.isRunning)
@@ -464,6 +636,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     saveTarget()
     saveExecutableArguments()
     FileDocumentManager.getInstance().saveAllDocuments()
+    val request = commandRequest
+    val reviewedCli = cliReview
     val selection = context.selection.filter(_.path == selectionPath)
     val requestedRefresh = fullRefresh.isSelected && context.selection.exists(s => selection.exists(_.path == s.path))
     ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
@@ -471,13 +645,19 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         selection.toRight("Choose a model or directory in the Runner.").flatMap { selected =>
           val w = DbtWorkspace.get(project)
           val root = DbtRunSelection.owner(w, selected).map(w.executionRoot)
-          root.filter(_.runOptions.selection.trim.nonEmpty).fold(DbtCommand.create(w, selected, action, requestedRefresh))(
-            DbtCommand.selection(w, _, action, requestedRefresh))
+          root.toRight("The owning execution project is unavailable.").flatMap { owner =>
+            if (action == "Resolve Selection") DbtCommand.resolveSelection(w, owner, Some(selected))
+            else if (owner.runOptions.selection.trim.nonEmpty || owner.runOptions.exclude.trim.nonEmpty)
+              DbtCommand.selection(w, owner, action, requestedRefresh, Some(selected), reviewedCli)
+            else DbtCommand.create(w, selected, action, requestedRefresh)
+          }
         }
     }).expireWith(this).inSmartMode(project).withDocumentsCommitted(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, DbtCommand]) => result match {
       case Right(command) => WriteIntentReadAction.run(() => {
-        FileDocumentManager.getInstance().saveAllDocuments()
-        runner.start(command)
+        if (request == commandRequest && !runner.isRunning) {
+          FileDocumentManager.getInstance().saveAllDocuments()
+          if (request == commandRequest) runner.start(command)
+        } else contextLabel.setText("Selection or execution settings changed while preparing the command. Review and run again.")
       })
       case Left(message) => contextLabel.setText(message)
     }).submit(AppExecutorUtil.getAppExecutorService)
@@ -509,11 +689,17 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   }
 
   private def saveSelection(): Unit = context.root.foreach { path =>
-    settings.options(path).selection = selectionExpression.getText.trim
-    settings.options(path).exclude = selectionExclude.getText.trim
+    val options = settings.options(path)
+    val expression = selectionExpression.getText.trim
+    val exclude = selectionExclude.getText.trim
+    if (options.selection != expression || options.exclude != exclude) {
+      options.selection = expression
+      options.exclude = exclude
+      settings.changed()
+    }
   }
 
-  private def handleMessage(raw: String): Unit = {
+  private[ide] def handleMessage(raw: String): Unit = {
     if (disposed) return
     val message = JsonParser.parseString(raw).getAsJsonObject
 
@@ -576,25 +762,11 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         settings.getState.pinnedFocus = if (field("value") == "true") focus.getOrElse(id) else ""
         refresh(follow = false)
       case "filter" =>
-        val expression = id.take(4000); val exclude = field("value").take(4000)
-        val rootPath = context.root
-        ReadAction.nonBlocking(new Callable[JsonObject] {
-          override def call(): JsonObject = {
-            val w = DbtWorkspace.get(project)
-            val payload = new JsonObject
-            payload.addProperty("expression", expression); payload.addProperty("exclude", exclude)
-            val root = w.roots.find(r => rootPath.contains(r.directory.getPath)).orElse(
-              if (w.roots.map(w.executionRoot).distinct.size == 1) w.roots.map(w.executionRoot).headOption else None)
-            val result = root.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, _, expression, exclude))
-            val selected = result.toVector.flatMap(_.resources).map(s => DbtGraphData.key(w, s)).toSet
-            val targets = DbtGraphData.build(w, None, 1, 1, exposures = true).targets
-            val ids = targets.collect { case (key, e) if selected(DbtGraphData.key(w, e.symbol)) => key }.toVector
-            payload.add("ids", new Gson().toJsonTree(ids.asJava))
-            payload.add("diagnostics", new Gson().toJsonTree(result.map(_.problems).getOrElse(Vector("Choose an owning dbt project in the Runner.")).asJava))
-            payload
-          }
-        }).expireWith(this).coalesceBy(this, "selector-filter").finishOnUiThread(ModalityState.any(), (payload: JsonObject) =>
-          browser.foreach(_.showFilter(payload))).submit(AppExecutorUtil.getAppExecutorService)
+        if (field("shared") == "true") {
+          selectionExpression.setText(id.take(4000)); selectionExclude.setText(field("value").take(4000))
+          saveSelection()
+        }
+        showSelectionInLineage(id, field("value"), fromRunner = false)
       case "export" => DbtGraphExport.show(project, id, field("value"))
       case "execution" =>
         val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
@@ -609,6 +781,39 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "width" => field("value").toIntOption.foreach(n => settings.getState.docsWidth = n.max(220).min(1200))
       case _ => ()
     }
+  }
+
+  private def showSelectionInLineage(text: String, excluded: String, cliIds: Option[Vector[String]] = None, fromRunner: Boolean = true): Unit = {
+    val request = reviewRequest
+    val typedExpression = text.take(4000); val exclude = excluded.take(4000)
+    val selectedScope = context.selection
+    val rootPath = context.root
+    ReadAction.nonBlocking(new Callable[JsonObject] {
+      override def call(): JsonObject = {
+        val w = DbtWorkspace.get(project)
+        val payload = new JsonObject
+        val root = w.roots.find(r => rootPath.contains(r.directory.getPath)).orElse(
+          if (w.roots.map(w.executionRoot).distinct.size == 1) w.roots.map(w.executionRoot).headOption else None)
+        val expression = if (!fromRunner || typedExpression.trim.nonEmpty) typedExpression else root.map(DbtSelectionReview.expression(w, _, selectedScope)).getOrElse("")
+        payload.addProperty("expression", expression); payload.addProperty("exclude", exclude)
+        payload.addProperty("fromRunner", fromRunner)
+        val result = root.map { owner =>
+          cliIds.fold(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, owner, expression, exclude)) { ids =>
+            val resources = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, owner, "").resources.filter(s => ids.contains(s.uniqueId))
+            payload.addProperty("expression", resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).mkString(" "))
+            payload.addProperty("exclude", "")
+            com.github.vbmacher.intellij.dbt.lineage.DbtSelection(resources, ids.filterNot(id => resources.exists(_.uniqueId == id)).map("Unavailable CLI resource: " + _))
+          }
+        }
+        val selected = result.toVector.flatMap(_.resources).map(s => DbtGraphData.key(w, s)).toSet
+        val targets = DbtGraphData.build(w, None, 1, 1, exposures = true).targets
+        val ids = targets.collect { case (key, e) if selected(DbtGraphData.key(w, e.symbol)) => key }.toVector
+        payload.add("ids", new Gson().toJsonTree(ids.asJava))
+        payload.add("diagnostics", new Gson().toJsonTree(result.map(_.problems).getOrElse(Vector("Choose an owning dbt project in the Runner.")).asJava))
+        payload
+      }
+    }).expireWith(this).coalesceBy(this, "selector-filter").finishOnUiThread(ModalityState.any(), (payload: JsonObject) =>
+      if (request == reviewRequest) browser.foreach(_.showFilter(payload))).submit(AppExecutorUtil.getAppExecutorService)
   }
 
   override def dispose(): Unit = {

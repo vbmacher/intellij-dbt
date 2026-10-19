@@ -227,3 +227,27 @@ test('test-only failure counts are visible and remain accurate across theme and 
  assert.equal(await page.getByRole('button',{name:/failing tests/}).count(),0);
  await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
 });
+
+test('Runner selection explicitly updates Lineage fields while stale local replies are rejected',async()=>{
+ await page.evaluate(p=>dbtUpdate(p),fixture);
+ await page.locator('#selector').fill('old');await page.locator('#exclude').fill('tag:old');
+ await page.evaluate(()=>dbtShowFilter({fromRunner:true,expression:'fqn:analytics.orders',exclude:'',ids:['model'],diagnostics:[]}));
+ assert.equal(await page.locator('#selector').inputValue(),'fqn:analytics.orders');
+ assert.equal(await page.locator('#exclude').inputValue(),'');
+ assert.match(await page.locator('#filter-status').innerText(),/1 matches/);
+ await page.evaluate(()=>dbtShowFilter({expression:'old',exclude:'tag:old',ids:['other'],diagnostics:[]}));
+ assert.equal(await page.locator('#selector').inputValue(),'fqn:analytics.orders');
+ assert.match(await page.locator('#filter-status').innerText(),/1 matches/);
+ await page.getByRole('button',{name:'Clear filter',exact:true}).click();
+});
+
+test('only explicit Lineage filter actions request Runner synchronization',async()=>{
+ await page.locator('#selector').fill('tag:finance+');await page.locator('#exclude').fill('');
+ await page.locator('#filter-form').evaluate(form=>form.requestSubmit());
+ assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),true);
+ await page.evaluate(()=>dbtShowFilter({expression:'tag:finance+',exclude:'',ids:['model'],diagnostics:[]}));
+ await page.evaluate(p=>dbtUpdate(p),fixture);
+ assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
+ await page.getByRole('button',{name:'Clear filter',exact:true}).click();
+ assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1)),{type:'filter',id:'',value:'',shared:true});
+});

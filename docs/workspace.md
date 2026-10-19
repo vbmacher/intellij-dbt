@@ -45,15 +45,29 @@ for desktop notifications. CLI or adapter errors appear in the log.
 
 Enter a dbt expression in **Selection**, optionally add **Exclude**, then click
 **Review selection**. A nonempty **Selection** overrides **Model or directory**;
-clear it to use the picker again. For example, `tag:finance+` selects tagged
+clear it to use the picker again. Press **Ctrl+Space** in either selector field
+for completion, including package/version-qualified names and named selectors. For example, `tag:finance+` selects tagged
 resources and their descendants.
 
-The review shows the execution project, target, matched resources, incomplete
-terms, and proposed **Build** command without running it. Supported local terms
+The inline review shows the execution project, target, matched-resource count,
+package and version identities, incomplete terms, and proposed **Build** command
+without running it. **Current model**, **Upstream**, **Downstream**, and **Both**
+fill the expression from the open model in the selected execution project.
+**Show in Lineage** applies the fields to the graph; **Apply filter** in Lineage
+also updates the Runner fields. **Copy command** copies the reviewed Build command
+with quoted arguments. Use **Run**, **Build**, **Test**, or **Compile** to execute
+the selection. Changes to the fields, target, source, or execution settings clear
+the review; review again before copying the command. Supported local terms
 include names, paths, fully qualified names, tags, resource types, packages, graph
 operators, unions, intersections, excludes, and named selectors from `selectors.yml`.
-Runtime-dependent terms can make the review incomplete. dbt determines the final
-runtime selection, including indirectly selected tests.
+Runtime-dependent terms can make the local review incomplete. **Refresh with dbt
+ls** explicitly runs the CLI with the selected project, target, profile, and
+exclusions, then shows the identities reported by dbt. It uses the same command
+log and **Stop** button as other commands. Successful CLI matches can be run when
+all reported resources have known local identities; unknown resources block
+execution instead of substituting same-name models. Indirectly selected tests
+remain subject to dbt's selection rules. No CLI refresh runs while typing or
+browsing the graph.
 
 | Expression | Selection |
 | --- | --- |
@@ -149,7 +163,7 @@ Enter **Selector** and **Exclude**, then click **Apply filter**. The expression
 rules match [Runner selection](#selection-and-state). Messages identify incomplete
 terms. Immediate nonmatching neighbors remain as dashed **Filtered boundary**
 cards; other omitted resources are counted as hidden. **Clear filter** restores
-the unfiltered graph.
+the unfiltered graph and clears Runner's **Selection** and **Exclude** fields.
 
 Use **Group by** to choose **Schema**, **Folder**, or **Tag (first alphabetically)**.
 Group buttons collapse or expand their resources; clicking a collapsed group also
