@@ -96,4 +96,34 @@ final class DbtPythonNavigationTest extends BasePlatformTestCase {
     assertEquals(source.getText.indexOf("get_relation"), target.getTextOffset)
     assertEquals(1, ReferencesSearch.search(target).findAll().size())
   }
+
+  def testModelRefactoringUpdatesOnlyResolvingPythonCallsAndUndoPreservesConsumers(): Unit = {
+    setupProject()
+    val py = add("models/python_model.py", "def model(dbt, session):\n    # dbt.ref('orders')\n    note = \"orders\"\n    return dbt.ref('orders')\n")
+    assertTrue(py.getClass.getName.startsWith("com.jetbrains.python."))
+    add("other/dbt_project.yml", "name: other\n")
+    add("other/models/orders.sql", "select 2")
+    val unrelated = add("other/models/consumer.py", "def model(dbt, session):\n    return dbt.ref('orders')\n")
+    val target = DbtNavigation.inFile(py).find(_.label == "orders").get.candidates.head
+    val source = target.getContainingFile
+    val before = py.getText
+    new com.intellij.refactoring.rename.RenameProcessor(getProject, target, "customer_orders", false, false).run()
+    assertEquals("customer_orders.sql", source.getName)
+    assertTrue(py.getText, py.getText.contains("return dbt.ref('customer_orders')"))
+    assertTrue(py.getText.contains("# dbt.ref('orders')"))
+    assertTrue(py.getText.contains("note = \"orders\""))
+    assertTrue(unrelated.getText.contains("return dbt.ref('orders')"))
+    val previous = com.intellij.openapi.ui.TestDialogManager.setTestDialog(com.intellij.openapi.ui.TestDialog.OK)
+    try com.intellij.openapi.command.undo.UndoManager.getInstance(getProject).undo(null)
+    finally com.intellij.openapi.ui.TestDialogManager.setTestDialog(previous)
+    com.intellij.psi.PsiDocumentManager.getInstance(getProject).commitAllDocuments()
+    assertEquals("orders.sql", source.getName)
+    assertEquals(before, py.getText)
+    val restored = DbtNavigation.inFile(py).find(_.label == "orders").get.candidates.head
+    val deletion = com.intellij.refactoring.safeDelete.SafeDeleteProcessor.createInstance(getProject, null, Array(restored), false, false, false)
+    deletion.setPreviewUsages(false)
+    assertThrows(classOf[com.intellij.refactoring.BaseRefactoringProcessor.ConflictsInTestsException], () => deletion.run())
+    assertTrue(source.isValid)
+    assertEquals(before, py.getText)
+  }
 }
