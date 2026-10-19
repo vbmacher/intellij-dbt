@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.DbtWorkspace
-import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent, CommonDataKeys}
+import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.application.{ModalityState, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.wm.ToolWindowManager
@@ -9,6 +9,7 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import java.util.concurrent.Callable
 
 final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
+  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
     event.getProject != null && Option(event.getData(CommonDataKeys.EDITOR)).exists(_.getSelectionModel.hasSelection) &&
       Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))

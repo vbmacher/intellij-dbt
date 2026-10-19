@@ -1,7 +1,9 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.google.gson.{JsonElement, JsonNull}
+import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextField}
 import com.intellij.ui.table.JBTable
 import java.awt.{BorderLayout, Component, FlowLayout}
@@ -80,8 +82,21 @@ private[ide] final class DbtResultGrid(onLimit: Int => Unit = null) extends JPan
   export.addActionListener(_ => result.foreach { _ =>
     val chooser = new JFileChooser
     chooser.setSelectedFile(new java.io.File(if (format.getSelectedItem == "TSV") "preview.tsv" else "preview.csv"))
-    if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION)
-      Files.writeString(chooser.getSelectedFile.toPath, exportText(if (format.getSelectedItem == "TSV") '\t' else ','))
+    if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+      val destination = chooser.getSelectedFile.toPath
+      val snapshot = exportSnapshot(if (format.getSelectedItem == "TSV") '\t' else ',')
+      new Task.Backgroundable(null, "Export dbt preview", true) {
+        override def run(indicator: ProgressIndicator): Unit = {
+          indicator.checkCanceled()
+          val text = snapshot()
+          indicator.checkCanceled()
+          Files.writeString(destination, text)
+        }
+        override def onThrowable(error: Throwable): Unit =
+          NotificationGroupManager.getInstance().getNotificationGroup("dbt Workspace")
+            .createNotification("Cannot export dbt preview", Option(error.getMessage).getOrElse(error.toString), NotificationType.WARNING).notify(null)
+      }.queue()
+    }
   })
   private val sql = new JButton("SQL / raw output")
   sql.addActionListener(_ => result.foreach(r => DbtTextDialog.show("Preview execution", r.sql + "\n\n" + r.raw)))
@@ -108,11 +123,15 @@ private[ide] final class DbtResultGrid(onLimit: Int => Unit = null) extends JPan
   }
   table.getSelectionModel.addListSelectionListener(_ => updateButtons())
   table.getColumnModel.getSelectionModel.addListSelectionListener(_ => updateButtons())
-  private[ide] def exportText(delimiter: Char, selectedOnly: Boolean = false): String = result.fold("") { r =>
+  /** Capture Swing view indices now; serialization can run after the grid changes or closes. */
+  private[ide] def exportSnapshot(delimiter: Char, selectedOnly: Boolean = false): () => String = result.fold[() => String](() => "") { r =>
     val rows = if (selectedOnly) table.getSelectedRows.toVector else (0 until table.getRowCount).toVector
     val columns = if (selectedOnly) table.getSelectedColumns.toVector else (0 until table.getColumnCount).toVector
-    r.export(delimiter, rows.map(table.convertRowIndexToModel), columns.map(table.convertColumnIndexToModel), includeHeaders = !selectedOnly)
+    val modelRows = rows.map(table.convertRowIndexToModel)
+    val modelColumns = columns.map(table.convertColumnIndexToModel)
+    () => r.export(delimiter, modelRows, modelColumns, includeHeaders = !selectedOnly)
   }
+  private[ide] def exportText(delimiter: Char, selectedOnly: Boolean = false): String = exportSnapshot(delimiter, selectedOnly)()
   def setRunning(value: Boolean): Unit = { running = value; updateButtons() }
   def clear(message: String): Unit = {
     result = None; activeSorter = None; label.setText(message)
