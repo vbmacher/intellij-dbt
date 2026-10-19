@@ -64,5 +64,85 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
   }
 
+  def testFullRefreshDependsOnSelectedIncrementalModelsOnly(): Unit = {
+    project()
+    add("models/plain.sql", "select 1 as id")
+    add("models/incremental.sql", "{{ config(materialized='incremental') }} select 2 as id")
+    val w = workspace
+    root.runOptions.selection = "plain"
+    assertFalse(DbtCommand.selection(w, root, "Build", fullRefresh = true).toOption.get.arguments.contains("--full-refresh"))
+    root.runOptions.selection = "incremental"
+    assertTrue(DbtCommand.selection(w, root, "Build", fullRefresh = true).toOption.get.arguments.contains("--full-refresh"))
+    assertFalse(DbtCommand.selection(w, root, "Test", fullRefresh = true).toOption.get.arguments.contains("--full-refresh"))
+  }
 
+  def testStateIntersectionUsesBaselineAndKeepsAuthoritativeExpressionInCommand(): Unit = {
+    project()
+    add("models/orders.sql", "select 2 as amount")
+    add("baseline/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.orders":{"raw_code":"select 1 as amount","config":{},"columns":{}}}}""")
+    val w = workspace
+    val options = root.runOptions
+    options.stateDirectory = "baseline"; options.selection = "fqn:analytics.orders,state:modified"
+    val command = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
+    assertEquals(Vector("fqn:analytics.orders,state:modified"), command.arguments.dropWhile(_ != "--select").drop(1))
+    assertTrue(command.arguments.sliding(2).exists(v => v.head == "--state" && v.last.endsWith("/baseline")))
+    val preview = DbtState.preview(w, root, options.selection).toOption.get
+    assertEquals(Vector("model.analytics.orders"), preview.selected.map(_.uniqueId))
+    options.stateDirectory = "does-not-exist"
+    assertTrue(DbtCommand.selection(w, root, "Build", fullRefresh = false).isLeft)
+  }
+
+  def testDocumentationAndFreshnessCommandsIgnoreModelSelectionAndInvalidState(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    val w = workspace
+    root.runOptions.selection = "unsupported:runtime"
+    root.runOptions.stateDirectory = "missing-baseline"
+    root.runOptions.defer = true; root.runOptions.favorState = true
+    Vector("Generate Docs", "Source Freshness").foreach { action =>
+      val command = DbtCommand.selection(w, root, action, fullRefresh = false).toOption.get
+      assertFalse(command.arguments.contains("--select"))
+      assertFalse(command.arguments.contains("--state"))
+      assertFalse(command.arguments.contains("--defer"))
+      assertFalse(command.arguments.contains("--favor-state"))
+    }
+  }
+
+  def testFavorStateRequiresConfiguredCoreVersionEvenWithAValidManifest(): Unit = {
+    project()
+    val code = add("models/orders.sql", "select 1")
+    add(".dbt-navigation.yml", "engine: core\ndbt-version: '1.3'\n")
+    add("baseline/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{}}""")
+    val w = workspace
+    root.runOptions.stateDirectory = "baseline"; root.runOptions.defer = true; root.runOptions.favorState = true
+    val selected = DbtRunSelection.available(w).find(_.path == code.getVirtualFile.getPath).get
+    val error = DbtCommand.create(w, selected, "Build", fullRefresh = false).left.toOption.get
+    assertTrue(error.contains("1.4"))
+  }
+
+  def testPerRootSelectionAndDeferralSettingsSurviveStateReloadWithoutLeaking(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
+    add("other/models/orders.sql", "select 2")
+    val w = workspace
+    val other = w.roots.find(_.name == "other").get
+    val options = root.runOptions
+    options.selection = "orders"; options.exclude = "tag:slow"; options.stateDirectory = "/artifacts/prod"
+    options.defer = true; options.favorState = true; options.target = "dev"
+    other.runOptions.selection = "tag:other"; other.runOptions.target = "qa"
+    val settings = DbtProjectSettings.get(getProject)
+    val saved = new DbtSettingsState
+    saved.projects = new java.util.TreeMap[String, DbtRunOptions](settings.getState.projects.asScala.map { case (path, value) => path -> value.copy() }.asJava)
+    settings.loadState(new DbtSettingsState)
+    settings.loadState(saved)
+    assertEquals("orders", root.runOptions.selection)
+    assertEquals("tag:slow", root.runOptions.exclude)
+    assertEquals("/artifacts/prod", root.runOptions.stateDirectory)
+    assertTrue(root.runOptions.defer); assertTrue(root.runOptions.favorState)
+    assertEquals("tag:other", other.runOptions.selection)
+    assertEquals("qa", other.runOptions.target)
+    assertEquals("", other.runOptions.stateDirectory)
+    assertFalse(other.runOptions.defer); assertFalse(other.runOptions.favorState)
+  }
 }

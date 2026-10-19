@@ -32,9 +32,12 @@ private[ide] object DbtCommand {
   val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
   def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
     val options = root.runOptions
+    if (Set("Generate Docs", "Source Freshness")(action))
+      return DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
+        .flatMap(create(w, _, action, fullRefresh = false))
     val expression = options.selection.trim
     val resolved = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
-    val stateSelection = expression.split("\\s+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
+    val stateSelection = (expression + " " + options.exclude).split("[\\s,]+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
     val state = if (options.defer || options.favorState || stateSelection || options.stateDirectory.nonEmpty) DbtState.manifest(root).map(_ => ()) else Right(())
     for {
       _ <- state
@@ -44,7 +47,9 @@ private[ide] object DbtCommand {
       _ <- Either.cond(stateSelection || resolved.resources.nonEmpty, (), "Selection matches no resources.")
       _ <- Either.cond(action != "Preview", (), "Use a model or CTE for Preview.")
       all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-      base <- create(w, all, action, fullRefresh)
+      incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
+        DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+      base <- create(w, all, action, fullRefresh && incremental)
     } yield {
       val selections = if (action == "Generate Docs" || expression.isEmpty) Vector.empty
       else if (stateSelection) Vector("--select") ++ expression.split("\\s+").filter(_.nonEmpty)
