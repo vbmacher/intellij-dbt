@@ -81,6 +81,43 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue(DbtImpact.validationCommand(both, result.copy(affected = result.affected :+ (foreign -> Vector.empty))).isLeft)
   }
 
+  def testAirflowResolvesOnlyTheDeclaredProjectTreeAndEncodesExactTaskLinks(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
+    add("dbt_packages/pkg/models/orders.sql", "select 2")
+    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
+    add("other/models/orders.sql", "select 3")
+    val mapping = add(".dbt-airflow.yml", """airflow_url: https://airflow.test/base/
+tasks:
+- {dag: 'finance /daily', task: 'build & report', project: pkg, select: orders}
+- {dag: wrong_tree, task: build, project: other, select: orders}
+""")
+    add("other/.dbt-airflow.yml", "tasks: [{dag: independent, task: build, project: other, select: orders}]\n")
+    add("dags/side_effect.py", "from pathlib import Path\nPath('dag-was-executed').write_text('unexpected')\nraise RuntimeError('never import DAG code')\n")
+    val tasks = DbtAirflow.tasks(workspace)
+    val packageTask = tasks.find(_.task == "build & report").get
+    assertEquals(Vector("model.pkg.orders"), packageTask.resources.map(_.uniqueId))
+    assertEquals(mapping.getVirtualFile.getPath, packageTask.evidence)
+    assertEquals(mapping.getText.indexOf("{dag:"), packageTask.offset)
+    assertEquals(Some("https://airflow.test/base/dags/finance%20%2Fdaily/grid?task_id=build%20%26%20report"), packageTask.url)
+    val wrong = tasks.find(_.dag == "wrong_tree").get
+    assertTrue(wrong.resources.isEmpty); assertTrue(wrong.problems.exists(_.contains("Project")))
+    assertEquals(Vector("model.other.orders"), tasks.find(_.dag == "independent").get.resources.map(_.uniqueId))
+    assertTrue(root.directory.findChild("dag-was-executed") == null)
+  }
+
+  def testAirflowRejectsAmbiguousProjectsAndCredentialBearingUrls(): Unit = {
+    project()
+    add("dbt_packages/duplicate/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
+    add(".dbt-airflow.yml", "airflow_url: https://user:secret@airflow.test\ntasks: [{dag: daily, task: build, project: analytics, select: '*'}]\n")
+    val task = DbtAirflow.tasks(workspace).head
+    assertTrue(task.resources.isEmpty); assertTrue(task.problems.exists(_.contains("ambiguous")))
+    assertTrue(task.url.isEmpty)
+    assertTrue(DbtAirflow.safeUrl("file:///etc/passwd").isEmpty)
+    assertTrue(DbtAirflow.safeUrl("javascript:alert(1)").isEmpty)
+  }
+
   def testMetabasePhysicalCollisionsAndStaleMetadataNeverBecomeDirectLineage(): Unit = {
     project()
     val declaration = "sources: [{name: raw, database: warehouse, schema: landing, tables: [{name: orders, identifier: physical_orders, columns: [{name: amount}]}]}]\n"
