@@ -9,6 +9,25 @@ import org.junit.Assert._
 
 /** Exercise the registered Safe Delete action rather than supplying synthetic targets to its processor. */
 final class DbtSafeDeleteActionTest extends DbtCodeInsightTestCase {
+  def testNativeEditorActionDeletesUnusedCteAndOneUndoRestoresIt(): Unit = {
+    project()
+    val before = "with unused as (select 1 as id), kept as (select 2 as id) select id from kept"
+    configure("models/orders.sql", before.replace("unused", "un<caret>used"))
+    myFixture.performEditorAction("SafeDelete")
+    assertEquals("with kept as (select 2 as id) select id from kept", myFixture.getFile.getText.replaceAll("\\s+", " "))
+    myFixture.performEditorAction(com.intellij.openapi.actionSystem.IdeActions.ACTION_UNDO)
+    PsiDocumentManager.getInstance(getProject).commitAllDocuments()
+    assertEquals(before, myFixture.getFile.getText)
+  }
+
+  def testNativeEditorActionReportsUsedCteAndPreservesSource(): Unit = {
+    project()
+    val before = "with used as (select 1 as id) select id from used"
+    configure("models/orders.sql", before.replaceFirst("used", "us<caret>ed"))
+    assertThrows(classOf[BaseRefactoringProcessor.ConflictsInTestsException], () => myFixture.performEditorAction("SafeDelete"))
+    assertEquals(before, myFixture.getFile.getText)
+  }
+
   def testNativeProjectFileActionMapsModelIdentityAndBlocksResolvingConsumers(): Unit = {
     project()
     val source = add("models/orders.sql", "select 1 as id")
