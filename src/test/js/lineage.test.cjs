@@ -228,6 +228,49 @@ test('test-only failure counts are visible and remain accurate across theme and 
  await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
 });
 
+test('Airflow task badges distinguish declared associations from dynamic project context',async()=>{
+ const tasks=[{id:'mapping:3|finance|build|analytics',dag:'finance',task:'build',project:'analytics',projectRoot:'/project',selected:true,status:'Declared selection',selection:'fqn:analytics.orders.v2',exclude:'',path:'/project/.dbt-airflow.yml',line:3,url:'https://airflow.test/dags/finance/grid?task_id=build',ingestion:['landing.load'],problems:[]},
+ {id:'mapping:4|dynamic|runtime|analytics',dag:'dynamic <script>bad()</script>',task:'runtime',project:'analytics',projectRoot:'/project',selected:false,status:'Unresolved selection — association unknown',selection:'{{ params.select }}',exclude:'',path:'/project/.dbt-airflow.yml',line:4,ingestion:[],problems:['Dynamic/runtime selection is unresolved.']}];
+ await page.evaluate(p=>dbtUpdate(p),fixture);
+ await page.evaluate(d=>dbtShowDoc('model',d),{...doc,airflow:{tasks,selectedCount:1,unresolvedCount:1,truncated:false}});
+ const badge=page.getByRole('button',{name:'Airflow finance / build',exact:true});
+ assert.equal(await badge.count(),1);
+ assert.equal(await page.getByRole('button',{name:'Airflow selection unknown (1)',exact:true}).count(),1);
+ await badge.focus();await page.keyboard.press('Enter');
+ assert.equal(await page.getByRole('button',{name:'Metadata',exact:true}).getAttribute('class'),'active');
+ assert.match(await page.locator('#doc-content').innerText(),/Project: analytics \(\/project\)/);
+ assert.match(await page.locator('#doc-content').innerText(),/Unresolved selection — association unknown/);
+ assert.match(await page.locator('#doc-content').innerText(),/Mapping: \/project\/\.dbt-airflow.yml:3/);
+ assert.match(await page.locator('#doc-content').innerText(),/Declared upstream ingestion: landing.load/);
+ assert.equal(await page.locator('#doc-content script').count(),0);
+ await page.getByRole('button',{name:'Open mapping definition for finance / build',exact:true}).click();
+ let message=await page.evaluate(()=>events.filter(e=>e.type==='airflow').at(-1));
+ assert.equal(message.id,'model');assert.deepEqual(JSON.parse(message.value),{mapping:tasks[0].id,target:'definition'});
+ await page.getByRole('button',{name:'Open Airflow task for finance / build',exact:true}).click();
+ message=await page.evaluate(()=>events.filter(e=>e.type==='airflow').at(-1));
+ assert.deepEqual(JSON.parse(message.value),{mapping:tasks[0].id,target:'browser'});
+ assert.equal(await page.getByRole('button',{name:'Open Airflow task for '+tasks[1].dag+' / runtime',exact:true}).isDisabled(),true);
+ await page.evaluate(d=>dbtShowDoc('model',d),{...doc,airflow:{tasks:[],selectedCount:0,unresolvedCount:0,truncated:false}});
+ assert.equal(await page.locator('.airflow-badge').count(),0);
+ assert.match(await page.locator('#doc-content').innerText(),/No declared Airflow tasks select this resource/);
+ await page.evaluate(()=>select('other',false));
+ await page.evaluate(d=>dbtShowDoc('model',d),{...doc,airflow:{tasks,selectedCount:1,unresolvedCount:1}});
+ assert.equal(await page.locator('.airflow-badge').count(),0);
+ await page.evaluate(()=>select('model',false));await page.evaluate(d=>dbtShowDoc('model',d),doc);
+ await page.getByRole('button',{name:'Columns',exact:true}).click();
+ assert.deepEqual(errors,[]);
+});
+
+test('Airflow badges and detail entries stay bounded and report hidden mappings',async()=>{
+ const tasks=Array.from({length:50},(_,i)=>({id:'mapping:'+i,dag:'daily',task:'build_'+i,project:'analytics',projectRoot:'/project',selected:true,status:'Declared selection',selection:'orders',path:'/project/.dbt-airflow.yml',line:i+2,ingestion:[],problems:[]}));
+ await page.evaluate(d=>dbtShowDoc('model',d),{...doc,airflow:{tasks,selectedCount:52,unresolvedCount:0,truncated:true}});
+ assert.equal(await page.locator('.airflow-badge').count(),4);
+ await page.getByRole('button',{name:'49 more Airflow tasks',exact:true}).click();
+ assert.equal(await page.locator('.airflow-task').count(),50);
+ assert.match(await page.locator('#doc-content').innerText(),/Showing the first 50 task mappings/);
+ await page.evaluate(d=>dbtShowDoc('model',d),doc);await page.getByRole('button',{name:'Columns',exact:true}).click();
+});
+
 test('Runner selection explicitly updates Lineage fields while stale local replies are rejected',async()=>{
  await page.evaluate(p=>dbtUpdate(p),fixture);
  await page.locator('#selector').fill('old');await page.locator('#exclude').fill('tag:old');

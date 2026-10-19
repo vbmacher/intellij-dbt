@@ -66,8 +66,32 @@ final class DbtImpactAction extends AnAction {
     val consumers = DbtConsumers.exposures(w).filter(c => result.affected.exists(a => DbtImpact.key(w, a._1) == c.resource)) ++
       project.getService(classOf[DbtConsumers]).snapshot.consumers.filter(c => result.affected.exists(a => DbtImpact.key(w, a._1) == c.resource))
     tabs.addTab("Consumers", new JScrollPane(new JList[String](consumers.map(c => c.name + " · " + c.kind + " · " + c.confidence + " · " + c.evidence).toArray)))
-    val tasks = DbtAirflow.tasks(w).filter(t => t.resources.exists(s => result.affected.exists(a => DbtImpact.key(w, a._1) == DbtImpact.key(w, s))) || t.problems.nonEmpty)
-    tabs.addTab("Airflow", new JScrollPane(new JList[String](tasks.map(t => t.dag + "/" + t.task + " · " + t.selection + " · " + t.problems.mkString("; ")).toArray)))
+    val tasks = result.affected.flatMap(a => DbtAirflow.context(w, a._1)).distinctBy(_.id)
+    val airflow = new JPanel(new BorderLayout(6, 6))
+    val airflowList = new JList[String](tasks.map(t => t.dag + "/" + t.task + " · " + t.project + " · " +
+      (if (t.resources.isEmpty) "Unresolved selection — association unknown" else "Declared selection: " + t.selection) +
+      " · " + t.problems.mkString("; ") + " · " + t.evidence).toArray)
+    airflow.add(new JScrollPane(airflowList), BorderLayout.CENTER)
+    val airflowButtons = new JPanel(new FlowLayout(FlowLayout.LEFT))
+    def navigateAirflow(target: String): Unit = Option(airflowList.getSelectedIndex).filter(i => i >= 0 && i < tasks.size).foreach { i =>
+      val destination = DbtImpactUi.read {
+        val current = DbtWorkspace.get(project)
+        result.affected.iterator.map(_._1).find(s => DbtAirflow.context(current, s).exists(_.id == tasks(i).id))
+          .map(s => DbtAirflow.navigation(current, s, tasks(i).id, target))
+          .getOrElse(Left("Airflow mapping changed or no longer applies. Run Change Impact again."))
+      }
+      destination match {
+        case Right(value) => value.url match {
+          case Some(url) => BrowserUtil.browse(url)
+          case None => DbtImpactUi.open(project, value.path, value.offset)
+        }
+        case Left(error) => Messages.showInfoMessage(project, error, "Airflow context")
+      }
+    }
+    airflowButtons.add(DbtImpactUi.button("Open mapping definition") { navigateAirflow("definition") })
+    airflowButtons.add(DbtImpactUi.button("Open Airflow task") { navigateAirflow("browser") })
+    airflow.add(airflowButtons, BorderLayout.SOUTH)
+    tabs.addTab("Airflow", airflow)
     val notes = new JTextArea((result.problems ++ Vector("Suggested dbt build --select " + result.selection,
       "Attached data/unit tests are selected by dbt build. Review target/profiles in Runner settings.")).mkString("\n"))
     notes.setEditable(false); notes.setLineWrap(true); notes.setWrapStyleWord(true)

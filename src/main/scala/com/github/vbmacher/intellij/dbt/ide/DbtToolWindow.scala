@@ -773,6 +773,26 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
           saveSelection()
         }
         showSelectionInLineage(id, field("value"), fromRunner = false)
+      case "airflow" =>
+        val request = Try(JsonParser.parseString(field("value").take(8000)).getAsJsonObject).toOption
+        val mapping = request.flatMap(o => Option(o.get("mapping"))).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
+        val destination = request.flatMap(o => Option(o.get("target"))).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
+        ReadAction.nonBlocking(new Callable[Either[String, DbtAirflowDestination]] {
+          override def call(): Either[String, DbtAirflowDestination] = {
+            val w = DbtWorkspace.get(project)
+            DbtGraphData.build(w, None, 1, 1, exposures = true).targets.get(id)
+              .toRight("This Lineage resource is no longer available. Refresh Lineage.")
+              .flatMap(resource => DbtAirflow.navigation(w, resource.symbol, mapping, destination))
+          }
+        }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.defaultModalityState(),
+          (result: Either[String, DbtAirflowDestination]) => result match {
+            case Right(target) => target.url match {
+              case Some(url) => com.intellij.ide.BrowserUtil.browse(url)
+              case None => Option(com.intellij.openapi.vfs.LocalFileSystem.getInstance.findFileByPath(target.path)).foreach(file =>
+                new com.intellij.openapi.fileEditor.OpenFileDescriptor(project, file, target.offset).navigate(true))
+            }
+            case Left(message) => DbtTextDialog.show("Airflow context", message)
+          }).submit(AppExecutorUtil.getAppExecutorService)
       case "export" => DbtGraphExport.show(project, id, field("value"))
       case "execution" =>
         val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")

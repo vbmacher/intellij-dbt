@@ -225,6 +225,21 @@ columns or create explicit version overrides before changing those columns here.
 If project source or execution settings change while the dialog is open, reopen it
 before applying.
 
+### Airflow task context
+
+A resource with a matching local Airflow mapping shows an **Airflow DAG / task**
+badge in its documentation header. Click it to open **Metadata** and see the owning
+project, selection, exclusions, declared upstream ingestion, and mapping evidence.
+**Open mapping definition** opens the exact entry; **Open Airflow task** opens its
+configured browser URL and is disabled when no URL is available.
+
+**Airflow selection unknown** identifies mappings whose dynamic selection cannot
+be resolved locally. These entries are separate from confirmed matches and do not
+prove that a task runs the selected resource. Context is limited to the selected
+resource's execution project, package, and version. Long task lists are truncated
+with an explicit count. Configure mappings in
+[Airflow configuration](configuration.md#airflow-task-mappings).
+
 ### Build and freshness badges
 
 Cards can show build results, failing-test counts, and source freshness. Badge
