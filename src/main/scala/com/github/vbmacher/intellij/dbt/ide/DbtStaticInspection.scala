@@ -7,6 +7,15 @@ import com.intellij.codeInspection.{LocalInspectionTool, ProblemsHolder}
 import com.intellij.psi.{PsiElementVisitor, PsiFile}
 
 final class DbtStaticInspection extends LocalInspectionTool {
+  private def acceptsUnknownKeywords(macroSymbol: DbtSymbol): Boolean = {
+    val blocks = DbtSyntax.inFile(macroSymbol.file)
+    blocks.find(b => b.isTag("macro") && b.range.contains(macroSymbol.range)).exists { declaration =>
+      val end = blocks.find(b => b.isTag("endmacro") && b.range.getStartOffset > declaration.range.getStartOffset)
+        .map(_.range.getStartOffset).getOrElse(declaration.range.getEndOffset)
+      blocks.filter(b => b.range.getStartOffset >= declaration.range.getEndOffset && b.range.getStartOffset < end)
+        .exists(_.tokens.exists(t => !t.string && t.image == "kwargs"))
+    }
+  }
   override def buildVisitor(holder: ProblemsHolder, onTheFly: Boolean): PsiElementVisitor = new PsiElementVisitor {
     override def visitFile(file: PsiFile): Unit = {
       val w = DbtWorkspace.get(file.getProject)
@@ -15,7 +24,9 @@ final class DbtStaticInspection extends LocalInspectionTool {
           val macros = w.macros(call, root)
           if (macros.size == 1 && call.arguments.forall(a => !a.tokens.exists(t => Set("*", "**")(t.image)))) {
             val parameters = DbtCompletion.parameters(w, macros.head).map(_._1)
-            if (parameters.nonEmpty && !macros.head.file.getText.contains("kwargs")) call.arguments.foreach { arg =>
+            val knownSignature = parameters.nonEmpty || DbtSyntax.inFile(macros.head.file)
+              .exists(b => b.isTag("macro") && b.range.contains(macros.head.range))
+            if (knownSignature && !acceptsUnknownKeywords(macros.head)) call.arguments.foreach { arg =>
               for (name <- arg.keyword if !parameters.contains(name); range <- arg.keywordRange)
                 holder.registerProblem(file, "Unknown macro argument '" + name + "'; expected " + parameters.mkString(", "),
                   com.intellij.codeInspection.ProblemHighlightType.GENERIC_ERROR_OR_WARNING, range)

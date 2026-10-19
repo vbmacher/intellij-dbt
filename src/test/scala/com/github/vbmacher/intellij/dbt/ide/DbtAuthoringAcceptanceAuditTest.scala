@@ -107,5 +107,16 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     assertTrue("Cancellation must not poison future completion", DbtCompletion.suggestions(file, myFixture.getCaretOffset).exists(_.text == "orders_1"))
   }
 
-
+  def testUnrelatedKwargsAndCommentsDoNotHideStrictMacroWarnings(): Unit = {
+    project()
+    add("macros/helpers.sql", "{# kwargs in another macro must not disable checks here #}\n" +
+      "{% macro strict(amount, scale=2) %}{{ amount }}{% endmacro %}\n" +
+      "{% macro zero() %}1{% endmacro %}\n" +
+      "{% macro permissive(amount) %}{{ kwargs.get('extra', 0) }}{% endmacro %}\n")
+    val file = configure("models/report.sql", "select {{ strict(1, typo=2) }} as strict_result, {{ zero(typo2=2) }} as zero_result, {{ permissive(1, extra=2) }} as flexible_result<caret>")
+    myFixture.enableInspections(new DbtStaticInspection)
+    val diagnostics = myFixture.doHighlighting().asScala.filter(h => Option(h.getDescription).exists(_.startsWith("Unknown macro argument")))
+    assertEquals(Vector("typo", "typo2"), diagnostics.map(h => file.getText.substring(h.getStartOffset, h.getEndOffset)).toVector)
+    assertTrue(diagnostics.forall(_.getSeverity == com.intellij.lang.annotation.HighlightSeverity.WARNING))
+  }
 }
