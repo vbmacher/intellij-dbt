@@ -57,7 +57,8 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   /** The identity of the resource in dbt artifacts. */
   def uniqueId: String = attributes.getOrElse("unique_id", {
     val resource = if (kind == "source_table") "source" else kind
-    s"$resource.$namespace.$relationName${version.map(".v" + _).getOrElse("")}"
+    val qualified = if (kind == "unit_test") mapping.flatMap(DbtYaml.string(_, "model")).map(_ + "." + name).getOrElse(relationName) else relationName
+    s"$resource.$namespace.$qualified${version.map(".v" + _).getOrElse("")}"
   })
 
   /** The owner name of this relation's columns. */

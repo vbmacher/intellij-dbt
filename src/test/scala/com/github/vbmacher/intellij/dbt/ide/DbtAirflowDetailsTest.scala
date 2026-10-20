@@ -29,6 +29,21 @@ final class DbtAirflowDetailsTest extends DbtCodeInsightTestCase {
     DbtProjectSettings.get(getProject).changed()
   }
 
+  def testRelatedSymbolUsesEditorContextWithoutAResolvedPsiElement(): Unit = {
+    val config = project()
+    val model = configure("models/orders.sql", "select 1<caret>")
+    add("dags/daily.py", "Cfg(dag_id='finance', task_id='build', dbt_selector='orders')")
+    enable(config.getVirtualFile.getParent.findChild("dags").getPath)
+    settings.airflowUrl = "https://airflow.test/"
+    val context = com.intellij.openapi.actionSystem.impl.SimpleDataContext.builder()
+      .add(com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT, getProject)
+      .add(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE, model)
+      .add(com.intellij.openapi.actionSystem.CommonDataKeys.EDITOR, myFixture.getEditor).build()
+    val items = new DbtAirflowRelatedProvider().getItems(context).asScala
+    assertEquals(Set("finance / build", "Open finance / build"), items.map(_.getCustomName).toSet)
+    assertTrue(items.exists(i => Option(i.getElement).exists(_.getContainingFile.getName == "daily.py")))
+  }
+
   def testAutomaticSelectionsKeepVersionsPackagesAndIndependentRootsSeparate(): Unit = {
     val config = project()
     add("models/orders_v1.sql", "select 1 as id")

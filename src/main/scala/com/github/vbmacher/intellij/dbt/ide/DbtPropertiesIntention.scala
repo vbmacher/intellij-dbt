@@ -19,7 +19,7 @@ abstract class DbtPropertiesIntention(inherit: Boolean) extends IntentionAction 
     resource(project, editor, file).exists { case (w, symbol) =>
       if (inherit) com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage.inherited(w, symbol).nonEmpty
       else {
-        val names = w.columns(symbol).filterNot(_.metadata).map(_.name).toSet
+        val names = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).map(_.name).toSet
         DbtResourceData.get(w, symbol).columns.exists(c => !names(c.name))
       }
     }

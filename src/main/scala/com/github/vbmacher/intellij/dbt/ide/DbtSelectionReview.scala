@@ -1,13 +1,29 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.lineage.DbtSelection
-import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtSymbol, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.JsonParser
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.{PsiFile, PsiManager}
 import scala.util.Try
+
+private[ide] final case class DbtCliResource(id: String, selector: String, file: PsiFile, range: TextRange, symbol: Option[DbtSymbol])
 
 /** Immutable selection data: resolving and completing a selector never launches dbt. */
 private[ide] object DbtSelectionReview {
+  /** Use the same exact test identities and declaration positions as the native test runner. */
+  def knownCliResources(w: DbtWorkspace, root: DbtRoot): Vector[DbtCliResource] = {
+    val resources = DbtSelection.resolve(w, root, "").resources.map(s =>
+      DbtCliResource(s.uniqueId, DbtSelection.selector(w, s), s.file, s.range, Some(s)))
+    val tests = DbtTestDiscovery.discover(w, Map(root.directory.getPath -> root.runOptions))
+      .filter(t => t.root == root.directory.getPath && t.selector.nonEmpty).flatMap { t =>
+        Option(PsiManager.getInstance(w.project).findFile(t.file)).map(f =>
+          DbtCliResource(t.id, t.selector, f, new TextRange(t.offset, t.offset), None))
+      }
+    (tests ++ resources).distinctBy(_.id)
+  }
+
   def expression(w: DbtWorkspace, root: DbtRoot, selected: Option[DbtRunSelection]): String =
     Option(root.runOptions.selection.trim).filter(_.nonEmpty).getOrElse(selected
       .filter(s => s.path.nonEmpty && s.path != root.directory.getPath)

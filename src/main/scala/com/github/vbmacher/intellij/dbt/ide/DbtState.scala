@@ -158,16 +158,17 @@ private[ide] object DbtState {
           val changed = scala.collection.mutable.ArrayBuffer.empty[String]
           val unknown = scala.collection.mutable.ArrayBuffer.empty[String]
           if (symbol.isCode) {
-            val oldCode = str(previous, "raw_code").orElse(str(previous, "raw_sql"))
+            val oldCode = str(previous, "raw_code").orElse(str(previous, "raw_sql")).filter(_.nonEmpty)
             if (oldCode.isEmpty) unknown += "Baseline source code unavailable"
-            else if (oldCode.exists(_ != symbol.file.getText)) changed += "Source SQL/code changed"
+            else if (oldCode.exists(_.trim != symbol.file.getText.trim)) changed += "Source SQL/code changed"
           }
           val config = sourceConfig(w, symbol)
           obj(previous, "unrendered_config").orElse(obj(previous, "config")) match {
             case None => unknown += "Baseline resolved config unavailable"
             case Some(oldConfig) =>
               (ConfigKeys.map(configKey) ++ config.keySet).toVector.sorted.foreach { key =>
-                val before = Option(oldConfig.get(key))
+                val before = Option(oldConfig.get(key)).orElse(
+                  if (symbol.kind == "source_table" && Set("database", "schema")(key)) Option(previous.get("unrendered_" + key)) else None)
                 val after = config.get(key)
                 after match {
                   case Some(source) if normalized(source).contains("{{") || normalized(source).contains("{%") => unknown += s"Dynamic config: $key"
@@ -192,7 +193,7 @@ private[ide] object DbtState {
           obj(previous, "columns") match {
             case None => unknown += "Baseline column declarations unavailable"
             case Some(columns) =>
-              val declared = w.columns(symbol).filterNot(_.metadata).distinctBy(_.name)
+              val declared = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).distinctBy(_.name)
               val names = declared.map(_.name).toSet
               if (columns.keySet().asScala.toSet != names) changed += "Column declarations changed"
               declared.foreach { column => obj(columns, column.name).foreach { oldColumn =>

@@ -151,7 +151,7 @@ private[dbt] object DbtWorkspace {
 
   /** Nearest project configuration, without parsing the file or scanning all workspace resources. */
   def rootForFile(project: Project, file: VirtualFile): Option[DbtRoot] =
-    if (project.isDisposed || !file.isValid) None
+    if (file == null || project.isDisposed || !file.isValid) None
     else Iterator.iterate(file.getParent)(_.getParent).takeWhile(directory => directory != null && directory.isValid)
       .flatMap(directory => loadRoot(project, directory)).nextOption()
 
@@ -169,7 +169,7 @@ private[dbt] object DbtWorkspace {
     def enclosingRoot(directory: VirtualFile): Option[DbtRoot] = if (directory == null) None
       else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
     // Installed packages are excluded from their owner's resources, but they are projects of their own.
-    def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", "target", "logs").contains(file.getName) &&
+    def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", ".venv", "venv", "target", "logs").contains(file.getName) &&
       enclosingRoot(file.getParent).forall(r => !r.excluded(file) || r.relative(file).exists(r.pathContains(r.packagePath, _)))
     val configs = mutable.ArrayBuffer.empty[VirtualFile]
     bases.foreach(b => VfsUtilCore.iterateChildrenRecursively(b, discoverable(_), f => {

@@ -7,6 +7,30 @@ final class DbtSelectionReviewCliTest extends DbtCodeInsightTestCase {
   private def workspace = DbtWorkspace.get(getProject)
   private def root = workspace.roots.find(_.name == "analytics").get
 
+  def testCliSelectionKeepsExactGenericAndUnitTestIdentitiesAndSourceLocations(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    val yaml = add("models/schema.yml", """models:
+- name: orders
+  columns: [{name: id, data_tests: [unique]}]
+unit_tests:
+- name: input_is_valid
+  model: orders
+""")
+    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
+      "test.analytics.unique_orders_id.abc":{"unique_id":"test.analytics.unique_orders_id.abc","resource_type":"test","name":"unique_orders_id","package_name":"analytics","original_file_path":"models/schema.yml","column_name":"id","fqn":["analytics","unique_orders_id"],"test_metadata":{"name":"unique"},"config":{},"depends_on":{"nodes":["model.analytics.orders"]}}},"unit_tests":{}}
+""")
+    val w = workspace
+    val ids = Vector("test.analytics.unique_orders_id.abc", "unit_test.analytics.orders.input_is_valid")
+    val known = DbtSelectionReview.knownCliResources(w, root).filter(r => ids.contains(r.id))
+    assertEquals(ids.toSet, known.map(_.id).toSet)
+    assertTrue(known.forall(_.file == yaml))
+    assertEquals(yaml.getText.indexOf("unique"), known.find(_.id == ids.head).get.range.getStartOffset)
+    val command = DbtCommand.selection(w, root, "Test", fullRefresh = false, cliIds = Some(ids)).toOption.get
+    assertEquals(DbtCommandScope.Selected(known.map(_.selector).distinct), command.request.scope)
+    assertTrue(DbtCommand.selection(w, root, "Test", fullRefresh = false, cliIds = Some(ids :+ "test.analytics.missing.hash")).isLeft)
+  }
+
   def testNamedExclusionsRetainPackageVersionAndIndependentRootIdentity(): Unit = {
     project()
     add("models/orders_v1.sql", "select 1")

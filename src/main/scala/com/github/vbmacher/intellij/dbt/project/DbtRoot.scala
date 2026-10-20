@@ -131,7 +131,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     if (artifactDirectory.startsWith(base) && artifactDirectory != base) Vector(base.relativize(artifactDirectory).toString.replace('\\', '/'))
     else Vector.empty
   }
-  val exclusions: Vector[String] = Vector(".git", ".idea", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
+  val exclusions: Vector[String] = Vector(".git", ".idea", ".venv", "venv", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
 
   def relative(file: VirtualFile): Option[String] = Option(VfsUtilCore.getRelativePath(file, directory, '/'))
 

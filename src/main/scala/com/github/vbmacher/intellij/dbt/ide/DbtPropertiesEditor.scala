@@ -133,7 +133,10 @@ private[ide] object DbtPropertiesEditor {
               case None => ()
             }
           }
-          val values = missing.map(column => s"{name: ${quoted(column.name)}, data_type: ${quoted(column.dataType)}, description: ${quoted(column.description)}}")
+          val values = missing.map { column =>
+            val dataType = if (column.dataType.nonEmpty) s", data_type: ${quoted(column.dataType)}" else ""
+            s"{name: ${quoted(column.name)}$dataType, description: ${quoted(column.description)}}"
+          }
           val after = if (values.isEmpty) copy.getText else DbtYaml.value(mapping, "columns") match {
             case Some(sequence: YAMLSequence) =>
               val flow = sequence.getText.trim.startsWith("[")
@@ -161,7 +164,7 @@ private[ide] object DbtPropertiesEditor {
   }
 
   def show(w: DbtWorkspace, resource: DbtSymbol): Unit = {
-    val properties = (if (resource.mapping.nonEmpty) Vector(resource) else w.properties(resource)).distinctBy(_.id)
+    val properties = (if (resource.kind == "source_table" || resource.isProperty) Vector(resource) else w.properties(resource)).distinctBy(_.id)
     properties match {
       case Vector(one) => one.element.navigate(true)
       case entries if entries.nonEmpty => DbtNavigationItem.popup("dbt properties", entries.map(s => DbtNavigationItem.declaration(s.element)))
@@ -170,14 +173,17 @@ private[ide] object DbtPropertiesEditor {
     }
   }
 
+  private[ide] def generatedColumns(w: DbtWorkspace, resource: DbtSymbol, inherit: Boolean): Vector[DbtColumnData] =
+    if (inherit) DbtColumnLineage.inherited(w, resource).map { case (name, text, _) => DbtColumnData(name, "", text) }
+    else editableColumns(w, resource)
+
   def generate(w: DbtWorkspace, resource: DbtSymbol, inherit: Boolean): Unit = {
     val description = (Vector(resource) ++ w.properties(resource)).flatMap(_.mapping)
       .flatMap(DbtYaml.string(_, "description")).headOption.getOrElse("")
-    val columns = editableColumns(w, resource)
-    val inherited = if (inherit) DbtColumnLineage.inherited(w, resource).map { case (name, text, _) => name -> text }.toMap else Map.empty[String, String]
-    val proposedColumns = columns.map(c => if (c.description.isEmpty) c.copy(description = inherited.getOrElse(c.name, "")) else c)
-    val prepared = com.intellij.openapi.application.WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
-      plan(w, resource, description, proposedColumns, Vector.empty, Vector.empty))
+    val proposedColumns = generatedColumns(w, resource, inherit)
+    val prepared = if (inherit && proposedColumns.isEmpty) Left("No empty descriptions have an unambiguous documented passthrough source.")
+      else com.intellij.openapi.application.WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
+        plan(w, resource, description, proposedColumns, Vector.empty, Vector.empty))
     prepared match {
       case Left(error) => com.intellij.openapi.ui.Messages.showInfoMessage(w.project, error, "Generate dbt properties")
       case Right(edit) =>

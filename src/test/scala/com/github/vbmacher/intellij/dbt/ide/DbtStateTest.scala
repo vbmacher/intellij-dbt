@@ -80,6 +80,17 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
     assertTrue(DbtState.compare(workspace, root).toOption.get.isEmpty)
   }
 
+  def testDbtWhitespaceProjectionAndUnitTestIdentitiesDoNotCreateFalseChanges(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as amount\n")
+    add("models/schema.yml", "unit_tests: [{name: valid_input, model: orders}]\nsources: [{name: raw, schema: analytics, tables: [{name: orders}]}]\n")
+    baseline(manifest("""{"model.analytics.orders":{"raw_code":"select 1 as amount","config":{},"columns":{}}}""",
+      """, "unit_tests":{"unit_test.analytics.orders.valid_input":{"unique_id":"unit_test.analytics.orders.valid_input","resource_type":"unit_test","name":"valid_input","package_name":"analytics","config":{},"columns":{}}}, "sources":{"source.analytics.raw.orders":{"config":{},"unrendered_schema":"analytics","columns":{}}}"""))
+    val w = workspace
+    assertEquals("unit_test.analytics.orders.valid_input", w.symbols.find(_.kind == "unit_test").get.uniqueId)
+    assertTrue(DbtState.compare(w, root).toOption.get.isEmpty)
+  }
+
   def testSourcePropertiesDescriptionSurvivesCodeSymbolWithoutCopiedAttributes(): Unit = {
     project()
     add("models/orders.sql", "select 1")

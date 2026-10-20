@@ -117,7 +117,9 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
           case Right((command, definitions)) => session.start(command, definitions)
           case Left(problem) => session.fail(problem)
         })
-        new DefaultExecutionResult(session.view, session.process)
+        val result = new DefaultExecutionResult(session.view, session.process)
+        result.setRestartActions(session.properties.createRerunFailedTestsAction(session.view))
+        result
       } else {
         val session = new DbtCommandConsole(DbtRunConfiguration.this)
         prepareAsync(session)(result => result match {
@@ -222,6 +224,16 @@ private[ide] object DbtRunConfiguration {
     RunManager.getInstance(project).setTemporaryConfiguration(settings)
     RunManager.getInstance(project).setSelectedConfiguration(settings)
     ProgramRunnerUtil.executeConfiguration(settings, DefaultRunExecutor.getRunExecutorInstance)
+  }
+
+  /** Selection review must complete while its modal configuration editor is open. */
+  private[ide] def resolveSelection(project: Project, configuration: DbtRunConfiguration): Unit = {
+    val executor = DefaultRunExecutor.getRunExecutorInstance
+    val environment = com.intellij.execution.runners.ExecutionEnvironmentBuilder.create(executor, configuration).build()
+    environment.assignNewExecutionId()
+    val result = configuration.getState(executor, environment).execute(executor, environment.getRunner)
+    new com.intellij.execution.runners.RunContentBuilder(result, environment).showRunContent(null)
+    ()
   }
 
   def launch(project: Project, command: DbtCommand): Unit = {
@@ -357,10 +369,7 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
         val now = ReadAction.computeBlocking[Vector[String], RuntimeException](() => current.sourceKey(DbtWorkspace.get(project)))
         if (!com.intellij.openapi.util.Disposer.isDisposed(DbtRunEditor.this) && key == now) resolved = Some(key -> ids)
       })
-      val manager = RunManager.getInstance(project)
-      val selected = manager.getSelectedConfiguration
-      DbtRunConfiguration.launchConfiguration(project, resolving)
-      if (selected != null) manager.setSelectedConfiguration(selected)
+      DbtRunConfiguration.resolveSelection(project, resolving)
     })
     val compare = new javax.swing.JButton("Compare baseline")
     compare.addActionListener(_ => DbtStateComparison.show(draft()))

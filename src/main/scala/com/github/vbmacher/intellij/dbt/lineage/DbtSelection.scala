@@ -18,6 +18,8 @@ private[dbt] object DbtSelection {
     resource.kind match {
       case "source_table" => "source:" + resource.namespace + "." + resource.owner + "." + resource.name
       case "exposure" => "exposure:" + resource.namespace + "." + resource.name
+      case "unit_test" => "fqn:" + (Vector(resource.namespace) ++ folders ++
+        resource.mapping.flatMap(DbtYaml.string(_, "model")).toVector ++ Vector(resource.name)).mkString(".")
       case _ => "fqn:" + (Vector(resource.namespace) ++ folders ++ Vector(resource.name) ++ resource.version.map("v" + _)).mkString(".")
     }
   }

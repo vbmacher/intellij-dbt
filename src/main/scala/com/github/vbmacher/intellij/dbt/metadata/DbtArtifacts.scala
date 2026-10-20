@@ -93,7 +93,7 @@ private object DbtArtifacts {
         val catalogMetadata = property(entry, "metadata").collect { case c: JsonObject => c }
         val attrs = Vector("database", "schema", "alias", "identifier", "relation_name", "original_file_path", "patch_path", "package_name", "version")
           .flatMap(k => text(entry, k).orElse(catalogMetadata.flatMap(text(_, k))).map(k -> _)).toMap ++
-          config.toVector.flatMap(_.getPropertyList.asScala).flatMap(p => Option(p.getValue).map(v => p.getName -> (v match {
+          config.toVector.flatMap(_.getPropertyList.asScala).flatMap(p => Option(p.getValue).filterNot(_.isInstanceOf[JsonNullLiteral]).map(v => p.getName -> (v match {
             case str: JsonStringLiteral => str.getValue
             case _ => v.getText
           }))) ++ property(entry, "fqn").map(v => "fqn" -> v.getText) ++

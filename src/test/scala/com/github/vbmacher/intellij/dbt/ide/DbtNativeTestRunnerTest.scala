@@ -78,6 +78,8 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     assertNotNull("The IDE's standard Run action must accept dbt tests", programRunner)
     val environment = ExecutionEnvironmentBuilder.create(executor, config).build()
     val result = config.getState(executor, environment).execute(executor, programRunner)
+    assertTrue("The native Run toolbar exposes failed-test reruns", result.asInstanceOf[com.intellij.execution.DefaultExecutionResult]
+      .getRestartActions.exists(_.isInstanceOf[com.intellij.execution.testframework.actions.AbstractRerunFailedTestsAction]))
     val view = result.getExecutionConsole.asInstanceOf[SMTRunnerConsoleView]
     Disposer.register(getTestRootDisposable, view)
     await("Standard Run profile completes") { result.getProcessHandler.isProcessTerminated && tests(view).exists(_.isPassed) }

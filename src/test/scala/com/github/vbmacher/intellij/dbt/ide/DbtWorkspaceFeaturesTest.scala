@@ -15,8 +15,23 @@ final class DbtWorkspaceFeaturesTest extends DbtCodeInsightTestCase {
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def workspace = DbtWorkspace.get(getProject)
   private def resource(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
+  def testVirtualEnvironmentsDoNotIntroduceDbtProjectsOrWorkspaceFiles(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    Vector(".venv", "venv").foreach { environment =>
+      add(s"$environment/lib/dbt/include/adapter/dbt_project.yml", "name: adapter_internal\nconfig-version: 2\n")
+      add(s"$environment/lib/dbt/include/adapter/models/internal.sql", "select 2 as id")
+      add(s"$environment/profiles.yml", "private: {}\n")
+    }
+    val w = workspace
+    assertEquals(Vector("analytics"), w.roots.map(_.name))
+    assertEquals(Vector("orders"), w.symbols.filter(_.isCode).map(_.name))
+    assertFalse(w.files.exists(f => f.getVirtualFile.getPath.contains("/venv/") || f.getVirtualFile.getPath.contains("/.venv/")))
+  }
+
   def testDeletedFilesAreIgnoredByBackgroundPresentation(): Unit = {
     project()
+    assertEquals("Native Diff PSI files may have no virtual file", None, DbtWorkspace.rootForFile(getProject, null))
     val file = add("models/removed.sql", "select 1").getVirtualFile
     assertTrue(DbtWorkspace.rootForFile(getProject, file).nonEmpty)
     com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
@@ -51,7 +66,7 @@ sources:
 """)
     add("models/report.sql", "select * from {{ ref('orders') }}")
     add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
-      "model.analytics.orders":{"unique_id":"model.analytics.orders","name":"orders","resource_type":"model","package_name":"analytics","original_file_path":"models/orders.sql","database":"warehouse","schema":"mart","alias":"physical_orders","relation_name":"\"warehouse\".\"mart\".\"physical_orders\"","config":{"materialized":"incremental"},"compiled_code":"select * from warehouse.landing.actual_events","depends_on":{"nodes":["source.analytics.raw.events"]}},
+      "model.analytics.orders":{"unique_id":"model.analytics.orders","name":"orders","resource_type":"model","package_name":"analytics","original_file_path":"models/orders.sql","database":"warehouse","schema":"mart","alias":"physical_orders","relation_name":"\"warehouse\".\"mart\".\"physical_orders\"","config":{"materialized":"incremental","database":null,"schema":null},"compiled_code":"select * from warehouse.landing.actual_events","depends_on":{"nodes":["source.analytics.raw.events"]}},
       "test.analytics.unique_orders_id":{"unique_id":"test.analytics.unique_orders_id","name":"unique_orders_id","test_metadata":{"name":"unique"},"resource_type":"test","package_name":"analytics","column_name":"id","depends_on":{"nodes":["model.analytics.orders"]}}
       },"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","name":"events","source_name":"raw","resource_type":"source","package_name":"analytics","database":"warehouse","schema":"landing","identifier":"actual_events","relation_name":"warehouse.landing.actual_events"}}}""")
   }
@@ -63,6 +78,8 @@ sources:
     assertEquals("Orders <strong> & details", data.description)
     assertEquals(Vector("finance"), data.tags)
     assertEquals("bigint", data.columns.head.dataType)
+    assertEquals("warehouse", data.attributes("database"))
+    assertEquals("mart", data.attributes("schema"))
     assertTrue(data.tests.exists(t => t.name == "unique" && t.column == "id"))
     assertEquals("A test declared in YAML and its manifest must be counted once", 2, data.tests.size)
     assertTrue(data.compiledSql.exists(_.startsWith("select")))

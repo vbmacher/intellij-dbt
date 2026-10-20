@@ -30,7 +30,7 @@ private[ide] object DbtTestDiscovery {
         val dependencies = if (s.kind == "unit_test") w.declarations(Set("model"), group.split("\\.").last, owner,
           if (group.contains(".")) group.split("\\.").headOption else None).map(_.uniqueId)
           else (DbtResourceData.get(w, s).dependencies ++ sourceDependencies.getOrElse(s.id, Vector.empty)).distinct
-        DbtTestDefinition(if (s.kind == "unit_test") "unit_test." + s.namespace + "." + group + "." + s.name else s.uniqueId, s.presentableText, if (s.kind == "unit_test") "Unit tests" else "Data tests", group,
+        DbtTestDefinition(s.uniqueId, s.presentableText, if (s.kind == "unit_test") "Unit tests" else "Data tests", group,
           root.directory.getPath, s.file.getVirtualFile, s.range.getStartOffset,
           if (s.kind == "unit_test") "fqn:" + (Vector(s.namespace) ++ owner.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2) ++ Vector(group, s.name)).mkString(".") + ",test_type:unit" else "fqn:" + fqn.mkString("."), dependencies, fixtures, packageName = owner.name, projectName = root.name, description = DbtResourceData.get(w, s).description)
       }

@@ -37,7 +37,7 @@ Navigation uses the paths in `dbt_project.yml`: `model-paths`,
 supported function/check paths. Packages use `packages-install-path` and their own
 dbt project names.
 
-Navigation excludes `.git`, `.idea`, `logs`, `target-path`, other generated output
+Navigation excludes `.git`, `.idea`, `.venv`, `venv`, `logs`, `target-path`, other generated output
 and `.dbtignore` matches, but includes installed package sources. `.dbtignore`
 supports ordered exclusions/re-inclusions, anchored paths, directories and wildcards.
 Generated paths cannot be re-included.

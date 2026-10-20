@@ -15,6 +15,16 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def w = DbtWorkspace.get(getProject)
   private def model(name: String) = w.symbols.find(s => s.kind == "model" && s.isCode && s.name == name).get
+  def testEditPropertiesNavigatesToYamlWhenSqlHasMergedPropertiesMetadata(): Unit = {
+    project()
+    val yaml = add("models/orders.yml", "models:\n  - name: orders\n    description: Orders\n")
+    configure("models/orders.sql", "<caret>select 1 as id")
+    val resource = model("orders")
+    assertTrue(resource.mapping.nonEmpty)
+    DbtPropertiesEditor.show(w, resource)
+    assertEquals(yaml.getVirtualFile, com.intellij.openapi.fileEditor.FileEditorManager.getInstance(getProject).getSelectedFiles.head)
+  }
+
   private def undo(): Unit = {
     val manager = UndoManager.getInstance(getProject)
     val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(getProject).getSelectedEditor
@@ -168,6 +178,12 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
     assertEquals("Identifier", inherited.head._2)
     assertEquals("id", inherited.head._3.name)
     assertEquals("orders", inherited.head._3.owner)
+    val generated = DbtPropertiesEditor.generatedColumns(w, model("report"), inherit = true)
+    assertEquals(Vector(DbtColumnData("inherited", "", "Identifier")), generated)
+    val plan = WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
+      DbtPropertiesEditor.plan(w, model("report"), "", generated, Vector.empty, Vector.empty)).toOption.get
+    assertFalse("Inheriting descriptions must not generate unrelated types or columns", plan.after.contains("data_type") || plan.after.contains("name: \"calculated\""))
+    assertTrue(plan.after.contains("{{ doc('keep_me') }}"))
     val review = DbtPropertiesEditor.origins(w, model("report"), "inherited")
     assertTrue(review._1, review._1.contains("Passthrough") && review._1.contains("analytics.orders.id"))
     assertEquals(inherited.head._3.id, review._2.head.id)

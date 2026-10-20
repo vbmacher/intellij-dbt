@@ -43,11 +43,11 @@ private[ide] object DbtCommand {
         .flatMap(create(w, _, action, fullRefresh = false, Some(root.runOptions)))
     val expression = DbtSelectionReview.expression(w, root, requested)
     val local = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
-    val available = cliIds.map(_ => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, "").resources)
+    val cliMatches = cliIds.map(ids => DbtSelectionReview.knownCliResources(w, root).filter(s => ids.contains(s.id)))
     val resolved = cliIds.fold(local) { ids =>
-      val resources = available.toVector.flatten.filter(s => ids.contains(s.uniqueId))
-      com.github.vbmacher.intellij.dbt.lineage.DbtSelection(resources,
-        ids.filterNot(id => resources.exists(_.uniqueId == id)).map(id => "CLI resource is unavailable locally: " + id))
+      val matches = cliMatches.toVector.flatten
+      com.github.vbmacher.intellij.dbt.lineage.DbtSelection(matches.flatMap(_.symbol),
+        ids.filterNot(id => matches.exists(_.id == id)).map(id => "CLI resource is unavailable locally: " + id))
     }
     val stateSelection = (expression + " " + options.exclude).split("[\\s,]+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
     val state = if (options.defer || options.favorState || stateSelection || options.stateDirectory.nonEmpty) DbtState.manifest(root).map(_ => ()) else Right(())
@@ -56,7 +56,7 @@ private[ide] object DbtCommand {
       _ <- Either.cond(!options.favorState || options.defer, (), "Favor state requires deferral.")
       _ <- Either.cond(!options.favorState || root.engine == "core" && root.supports(4), (), "Favor state is supported only for configured dbt Core 1.4+.")
       _ <- Either.cond(resolved.complete || stateSelection && resolved.problems.forall(_.contains("state:")), (), resolved.problems.mkString("\n"))
-      _ <- Either.cond(stateSelection || resolved.resources.nonEmpty, (), "Selection matches no resources.")
+      _ <- Either.cond(stateSelection || cliMatches.fold(resolved.resources.nonEmpty)(_.nonEmpty), (), "Selection matches no resources.")
       _ <- Either.cond(action != "Preview", (), "Use a model or CTE for Preview.")
       all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
       incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
@@ -66,7 +66,8 @@ private[ide] object DbtCommand {
     } yield {
       val scope = if (expression.isEmpty && cliIds.isEmpty) DbtCommandScope.All
       else if (stateSelection && cliIds.isEmpty) DbtCommandScope.Selected(expression.split("\\s+").filter(_.nonEmpty).toVector)
-      else DbtCommandScope.Selected(resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).distinct)
+      else DbtCommandScope.Selected(cliMatches.map(_.map(_.selector)).getOrElse(
+        resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _))).distinct)
       // Preserve explicit exclusions as well: dbt may otherwise select their tests indirectly.
       base.copy(request = base.request.copy(scope = scope, exclude = excluded))
     }
@@ -163,12 +164,13 @@ final class DbtRunner(project: Project) extends Disposable {
     listeners.add(listener)
     Disposer.register(parent, new Disposable { override def dispose(): Unit = { listeners.remove(listener); () } })
   }
-  private def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action, com.intellij.openapi.application.ModalityState.any())
   private def fire(event: DbtRunnerEvent): Unit = listeners.asScala.foreach(_(event))
 
   private[ide] def start(command: DbtCommand, outputSink: (String, com.intellij.openapi.util.Key[_]) => Unit = (_, _) => ()): Boolean = {
     if (disposed || !busy.compareAndSet(false, true)) false
     else {
+      val modality = com.intellij.openapi.application.ModalityState.defaultModalityState()
+      def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action, modality)
       cancelled.set(false)
       evidence.begin(command)
       fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = evidence.active, command = Some(command)))
