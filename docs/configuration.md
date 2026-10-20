@@ -242,7 +242,11 @@ and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2)
 
 ## Workspace execution defaults
 
-Open **Settings → dbt Workspace** and choose **Owning dbt root**. Executable,
+**Settings → dbt Workspace** has two tabs: **General** for execution, formatting
+and lineage defaults, and **Integrations** for Metabase, Airflow and the local MCP
+server. **Apply** saves changes from both tabs.
+
+Open **Settings → dbt Workspace → General** and choose **Owning dbt root**. Executable,
 profiles, target, formatter and state settings apply independently to that root.
 The settings are saved with the IDE project.
 
@@ -388,7 +392,7 @@ For reformatting, inspection and fixes, see [Editor](editor.md#sql-linting-and-f
 
 ## Metabase connection
 
-Open **Settings → dbt Integrations**:
+Open **Settings → dbt Workspace → Integrations**:
 
 | Setting | Effect |
 | --- | --- |
@@ -405,7 +409,7 @@ beyond these limits are missing.
 
 ## Airflow DAG discovery
 
-Open **Settings → dbt Integrations → Airflow — local DAG discovery**:
+Open **Settings → dbt Workspace → Integrations → Airflow — local DAG discovery**:
 
 | Setting | Effect |
 | --- | --- |
@@ -432,7 +436,7 @@ and [resource documentation](editor.md#quick-documentation) for model context.
 
 ## Local MCP server
 
-In **Settings → dbt Integrations**, select **Enable local read-only MCP server
+In **Settings → dbt Workspace → Integrations**, select **Enable local read-only MCP server
 (start explicitly from Tools)** and apply. The option is off by default; the service
 still starts only when you click **Start**. Clearing the option stops it. See
 [Connect an AI assistant](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server).

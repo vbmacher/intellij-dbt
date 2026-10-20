@@ -127,7 +127,7 @@ private[dbt] object DbtAirflow {
     context(w, resource).find(_.id == mappingId).toRight("Airflow DAG selection changed or no longer applies to this resource. Refresh its details.")
       .flatMap { task => target match {
         case "definition" => Right(DbtAirflowDestination(task.evidence, task.offset))
-        case "browser" => task.url.toRight("No Airflow URL is configured. Set it in Settings > dbt Integrations.")
+        case "browser" => task.url.toRight("No Airflow URL is configured. Set it in Settings > dbt Workspace > Integrations.")
           .map(url => DbtAirflowDestination(task.evidence, task.offset, Some(url)))
         case _ => Left("Unknown Airflow navigation action.")
       }}

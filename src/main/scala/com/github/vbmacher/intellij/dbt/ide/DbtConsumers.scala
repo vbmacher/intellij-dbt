@@ -40,7 +40,7 @@ private[dbt] final case class DbtConsumersCache(consumers: Vector[DbtConsumer], 
 /** No polling. Network access happens only on an explicit Refresh action. */
 @Service(Array(Service.Level.PROJECT))
 final class DbtConsumers(project: Project) {
-  @volatile private var cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Configure Metabase URL and API key in dbt Integrations.")
+  @volatile private var cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations.")
   def snapshot: DbtConsumersCache = cache
   private def credential: CredentialAttributes = new CredentialAttributes("dbt Workspace Metabase " + project.getLocationHash)
   private[ide] def apiKey: String = Option(PasswordSafe.getInstance().getPassword(credential)).getOrElse("")
@@ -52,7 +52,7 @@ final class DbtConsumers(project: Project) {
     val url = project.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl
     val key = Option(PasswordSafe.getInstance().getPassword(credential)).filter(_.nonEmpty)
     if (DbtAirflow.safeUrl(url).isEmpty || key.isEmpty) {
-      cache = cache.copy(status = "Disconnected. Configure Metabase URL and API key in dbt Integrations."); cache
+      cache = cache.copy(status = "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations."); cache
     } else {
       val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build()
       val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60)
@@ -198,7 +198,7 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     panel.add(field, c)
   }
   private def settings = project.getService(classOf[DbtConsumersSettings])
-  override def getDisplayName: String = "dbt Integrations"
+  override def getDisplayName: String = "Integrations"
   override def createComponent(): JComponent = { reset(); panel }
   override def isModified: Boolean = url.getText != settings.getState.metabaseUrl || agent.isSelected != settings.getState.agentEnabled || new String(secret.getPassword) != project.getService(classOf[DbtConsumers]).apiKey || airflow.isModified
   override def apply(): Unit = {

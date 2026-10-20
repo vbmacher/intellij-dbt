@@ -51,7 +51,7 @@ and screenshots.
 
 ## Reference
 
-- [Configuration](configuration.md): `.dbt-navigation.yml`, **Settings → dbt Workspace** and **Settings → dbt Integrations**.
+- [Configuration](configuration.md): `.dbt-navigation.yml`, the **General** and **Integrations** tabs in **Settings → dbt Workspace**.
 - [Environment variables](configuration.md#environment-variables): load project environment files for dbt commands and SQL formatters.
 - [Icons](icons.md): icon meanings and where they appear.
 - [Troubleshooting](troubleshooting.md): missing targets, unavailable actions and stale metadata.

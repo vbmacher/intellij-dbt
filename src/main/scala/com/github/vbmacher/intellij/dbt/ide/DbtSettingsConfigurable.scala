@@ -2,17 +2,19 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions}
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
-import com.intellij.openapi.options.{Configurable, ConfigurationException}
+import com.intellij.openapi.options.{Configurable, ConfigurationException, ShowSettingsUtil}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.ui.components.{JBCheckBox, JBTextField}
+import com.intellij.ui.components.{JBCheckBox, JBScrollPane, JBTextField}
 import com.intellij.util.ui.JBUI
 import java.awt.{Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
-import javax.swing.{JComboBox, JComponent, JLabel, JPanel, JSpinner, Scrollable, SpinnerNumberModel, SwingConstants}
+import javax.swing.{JComboBox, JComponent, JLabel, JPanel, JSpinner, JTabbedPane, Scrollable, SpinnerNumberModel, SwingConstants}
 import scala.jdk.CollectionConverters._
 
-final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin {
+final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin with Configurable.NoScroll {
   private val settings = DbtProjectSettings.get(project)
+  private val integrations = new DbtConsumersConfigurable(project)
+  private val tabs = new JTabbedPane
   private val root = new JComboBox[String]()
   private val executable = new TextFieldWithBrowseButton {
     override protected def getIconTooltip: String = "Choose a dbt executable, script, or custom tool"
@@ -59,7 +61,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       override def getScrollableBlockIncrement(visible: Rectangle, orientation: Int, direction: Int): Int =
         if (orientation == SwingConstants.VERTICAL) visible.height else visible.width
     }
-    // NoMargin keeps this Scrollable panel directly in the IDE viewport; supply the usual padding here.
+    // Each tab scrolls independently; supply the usual settings padding here.
     panel.setBorder(JBUI.Borders.empty(11, 16, 16, 16))
     executable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile()
       .withTitle("Select dbt executable")
@@ -108,8 +110,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
       fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
     })
+    tabs.addTab("General", new JBScrollPane(panel))
+    tabs.addTab("Integrations", new JBScrollPane(integrations.createComponent()))
     reset()
-    panel
+    tabs
   }
 
   private def fill(o: DbtRunOptions): Unit = {
@@ -173,10 +177,11 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     upstream.setValue(Int.box(settings.getState.upstream))
     downstream.setValue(Int.box(settings.getState.downstream))
     direction.setSelectedItem(settings.getState.direction)
+    integrations.reset()
     baseline = snapshot()
   }
 
-  override def isModified: Boolean = snapshot() != baseline
+  override def isModified: Boolean = snapshot() != baseline || integrations.isModified
 
   override def disposeUIResources(): Unit = {
     executable.dispose()
@@ -186,10 +191,12 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     stateDirectory.dispose()
     manifest.dispose()
     formatterExecutable.dispose()
+    integrations.disposeUIResources()
   }
 
   override def apply(): Unit = {
     if (executable.getText.trim.isEmpty || artifacts.getText.trim.isEmpty) throw new ConfigurationException("Executable and artifact directory must not be blank.")
+    if (integrations.isModified) integrations.apply()
     drafts += selectedRoot -> readOptions()
     settings.getState.projects = new java.util.TreeMap[String, DbtRunOptions](drafts.asJava)
     settings.getState.upstreamDepth = upstream.getValue.asInstanceOf[Number].intValue()
@@ -197,5 +204,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     settings.getState.direction = direction.getSelectedItem.toString
     settings.changed()
     baseline = snapshot()
+  }
+}
+
+object DbtSettingsConfigurable {
+  def showIntegrations(project: Project): Unit = {
+    val configurable = new DbtSettingsConfigurable(project)
+    ShowSettingsUtil.getInstance().editConfigurable(project, configurable,
+      new Runnable { override def run(): Unit = configurable.tabs.setSelectedIndex(1) })
   }
 }

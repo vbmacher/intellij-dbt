@@ -11,7 +11,7 @@ import org.junit.Assert._
 
 import java.awt.Container
 import java.nio.file.{Files, Paths}
-import javax.swing.JComboBox
+import javax.swing.{JComboBox, JScrollPane, JTabbedPane}
 
 /** Contract: features/configuration.md and external-command.md: configured environment reaches child tools. */
 final class DbtEnvironmentTest extends DbtCodeInsightTestCase {
@@ -99,7 +99,8 @@ BROKEN="unterminated
     val other = workspace.roots.find(_.name == "other").get
     assertEquals("configured", command(root).environment("ATHENA_WORK_GROUP"))
     val configurable = new DbtSettingsConfigurable(getProject)
-    val form = configurable.createComponent().asInstanceOf[Container]
+    val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
+    val form = tabs.getComponentAt(0).asInstanceOf[JScrollPane].getViewport.getView.asInstanceOf[Container]
     try {
       val roots = form.getComponents.collectFirst { case combo: JComboBox[_] => combo.asInstanceOf[JComboBox[String]] }.get
       val field = form.getComponents.collectFirst { case field: TextFieldWithBrowseButton if field.getName == "dbt.environmentFiles" => field }.get

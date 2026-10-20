@@ -235,7 +235,7 @@ final class DbtAgent(project: Project) extends Disposable {
   }
   def start(): Either[String, (String, String)] = synchronized {
     if (disposed || project.isDisposed) Left("Project is disposed.")
-    else if (!project.getService(classOf[DbtConsumersSettings]).getState.agentEnabled) Left("Enable the local MCP server in Settings > dbt Integrations first.")
+    else if (!project.getService(classOf[DbtConsumersSettings]).getState.agentEnabled) Left("Enable the local MCP server in Settings > dbt Workspace > Integrations first.")
     else endpoint match {
       case Some(value) => Right(value)
       case None => try {

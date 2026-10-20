@@ -148,7 +148,7 @@ final class DbtConsumersAction extends AnAction {
       val refresh = DbtImpactUi.button("Refresh Metabase metadata") {
         DbtImpactUi.background(project, "Refresh Metabase consumers") { service.refresh(DbtImpactUi.read { DbtWorkspace.get(project) }) }(_ => update())
       }
-      buttons.add(refresh); buttons.add(DbtImpactUi.button("Configure…") { com.intellij.openapi.options.ShowSettingsUtil.getInstance().editConfigurable(project, new DbtConsumersConfigurable(project)) })
+      buttons.add(refresh); buttons.add(DbtImpactUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) })
       panel.add(buttons, BorderLayout.SOUTH); DbtImpactUi.show(project, "dbt Consumers" + focus.map(s => ": " + s.uniqueId).getOrElse(""), panel)
     }
   }
@@ -158,7 +158,7 @@ final class DbtAirflowAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
     DbtImpactUi.background(project, "Discover local dbt Airflow context") { DbtImpactUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) } } { case (tasks, problems) =>
       val panel = DbtImpactUi.panel()
-      val status = new JTextArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
+      val status = new JTextArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Workspace > Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
       status.setEditable(false); status.setLineWrap(true); status.setWrapStyleWord(true)
       panel.add(status, BorderLayout.NORTH)
       val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
@@ -171,9 +171,9 @@ final class DbtAirflowAction extends AnAction {
       buttons.add(DbtImpactUi.button("Open DAG definition") { selected.foreach(t => DbtImpactUi.open(project, t.evidence, t.offset)) })
       buttons.add(DbtImpactUi.button("Open Airflow task") { selected match {
         case Some(t) if t.url.nonEmpty => t.url.foreach(BrowserUtil.browse)
-        case _ => Messages.showInfoMessage(project, "Set Airflow URL in Settings > dbt Integrations and choose a task.", "Airflow context")
+        case _ => Messages.showInfoMessage(project, "Set Airflow URL in Settings > dbt Workspace > Integrations and choose a task.", "Airflow context")
       } })
-      buttons.add(DbtImpactUi.button("Configure…") { com.intellij.openapi.options.ShowSettingsUtil.getInstance().editConfigurable(project, new DbtConsumersConfigurable(project)) })
+      buttons.add(DbtImpactUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) })
       panel.add(buttons, BorderLayout.SOUTH); DbtImpactUi.show(project, "dbt Airflow Context", panel)
     }
   }
@@ -187,10 +187,10 @@ final class DbtAgentAction extends AnAction {
       "Read-only MCP server is running for this IDE project.\nURL: " + url + "\nAuthorization: Bearer " + token +
         "\nTransport: Streamable HTTP · MCP versions " + DbtAgentProtocol.SupportedVersions.mkString(", ") +
         "\nToken is temporary; stop/restart rotates it. Do not publish it."
-    }.getOrElse("Local MCP server is stopped. Enable the local MCP server in Settings > dbt Integrations, then Start.\nNo AI subscription or warehouse connection is required.\nOnly read tools are exposed. See docs/integrations.md for MCP client setup."))
+    }.getOrElse("Local MCP server is stopped. Enable the local MCP server in Settings > dbt Workspace > Integrations, then Start.\nNo AI subscription or warehouse connection is required.\nOnly read tools are exposed. See docs/integrations.md for MCP client setup."))
     refresh(); panel.add(new JScrollPane(details), BorderLayout.CENTER)
     val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
-    buttons.add(DbtImpactUi.button("Configure…") { com.intellij.openapi.options.ShowSettingsUtil.getInstance().editConfigurable(project, new DbtConsumersConfigurable(project)); refresh() })
+    buttons.add(DbtImpactUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project); refresh() })
     buttons.add(DbtImpactUi.button("Start") { service.start().left.foreach(error => Messages.showInfoMessage(project, error, "dbt Local MCP Server")); refresh() })
     buttons.add(DbtImpactUi.button("Stop") { service.stop(); refresh() })
     buttons.add(DbtImpactUi.button("Copy endpoint and authorization") { service.endpoint.foreach { case (url, token) => DbtImpactUi.copy(url + "\nAuthorization: Bearer " + token) } })
