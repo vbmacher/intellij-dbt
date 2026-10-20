@@ -13,7 +13,7 @@ private[ide] object DbtCommandAction {
   case object SourceFreshness extends DbtCommandAction("Source Freshness", Vector("source", "freshness"), usesState = false, structured = true)
   case object ResolveSelection extends DbtCommandAction("Resolve Selection", Vector("ls", "--quiet", "--output", "json"), usesState = false)
 
-  val toolbar: Vector[DbtCommandAction] = Vector(Run, Build, Test, Compile, Preview, GenerateDocs, SourceFreshness)
+  lazy val toolbar: Vector[DbtCommandAction] = Vector(Run, Build, Test, Compile, Preview, GenerateDocs, SourceFreshness)
   def fromLabel(label: String): Option[DbtCommandAction] = (toolbar :+ ResolveSelection).find(_.label == label)
 }
 

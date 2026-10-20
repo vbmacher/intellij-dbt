@@ -27,6 +27,10 @@ appear in **Run**. Each invocation owns its console and result view. Successful 
 Build, Compile and Generate Docs commands reload artifacts. Completion notifications
 follow the [notification settings](configuration.md#workspace-execution-defaults).
 
+The console displays dbt log messages with timestamps and warning or error labels,
+and renders ANSI text colors. Test and Build output uses the same readable format.
+Ordinary script output and unrecognized JSON remain visible as received.
+
 ## Selection and state
 
 Use **Review selection** in the configuration editor to open locally matched

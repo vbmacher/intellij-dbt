@@ -35,7 +35,7 @@ final class DbtNativeTestRunnerTest extends DbtCodeInsightTestCase {
     Files.writeString(script, """import json,os,sys,time,datetime
 with open('invocation.json','w') as f: json.dump(sys.argv[1:],f)
 print('native raw output',flush=True)
-print(json.dumps({'info':{'invocation_id':'native-run'},'data':{'node_info':{'unique_id':'test.analytics.check_orders','node_status':'started'}}}),flush=True)
+print(json.dumps({'info':{'invocation_id':'native-run','msg':'\x1b[32mSTART check_orders\x1b[0m','level':'info','ts':'2026-10-20T12:34:56Z'},'data':{'node_info':{'unique_id':'test.analytics.check_orders','node_status':'started'}}}),flush=True)
 if '--hold' in sys.argv:
  while not os.path.exists('release'): time.sleep(.01)
 os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
@@ -118,6 +118,24 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     assertEquals(failedCommand.environment, rerun.environment)
     assertEquals(Some("empty"), rerun.request.indirectSelection)
     assertFalse(rerun.request.scope == DbtCommandScope.All)
+  }
+
+  def testBuildConsoleDisplaysReadableColoredMessagesAndRetainsNativeTestResults(): Unit = {
+    val (config, command, _) = setup()
+    config.action = "Build"
+    val console = session(config, command.copy(request = command.request.copy(action = DbtCommandAction.Build)))
+    await("Build test result completes") { console.process.isProcessTerminated && tests(console.view).exists(_.isPassed) }
+    console.view.getPrinter.updateOnTestSelected(console.view.getResultsViewer.getTestsRootNode)
+    val view = console.view.getConsole.asInstanceOf[com.intellij.execution.impl.ConsoleViewImpl]
+    await("Readable dbt output reaches the native console") {
+      view.getEditor.getDocument.getText.contains("12:34:56  START check_orders")
+    }
+    val text = view.getEditor.getDocument.getText
+    assertTrue(text.contains("native raw output"))
+    assertFalse(text.contains("invocation_id"))
+    assertFalse(text.contains("\u001b"))
+    assertFalse(text.contains("\\u001b"))
+    assertEquals("test.analytics.check_orders", tests(console.view).head.getMetainfo)
   }
 
   def testNativeResultStatesAndMissingEvidenceNeverBecomeSuccess(): Unit = {

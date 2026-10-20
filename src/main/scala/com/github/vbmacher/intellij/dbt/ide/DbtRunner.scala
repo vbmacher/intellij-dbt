@@ -3,7 +3,7 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonArray, JsonElement, JsonParser}
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.{ColoredProcessHandler, ProcessEvent, ProcessListener}
+import com.intellij.execution.process.{KillableProcessHandler, ProcessEvent, ProcessListener}
 import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -157,7 +157,7 @@ final class DbtRunner(project: Project) extends Disposable {
   private val busy = new AtomicBoolean(false)
   private val cancelled = new AtomicBoolean(false)
   @volatile private var disposed = false
-  @volatile private var handler: ColoredProcessHandler = _
+  @volatile private var handler: KillableProcessHandler = _
   private val listeners = new CopyOnWriteArrayList[DbtRunnerEvent => Unit]()
   def isRunning: Boolean = busy.get()
   def listen(parent: Disposable, listener: DbtRunnerEvent => Unit): Unit = {
@@ -183,17 +183,20 @@ final class DbtRunner(project: Project) extends Disposable {
           val started = System.nanoTime()
           val line = new GeneralCommandLine(command.arguments.asJava).withWorkDirectory(command.directory)
             .withEnvironment(command.environment.asJava).withCharset(StandardCharsets.UTF_8)
-          val process = new ColoredProcessHandler(line)
+          val process = new KillableProcessHandler(line)
+          process.setShouldKillProcessSoftly(false)
+          val display = new DbtConsoleOutput(outputSink)
           handler = process
           val output = new StringBuilder
           process.addProcessListener(new ProcessListener {
             override def onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key[_]): Unit = {
               output.synchronized { if (output.length < 10000000) output.append(event.getText) }
-              outputSink(event.getText, outputType)
+              display.textAvailable(event.getText, outputType)
               evidence.stream(event.getText)
               evidence.active.foreach(run => onUi { fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = Some(run))) })
             }
             override def processTerminated(event: ProcessEvent): Unit = {
+              display.finish()
               val wasCancelled = cancelled.get()
               val success = event.getExitCode == 0 && !wasCancelled
               val message = if (wasCancelled) s"${command.action} cancelled" else s"${command.action} finished (exit ${event.getExitCode})"
