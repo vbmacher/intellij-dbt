@@ -2,22 +2,116 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project._
-import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
+import com.github.vbmacher.intellij.dbt.syntax.{DbtSqlText, DbtSyntax, DbtYaml}
+import com.intellij.codeInsight.daemon.{DaemonCodeAnalyzer, HighlightDisplayKey}
 import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInspection.{LocalInspectionTool, SuppressionUtil}
+import com.intellij.lang.annotation.{AnnotationHolder, ExternalAnnotator, HighlightSeverity}
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.{ApplicationManager, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.{DialogWrapper, ValidationInfo}
-import com.intellij.openapi.vfs.VfsUtil
-import com.intellij.psi.{PsiDocumentManager, PsiFile}
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.vfs.{VfsUtil, VirtualFile, VirtualFileManager}
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.profile.codeInspection.InspectionProjectProfileManager
+import com.intellij.psi.{PsiDocumentManager, PsiFile, PsiManager, SmartPointerManager, SmartPsiElementPointer}
+import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.{JBLabel, JBTextArea, JBTextField}
+import com.intellij.util.Alarm
+import com.jetbrains.jsonSchema.extension.{JsonSchemaFileProvider, JsonSchemaProviderFactory, SchemaType}
+import org.jetbrains.yaml.YAMLUtil
+import org.jetbrains.yaml.psi.YAMLSequence
 import java.awt.BorderLayout
 import javax.swing.{JCheckBox, JComponent, JPanel}
-import org.jetbrains.yaml.psi.YAMLSequence
+import scala.jdk.CollectionConverters._
+
+private[ide] object DbtUnresolvedAnnotator {
+  val Extensions: Set[String] = Set("sql", "jinja", "jinja2")
+}
+
+private[ide] final case class DbtDiagnostic(range: TextRange, message: String)
+private[ide] final case class DbtAnnotationInput(pointer: SmartPsiElementPointer[PsiFile], stamp: Long)
+private[ide] final case class DbtAnnotationResult(stamp: Long, diagnostics: Vector[DbtDiagnostic])
+
+/** Workspace resolution runs in the external annotator's cancellable background phase. */
+final class DbtUnresolvedAnnotator extends ExternalAnnotator[DbtAnnotationInput, DbtAnnotationResult] {
+  override def getPairedBatchInspectionShortName: String = "DbtUnresolvedReference"
+  override def collectInformation(file: PsiFile): DbtAnnotationInput =
+    if (DbtUnresolvedAnnotator.Extensions(Option(file.getVirtualFile).flatMap(f => Option(f.getExtension)).getOrElse(""))) {
+      file.getProject.getService(classOf[DbtHighlightingRefresh])
+      DbtAnnotationInput(SmartPointerManager.getInstance(file.getProject).createSmartPsiElementPointer(file), file.getModificationStamp)
+    }
+    else null
+
+  override def doAnnotate(input: DbtAnnotationInput): DbtAnnotationResult = ReadAction.nonBlocking[DbtAnnotationResult](() => {
+    Option(input.pointer.getElement).filter(_.getModificationStamp == input.stamp).map { file =>
+      val text = file.getText
+      val inactive = DbtSqlText.tokens(text).filter(_.protectedText).map(_.range)
+      val w = DbtWorkspace.get(file.getProject)
+      val conclusive = w.root(file).exists(root => DbtDeclarationSource.EP.getExtensionList.asScala.forall(_.canReportMissing(w, root)))
+      val diagnostics = (if (conclusive) DbtNavigation.inFile(file) else Vector.empty).groupBy(_.getRangeInElement).toVector
+        .filter { case (range, refs) => refs.forall(_.candidates.isEmpty) && !inactive.exists(_.containsOffset(range.getStartOffset)) }
+        .flatMap { case (range, refs) =>
+          val messages = refs.flatMap(_.unresolvedMessage).distinct
+          if (messages.size == 1) messages.map(DbtDiagnostic(range, _)) else Vector.empty
+        }.sortBy(_.range.getStartOffset)
+      DbtAnnotationResult(input.stamp, diagnostics)
+    }.getOrElse(DbtAnnotationResult(input.stamp, Vector.empty))
+  }).expireWith(input.pointer.getProject).executeSynchronously()
+
+  override def apply(file: PsiFile, result: DbtAnnotationResult, holder: AnnotationHolder): Unit = {
+    val key = Option(HighlightDisplayKey.find(getPairedBatchInspectionShortName))
+    val profile = InspectionProjectProfileManager.getInstance(file.getProject).getCurrentProfile
+    val severity = key.map(k => profile.getErrorLevel(k, file).getSeverity).getOrElse(HighlightSeverity.WARNING)
+    if (file.getModificationStamp == result.stamp && key.forall(profile.isToolEnabled(_, file))) result.diagnostics
+      .filter(d => Option(file.findElementAt(d.range.getStartOffset)).forall(e => !SuppressionUtil.isSuppressed(e, getPairedBatchInspectionShortName)))
+      .foreach(d => holder.newAnnotation(severity, d.message).range(d.range).withFix(new DbtCreateResourceFix(d.range.getStartOffset)).create())
+  }
+}
+
+/** External annotators otherwise rerun only when their own file is dirty, even if a referenced definition changed. */
+@Service(Array(Service.Level.PROJECT))
+final class DbtHighlightingRefresh(project: Project) extends Disposable {
+  private val alarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+  private val connection = project.getMessageBus.connect(this)
+  connection.subscribe(PsiModificationTracker.TOPIC, new PsiModificationTracker.Listener {
+    override def modificationCountChanged(): Unit = schedule()
+  })
+  connection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener {
+    override def after(events: java.util.List[_ <: VFileEvent]): Unit = schedule()
+  })
+  connection.subscribe(DbtProjectSettings.Changed, new DbtSettingsListener {
+    override def settingsChanged(): Unit = schedule()
+  })
+
+  private def schedule(): Unit = ApplicationManager.getApplication.invokeLater(() => if (!project.isDisposed && !alarm.isDisposed) {
+    alarm.cancelAllRequests()
+    alarm.addRequest(() => WriteIntentReadAction.run(() => {
+      val psi = PsiManager.getInstance(project)
+      val daemon = DaemonCodeAnalyzer.getInstance(project)
+      FileEditorManager.getInstance(project).getOpenFiles
+        .filter(f => f.isValid && DbtUnresolvedAnnotator.Extensions(Option(f.getExtension).getOrElse("")))
+        .flatMap(f => Option(psi.findFile(f))).foreach(file => daemon.restart(file, "dbt workspace changed"))
+    }), 200)
+  })
+
+  override def dispose(): Unit = ()
+}
+
+/** The paired inspection gives background annotations normal severity/enablement controls in Settings → Inspections. */
+final class DbtUnresolvedReferenceInspection extends LocalInspectionTool {
+  override def getShortName: String = "DbtUnresolvedReference"
+}
 
 private[ide] final case class DbtCreation(kind: String, name: String, source: Option[String], root: DbtRoot,
   file: Option[PsiFile], before: String, after: String, path: String,
-  origin: Option[(PsiFile, com.intellij.openapi.util.TextRange, String)] = None)
+  origin: Option[(PsiFile, TextRange, String)] = None)
 private[ide] object DbtCreateResourceFix {
   def proposal(file: PsiFile, offset: Int): Option[DbtCreation] = {
     val w = DbtWorkspace.get(file.getProject)
@@ -28,8 +122,7 @@ private[ide] object DbtCreateResourceFix {
       folder <- root.pathKinds.find(_._1 == "model").map(_._2)
       result <- call.name match {
         case "ref" | "builtins.ref" if call.positional.size == 1 && call.version.isEmpty => call.literal(0)
-          .filter(DbtSyntax.isIdentifier).map(name => DbtCreation("model", name, None, root, None, "", "select\n    1 as id\n", folder + "/" + name + ".sql",
-            Some((file, ref.getRangeInElement, file.getText))))
+          .filter(DbtSyntax.isIdentifier).map(name => DbtCreation("model", name, None, root, None, "", "select\n    1 as id\n", folder + "/" + name + ".sql"))
         case "source" | "builtins.source" if call.positional.size == 2 =>
           for (source <- call.literal(0).filter(DbtSyntax.isIdentifier); table <- call.literal(1).filter(DbtSyntax.isIdentifier);
             result <- sourcePlan(w, root, folder, source, table)) yield result
@@ -45,15 +138,10 @@ private[ide] object DbtCreateResourceFix {
         val before = parent.file.getText
         val value = "{name: " + table + "}"
         val after = DbtYaml.value(mapping, "tables") match {
-          case Some(sequence: YAMLSequence) =>
-            val flow = sequence.getText.trim.startsWith("[")
-            val offset = sequence.getTextRange.getEndOffset - (if (flow) 1 else 0)
-            val insertion = if (flow) (if (sequence.getItems.isEmpty) "" else ", ") + value else
-              "\n" + " " * org.jetbrains.yaml.YAMLUtil.getIndentInThisLine(sequence) + "- " + value
-            Some(before.substring(0, offset) + insertion + before.substring(offset))
+          case Some(sequence: YAMLSequence) => Some(DbtPropertiesEditor.appendItems(before, sequence, Vector(value)))
           case None =>
             val offset = mapping.getTextRange.getEndOffset
-            Some(before.substring(0, offset) + "\n" + " " * org.jetbrains.yaml.YAMLUtil.getIndentInThisLine(mapping) + "tables: [" + value + "]" + before.substring(offset))
+            Some(before.substring(0, offset) + "\n" + " " * YAMLUtil.getIndentInThisLine(mapping) + "tables: [" + value + "]" + before.substring(offset))
           case _ => None
         }
         after.map(text => DbtCreation("source", table, Some(source), root, Some(parent.file), before, text,
@@ -160,4 +248,32 @@ final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
     }
     dialog.show()
   }
+}
+
+/** Offline schemas use IntelliJ's YAML completion, documentation and inspection infrastructure. */
+final class DbtYamlSchemaProvider extends JsonSchemaProviderFactory {
+  override def getProviders(project: Project): java.util.List[JsonSchemaFileProvider] =
+    (for (kind <- Vector("project", "packages", "selectors", "properties"); version <- Vector("precontracts", "legacy", "semantic", "queries", "units", "current", "functions", "v2"))
+      yield new JsonSchemaFileProvider {
+        override def getName: String = s"dbt $kind ($version)"
+        override def getSchemaType: SchemaType = SchemaType.embeddedSchema
+        override def getSchemaFile: VirtualFile = JsonSchemaProviderFactory.getResourceFile(classOf[DbtYamlSchemaProvider], if (kind == "properties") s"/schemas/dbt-$kind-$version.json" else s"/schemas/dbt-$kind.json")
+        override def isAvailable(file: VirtualFile): Boolean = !project.isDisposed && file.isValid &&
+          Set("yml", "yaml")(Option(file.getExtension).getOrElse("")) &&
+          DbtWorkspace.rootForFile(project, file).filterNot(_.excluded(file)).exists { root =>
+            val selectedVersion = if (root.engine == "v2") "v2" else if (root.supports(11)) "functions" else if (root.supports(10)) "current"
+              else if (root.supports(8)) "units" else if (root.supports(7)) "queries" else if (root.supports(6)) "semantic"
+              else if (root.supports(5)) "legacy" else "precontracts"
+            val selectedKind = file.getName match {
+              case "dbt_project.yml" => Some("project")
+              case "packages.yml" | "dependencies.yml" => Some("packages")
+              case "selectors.yml" => Some("selectors")
+              case _ if root.resourceFolders(file).nonEmpty => DbtYaml.psiFile(project, file).flatMap(DbtYaml.mapping)
+                .filter(m => m.getKeyValues.asScala.exists(k => Set("models", "sources", "seeds", "snapshots", "macros", "semantic_models",
+                  "metrics", "unit_tests", "exposures", "saved_queries", "functions", "checks")(k.getKeyText))).map(_ => "properties")
+              case _ => None
+            }
+            selectedKind.contains(kind) && selectedVersion == version
+          }
+      }).asJava
 }

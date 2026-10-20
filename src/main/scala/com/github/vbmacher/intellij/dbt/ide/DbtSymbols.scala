@@ -1,21 +1,29 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtNavigationReference}
-import com.github.vbmacher.intellij.dbt.project.{DbtEnvironment, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtSqlAnalysis}
+import com.github.vbmacher.intellij.dbt.project.{DbtEnvironment, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.intellij.codeInsight.{TargetElementEvaluatorEx2, TargetElementUtil}
 import com.intellij.find.findUsages.{FindUsagesHandler, FindUsagesHandlerFactory}
+import com.intellij.find.usages.api.{PsiUsage, SearchTarget, Usage, UsageHandler, UsageSearchParameters, UsageSearcher}
+import com.intellij.find.usages.symbol.SymbolSearchTargetFactory
 import com.intellij.lang.findUsages.FindUsagesProvider
-import com.intellij.model.Symbol
+import com.intellij.model.{Pointer, Symbol}
 import com.intellij.model.psi.{ImplicitReferenceProvider, PsiSymbolReference}
+import com.intellij.navigation.{NavigatableSymbol, SymbolNavigationService}
 import com.intellij.openapi.application.QueryExecutorBase
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.TextRange
 import com.intellij.patterns.PlatformPatterns
+import com.intellij.platform.backend.documentation.{DocumentationTarget, SymbolDocumentationTargetProvider}
+import com.intellij.platform.backend.navigation.NavigationTarget
+import com.intellij.platform.backend.presentation.TargetPresentation
 import com.intellij.psi._
 import com.intellij.psi.search.PsiSearchScopeUtil
 import com.intellij.psi.search.searches.ReferencesSearch
-import com.intellij.util.{ProcessingContext, Processor}
+import com.intellij.util.{ProcessingContext, Processor, Query}
 import org.jetbrains.yaml.psi.YAMLKeyValue
 import scala.jdk.CollectionConverters._
 
@@ -30,7 +38,7 @@ final class DbtImplicitReferenceProvider extends ImplicitReferenceProvider {
       references.headOption.filter(_ => candidates.nonEmpty).map { first =>
         new PsiSymbolReference {
           override def getElement: PsiElement = file
-          override def getRangeInElement: com.intellij.openapi.util.TextRange = first.getRangeInElement
+          override def getRangeInElement: TextRange = first.getRangeInElement
           override def resolveReference(): java.util.Collection[_ <: Symbol] = candidates.map(new DbtPsiSymbol(_, file, offsetInElement)).asJava
         }
       }.orNull
@@ -99,8 +107,7 @@ final class DbtTargetElementEvaluator extends TargetElementEvaluatorEx2 {
     val lexical = DbtNavigation.inFile(file).flatMap(_.candidates).collect {
       case e: DbtSymbolElement if e.symbol.file == file && !e.symbol.metadata && e.symbol.range.containsOffset(offset) => e.symbol
     }
-    val sqlDeclarations = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(workspace, file).toVector
-      .flatMap(_.declarations).filter(_.range.containsOffset(offset))
+    val sqlDeclarations = DbtUsages.sqlDeclarationsAt(workspace, file, offset)
     ((sqlDeclarations ++ workspace.symbolAt(file, offset) ++ lexical).distinct ++ workspace.codeSymbols(file)).headOption.map(_.element).orNull
   }
 }
@@ -110,9 +117,7 @@ final class DbtFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
   private def targets(element: PsiElement): Vector[PsiElement] = element match {
     case e: DbtSymbolElement => if (e.symbol.kind == "documentation") Vector.empty else Vector(e)
     case _ => Option(element.getContainingFile).toVector.flatMap { file =>
-      val editor = Option(FileEditorManager.getInstance(element.getProject).getSelectedTextEditor)
-        .filter(e => e.getDocument == PsiDocumentManager.getInstance(element.getProject).getDocument(file))
-      val offset = editor.map(_.getCaretModel.getOffset).getOrElse(element.getTextOffset)
+      val offset = DbtUsages.caretEditor(file).map(_.getCaretModel.getOffset).getOrElse(element.getTextOffset)
       val workspace = DbtWorkspace.get(element.getProject)
       val exact = workspace.symbolAt(file, offset)
       (if (exact.nonEmpty) exact else workspace.codeSymbols(file)).flatMap { symbol =>
@@ -131,4 +136,77 @@ final class DbtFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
         override def getPrimaryElements: Array[PsiElement] = targets(element).toArray
       }
     }.orNull
+}
+
+/** Public Symbol contracts retain native navigation, documentation and usage search for dbt PSI targets. */
+private[dbt] final class DbtPsiSymbol(val element: PsiElement, val source: PsiFile, val offset: Int) extends NavigatableSymbol {
+  override def createPointer(): Pointer[DbtPsiSymbol] = {
+    val target = SmartPointerManager.createPointer(element)
+    Pointer.fileRangePointer(source, new TextRange(offset, offset), (fresh: PsiFile, range: TextRange) =>
+      Option(target.dereference()).filter(_.isValid).map(e => new DbtPsiSymbol(e, fresh, range.getStartOffset)).orNull)
+  }
+
+  override def getNavigationTargets(project: Project): java.util.Collection[_ <: NavigationTarget] =
+    java.util.List.of(SymbolNavigationService.getInstance().psiElementNavigationTarget(element))
+
+  def presentation(): TargetPresentation = {
+    val name = element match {
+      case e: DbtSymbolElement => e.symbol.presentableText
+      case e: PsiNamedElement => e.getName
+      case _ => element.getText
+    }
+    TargetPresentation.builder(name).icon(element.getIcon(0)).presentation()
+  }
+
+  override def equals(other: Any): Boolean = other match {
+    case symbol: DbtPsiSymbol => element == symbol.element
+    case _ => false
+  }
+  override def hashCode(): Int = element.hashCode()
+}
+
+final class DbtSymbolDocumentationTargetProvider extends SymbolDocumentationTargetProvider {
+  override def documentationTarget(project: Project, target: Symbol): DocumentationTarget = target match {
+    case symbol: DbtPsiSymbol => DbtDocumentation.targetAt(symbol.source, symbol.offset).orNull
+    case _ => null
+  }
+}
+
+final class DbtSymbolSearchTargetFactory extends SymbolSearchTargetFactory[DbtPsiSymbol] {
+  override def searchTarget(project: Project, symbol: DbtPsiSymbol): SearchTarget = symbol.element match {
+    case e: DbtSymbolElement if e.symbol.kind == "documentation" => null
+    // The platform also adds PSI usage targets. Avoid presenting the same declaration twice.
+    case _ if Option(symbol.source.findReferenceAt(symbol.offset)).exists(_.isReferenceTo(symbol.element)) => null
+    case _ => new DbtSymbolSearchTarget(symbol)
+  }
+}
+
+private[ide] final class DbtSymbolSearchTarget(val symbol: DbtPsiSymbol) extends SearchTarget {
+  override def createPointer(): Pointer[_ <: SearchTarget] = Pointer.delegatingPointer(symbol.createPointer(),
+    (fresh: DbtPsiSymbol) => new DbtSymbolSearchTarget(fresh))
+  override def presentation(): TargetPresentation = symbol.presentation()
+  override def getUsageHandler: UsageHandler = UsageHandler.createEmptyUsageHandler(presentation().getPresentableText)
+  override def equals(other: Any): Boolean = other match {
+    case target: DbtSymbolSearchTarget => symbol == target.symbol
+    case _ => false
+  }
+  override def hashCode(): Int = symbol.hashCode()
+}
+
+final class DbtSymbolUsageSearcher extends UsageSearcher {
+  override def collectSearchRequest(parameters: UsageSearchParameters): Query[_ <: Usage] = parameters.getTarget match {
+    case target: DbtSymbolSearchTarget => ReferencesSearch.search(target.symbol.element, parameters.getSearchScope)
+      .mapping[Usage]((reference: PsiReference) => PsiUsage.textUsage(reference.getElement, reference.getRangeInElement))
+    case _ => null
+  }
+}
+
+private[ide] object DbtUsages {
+  /** The selected editor showing `file`; its caret identifies the declaration that native actions target. */
+  def caretEditor(file: PsiFile): Option[Editor] = Option(FileEditorManager.getInstance(file.getProject).getSelectedTextEditor)
+    .filter(_.getDocument == PsiDocumentManager.getInstance(file.getProject).getDocument(file))
+
+  /** SQL declarations (CTEs, aliases, projections) at an offset. */
+  def sqlDeclarationsAt(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtSymbol] =
+    DbtSqlAnalysis.get(w, file).toVector.flatMap(_.declarations).filter(_.range.containsOffset(offset))
 }

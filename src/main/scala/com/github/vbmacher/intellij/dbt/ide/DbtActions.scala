@@ -2,13 +2,19 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.github.vbmacher.intellij.dbt.project.{DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.intellij.diff.{DiffContentFactory, DiffManager}
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.application.{ModalityState, ReadAction}
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileTypes.{FileType, FileTypeManager}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.{JBPopup, JBPopupFactory, ListItemDescriptor}
 import com.intellij.psi.PsiFile
+import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
@@ -62,8 +68,29 @@ private[ide] final class DbtNavigationItemRenderer extends GroupedItemsListRende
   }
 }
 
+/** Editor actions update on a background thread. */
+private[ide] abstract class DbtEditorAction extends AnAction {
+  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
+}
+
+private[ide] object DbtEditorAction {
+  /** The project, PSI file and editor of an event, when all are available. */
+  def editorContext(event: AnActionEvent): Option[(Project, PsiFile, Editor)] = for {
+    project <- Option(event.getProject)
+    file <- Option(event.getData(CommonDataKeys.PSI_FILE))
+    editor <- Option(event.getData(CommonDataKeys.EDITOR))
+  } yield (project, file, editor)
+
+  /** Computes in a cancellable smart-mode read action off the EDT, then consumes the result on the EDT. */
+  def inBackground[T](project: Project)(compute: => T)(consume: T => Unit): Unit =
+    ReadAction.nonBlocking(new Callable[T] {
+      override def call(): T = compute
+    }).inSmartMode(project).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: T) => consume(result))
+      .submit(AppExecutorUtil.getAppExecutorService)
+}
+
 /** Computes navigation items at the caret in a background read action and offers them in a popup. */
-abstract class DbtPopupAction(title: String) extends AnAction {
+abstract class DbtPopupAction(title: String) extends DbtEditorAction {
   private[ide] def items(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtNavigationItem]
 
   protected def nothingFound(project: Project): Unit = ()
@@ -72,20 +99,12 @@ abstract class DbtPopupAction(title: String) extends AnAction {
   protected def resolvedAt(file: PsiFile, offset: Int): Vector[DbtSymbol] =
     DbtNavigation.at(file, offset).flatMap(_.candidates).collect { case e: DbtSymbolElement => e.symbol }
 
-  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
-
-  override def actionPerformed(event: AnActionEvent): Unit = {
-    val project = event.getProject
-    val file = event.getData(CommonDataKeys.PSI_FILE)
-    val editor = event.getData(CommonDataKeys.EDITOR)
-    if (project == null || file == null || editor == null) return
+  override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
     val offset = editor.getCaretModel.getOffset
-    ReadAction.nonBlocking(new Callable[Vector[DbtNavigationItem]] {
-      override def call(): Vector[DbtNavigationItem] = items(DbtWorkspace.get(project), file, offset)
-    }).inSmartMode(project).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (choices: Vector[DbtNavigationItem]) =>
+    DbtEditorAction.inBackground(project)(items(DbtWorkspace.get(project), file, offset)) { choices =>
       if (choices.isEmpty) nothingFound(project)
       else DbtNavigationItem.popup(title, choices).showInBestPositionFor(editor)
-    ).submit(AppExecutorUtil.getAppExecutorService)
+    }
   }
 }
 
@@ -125,5 +144,65 @@ private[ide] object DbtDependenciesAction {
             DbtNavigationItem.location(e.reference.getElement, range.getStartOffset), reference = true)
         }.distinctBy(_.target.symbol.id)
     }
+  }
+}
+
+/** Acts on the resource at the caret, or of the current file. */
+private[ide] abstract class DbtResourceAction(perform: (DbtWorkspace, DbtSymbol) => Unit) extends DbtEditorAction {
+  private def resource(event: AnActionEvent): Option[(DbtWorkspace, DbtSymbol)] = Option(event.getProject).flatMap(project =>
+    DbtResourceAction.at(project, Option(event.getData(CommonDataKeys.PSI_FILE)),
+      Option(event.getData(CommonDataKeys.EDITOR)).map(_.getCaretModel.getOffset).getOrElse(0)))
+
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(resource(event).nonEmpty)
+
+  override def actionPerformed(event: AnActionEvent): Unit =
+    ReadAction.computeBlocking[Option[(DbtWorkspace, DbtSymbol)], RuntimeException](() => resource(event)).foreach(perform.tupled)
+}
+
+private[ide] object DbtResourceAction {
+  /** The resource at an offset of a file, or of the file itself. */
+  def at(project: Project, file: Option[PsiFile], offset: Int): Option[(DbtWorkspace, DbtSymbol)] = {
+    val w = DbtWorkspace.get(project)
+    DbtImpactUi.context(w, file, offset).map(w -> _)
+  }
+}
+
+final class DbtEditPropertiesAction extends DbtResourceAction(DbtPropertiesEditor.show)
+
+final class DbtGenerateColumnsAction extends DbtResourceAction(DbtPropertiesEditor.generate(_, _, inherit = false))
+
+final class DbtInheritDescriptionsAction extends DbtResourceAction(DbtPropertiesEditor.generate(_, _, inherit = true))
+
+final class DbtOpenCompiledSqlAction extends DbtResourceAction((w, symbol) => DbtResourceData.get(w, symbol).compiledSql match {
+  case Some(sql) => DbtSqlEditors.open(w.project, symbol.name + " compiled", sql)
+  case None => Messages.showInfoMessage(w.project,
+    "Compiled SQL is unavailable. Run Compile or Generate Docs for this project and target.", "dbt compiled SQL")
+})
+
+final class DbtCompareSqlAction extends DbtResourceAction((w, symbol) => {
+  val data = DbtResourceData.get(w, symbol)
+  data.compiledSql match {
+    case Some(sql) =>
+      DbtSqlEditors.compare(w.project, symbol.name, data.rawSql.getOrElse(symbol.file.getText), sql, "Authored SQL", "Compiled SQL")
+    case None =>
+      Messages.showInfoMessage(w.project, "Compile this model for the matching target before comparing SQL.", "dbt SQL comparison")
+  }
+})
+
+/** Read-only SQL shown in editors and diffs. */
+private[ide] object DbtSqlEditors {
+  private def sqlType: FileType = FileTypeManager.getInstance.getFileTypeByExtension("sql")
+
+  def open(project: Project, name: String, sql: String): Unit = {
+    val file = new LightVirtualFile(name.stripSuffix(".sql") + ".sql", sqlType, sql)
+    file.setWritable(false)
+    FileEditorManager.getInstance(project).openFile(file, true)
+    ()
+  }
+
+  def compare(project: Project, name: String, before: String, after: String, left: String, right: String): Unit = {
+    val factory = DiffContentFactory.getInstance()
+    DiffManager.getInstance.showDiff(project, new SimpleDiffRequest(name,
+      factory.create(project, before, sqlType), factory.create(project, after, sqlType), left, right))
   }
 }

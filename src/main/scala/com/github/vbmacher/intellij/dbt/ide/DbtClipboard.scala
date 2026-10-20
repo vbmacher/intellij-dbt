@@ -3,18 +3,15 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSqlText, DbtSyntax}
-import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
-import com.intellij.openapi.application.{ModalityState, ReadAction}
+import com.intellij.openapi.actionSystem.{AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.{PsiDocumentManager, PsiFile}
-import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.datatransfer.{DataFlavor, StringSelection}
 import java.nio.charset.StandardCharsets
 import java.util.Base64
-import java.util.concurrent.Callable
 import scala.jdk.CollectionConverters._
 
 private[ide] object DbtClipboard {
@@ -95,40 +92,40 @@ private[ide] object DbtClipboard {
   }
 }
 
-abstract class DbtClipboardAction(copying: Boolean) extends AnAction {
-  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
+abstract class DbtClipboardAction(copying: Boolean) extends DbtEditorAction {
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabled(event.getProject != null &&
     event.getData(CommonDataKeys.EDITOR) != null && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(file =>
       Option(file.getVirtualFile).exists(f => DbtWorkspace.rootForFile(event.getProject, f).exists(r => !r.excluded(f)))))
 
-  override def actionPerformed(event: AnActionEvent): Unit = {
-    val project = event.getProject; val file = event.getData(CommonDataKeys.PSI_FILE); val editor = event.getData(CommonDataKeys.EDITOR)
-    if (project == null || file == null || editor == null) return
+  override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
     val document = editor.getDocument
     val stamp = document.getModificationStamp
-    val start = if (editor.getSelectionModel.hasSelection) editor.getSelectionModel.getSelectionStart else if (copying) 0 else editor.getCaretModel.getOffset
-    val end = if (editor.getSelectionModel.hasSelection) editor.getSelectionModel.getSelectionEnd else if (copying) document.getTextLength else start
+    val selection = editor.getSelectionModel
+    val start = if (selection.hasSelection) selection.getSelectionStart else if (copying) 0 else editor.getCaretModel.getOffset
+    val end = if (selection.hasSelection) selection.getSelectionEnd else if (copying) document.getTextLength else start
     val clipboard = if (copying) None else Option(CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor))
-    if (!copying && clipboard.isEmpty) return
-    PsiDocumentManager.getInstance(project).commitAllDocuments()
-    ReadAction.nonBlocking(new Callable[Either[String, String]] {
-      override def call(): Either[String, String] = if (copying) DbtClipboard.copy(file, new TextRange(start, end))
+    if (copying || clipboard.nonEmpty) {
+      PsiDocumentManager.getInstance(project).commitAllDocuments()
+      DbtEditorAction.inBackground(project)(
+        if (copying) DbtClipboard.copy(file, new TextRange(start, end))
         else {
           val w = DbtWorkspace.get(project)
-          w.root(file).map(w.executionRoot).toRight("Open a file in a dbt project.").flatMap(r => DbtClipboard.paste(w, r, clipboard.getOrElse("")))
+          w.root(file).map(w.executionRoot).toRight("Open a file in a dbt project.")
+            .flatMap(r => DbtClipboard.paste(w, r, clipboard.getOrElse("")))
         }
-    }).expireWith(project).inSmartMode(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, String]) =>
-      if (document.getModificationStamp == stamp && !editor.isDisposed) result match {
-        case Left(message) => Messages.showWarningDialog(project, message, "dbt SQL Conversion")
-        case Right(text) if copying => CopyPasteManager.getInstance().setContents(new StringSelection(text))
-        case Right(text) => WriteCommandAction.runWriteCommandAction(project, "Paste as dbt Refs", null, new Runnable {
-          override def run(): Unit = {
-            document.replaceString(start, end, text); editor.getSelectionModel.removeSelection()
-            editor.getCaretModel.moveToOffset(start + text.length)
-          }
-        })
+      ) { result =>
+        if (document.getModificationStamp == stamp && !editor.isDisposed) result match {
+          case Left(message) => Messages.showWarningDialog(project, message, "dbt SQL Conversion")
+          case Right(text) if copying => CopyPasteManager.getInstance().setContents(new StringSelection(text))
+          case Right(text) => WriteCommandAction.runWriteCommandAction(project, "Paste as dbt Refs", null, new Runnable {
+            override def run(): Unit = {
+              document.replaceString(start, end, text); editor.getSelectionModel.removeSelection()
+              editor.getCaretModel.moveToOffset(start + text.length)
+            }
+          })
+        }
       }
-    ).submit(AppExecutorUtil.getAppExecutorService)
+    }
   }
 }
 final class DbtCopyForTargetAction extends DbtClipboardAction(copying = true)

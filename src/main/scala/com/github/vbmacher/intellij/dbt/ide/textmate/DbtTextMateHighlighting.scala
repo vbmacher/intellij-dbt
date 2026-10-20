@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide.textmate
 
-import com.github.vbmacher.intellij.dbt.project.DbtWorkspace
+import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator
 import com.intellij.codeInsight.TargetElementEvaluatorEx2
 import com.intellij.openapi.application.ReadAction
@@ -59,12 +59,8 @@ final class DbtTextMateHighlighterProvider extends SyntaxHighlighterProvider {
       case "md" => "dbt-markdown"
       case _ => return null
     }
-    val supported = ReadAction.computeBlocking[Boolean, RuntimeException](() => {
-      DbtWorkspace.rootForFile(project, file).exists { root =>
-        !root.excluded(file) && (root.kind(file).nonEmpty || (extension != "sql" && file.getParent == root.directory) ||
-          root.relative(file).contains(root.profilesFile))
-      }
-    })
+    val supported = DbtSqlFileType.inProject(project, file)(root => root.kind(file).nonEmpty ||
+      (extension != "sql" && file.getParent == root.directory) || root.relative(file).contains(root.profilesFile))
     if (!supported) return null
     val descriptor = TextMateService.getInstance.getLanguageDescriptorByExtension(grammar)
     if (descriptor == null) null else new TextMateHighlighter(new TextMateHighlightingLexer(descriptor, syntaxMatcher, -1))
@@ -79,21 +75,20 @@ final class DbtSqlFileTypeOverrider extends FileTypeOverrider {
     if (original.isInstanceOf[LanguageFileType]) return null
     val project = ProjectLocator.getInstance.guessProjectForFile(file)
     if (project == null || project.isDisposed) return null
-    val resource = ReadAction.computeBlocking[Boolean, RuntimeException](() =>
-      DbtWorkspace.rootForFile(project, file).exists(r => !r.excluded(file) && r.kind(file).nonEmpty))
-    if (resource) DbtSqlFileType.Instance else null
+    if (DbtSqlFileType.inProject(project, file)(_.kind(file).nonEmpty)) DbtSqlFileType else null
   }
 }
 
-private final class DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
+private object DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
   override def getName: String = "DBT_SQL"
   override def getDescription: String = "dbt SQL"
   override def getDefaultExtension: String = "sql"
   override def getIcon: javax.swing.Icon = com.intellij.icons.AllIcons.FileTypes.Text
-}
 
-private object DbtSqlFileType {
-  val Instance: LanguageFileType = new DbtSqlFileType
+  /** Whether `file` is an unexcluded file of a dbt project root accepted by `accept`. */
+  def inProject(project: Project, file: VirtualFile)(accept: DbtRoot => Boolean): Boolean =
+    ReadAction.computeBlocking[Boolean, RuntimeException](() =>
+      DbtWorkspace.rootForFile(project, file).exists(r => !r.excluded(file) && accept(r)))
 }
 
 /** TextMate tokens require its editor storage, rather than the platform's registered-token storage. */

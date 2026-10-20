@@ -15,6 +15,8 @@ private[ide] final case class DbtMacroSignature(name: String, parameters: Vector
 private[ide] object DbtCompletion {
   val ConfigKeys: Vector[String] = Vector("materialized", "alias", "schema", "database", "tags", "enabled", "unique_key",
     "incremental_strategy", "on_schema_change", "contract", "persist_docs", "pre_hook", "post_hook")
+  /** The qualifier of a dotted name being typed at the end of a prefix. */
+  private val Qualifier = "([A-Za-z_][A-Za-z_0-9]*)\\.[A-Za-z_0-9]*$".r
   def callAt(file: PsiFile, offset: Int): Option[DbtSyntax.Call] = DbtSyntax.inFile(file)
     .filter(b => b.range.getStartOffset <= offset && b.range.getEndOffset >= offset).flatMap(DbtSyntax.calls)
     .filter(c => c.range.getEndOffset < offset && (c.expressionRange.getEndOffset >= offset || !c.closed))
@@ -72,7 +74,7 @@ private[ide] object DbtCompletion {
     }.distinctBy(s => (s.text, s.detail))
     else if (block.nonEmpty) {
       val prefix = file.getText.substring(block.get.range.getStartOffset, offset)
-      val namespace = "([A-Za-z_][A-Za-z_0-9]*)\\.[A-Za-z_0-9]*$".r.findFirstMatchIn(prefix).map(_.group(1))
+      val namespace = Qualifier.findFirstMatchIn(prefix).map(_.group(1))
       val named = call.toVector.flatMap(c => w.macros(c, root)).flatMap(m => parameters(w, m).map { case (name, display) =>
         DbtSuggestion(name + "=", display, "parameter")
       })
@@ -87,7 +89,7 @@ private[ide] object DbtCompletion {
       } ++ resources(DbtSymbol.RefKinds).map(s => DbtSuggestion(s.name, "resource selector", s.kind))).distinctBy(_.text)
     } else if (file.getVirtualFile.getExtension == "sql") {
       val prefix = file.getText.substring(0, offset)
-      val qualifier = "([A-Za-z_][A-Za-z_0-9]*)\\.[A-Za-z_0-9]*$".r.findFirstMatchIn(prefix).map(_.group(1))
+      val qualifier = Qualifier.findFirstMatchIn(prefix).map(_.group(1))
       DbtSqlAnalysis.forCompletion(w, file, offset).flatMap(_.scope(offset)).toVector.flatMap(_.relations)
         .filter { case (alias, _) => qualifier.forall(_.equalsIgnoreCase(alias)) }.flatMap { case (alias, columns) =>
           columns.map(c => DbtSuggestion(c.name, c.attributes.getOrElse("data_type", "column") + " · " + alias,
