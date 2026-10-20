@@ -14,7 +14,7 @@ import scala.util.Try
 
 /** Reads current editor content and bounded local files without depending on workspace discovery. */
 private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
-  private val sections = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks", "unit_tests")
+  private val sections = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks", "unit_tests", "selectors")
   private val baselineSections = Set("nodes", "sources", "exposures", "unit_tests", "metrics", "semantic_models", "saved_queries")
   private val schemas = (9 to 12).map(v => s"https://schemas.getdbt.com/dbt/manifest/v$v.json" -> v).toMap
   private val cache: Map[DbtManifestPolicy, Key[CachedValue[Either[String, DbtManifest]]]] = Vector(DbtManifestPolicy.Navigation, DbtManifestPolicy.TestDiscovery, DbtManifestPolicy.Baseline)

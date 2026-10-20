@@ -9,9 +9,11 @@ import scala.beans.BeanProperty
 final class DbtRunOptions {
   @BeanProperty var executable: String = "dbt"
   @BeanProperty var executableArguments: String = ""
+  @BeanProperty var environmentFiles: String = ""
   @BeanProperty var projectRoot: String = ""
   @BeanProperty var profilesDirectory: String = ""
   @BeanProperty var artifactDirectory: String = "target"
+  @BeanProperty var manifestPath: String = ""
   @BeanProperty var target: String = ""
   @BeanProperty var previewLimit: Int = 10
   @BeanProperty var colors: Boolean = true
@@ -26,16 +28,18 @@ final class DbtRunOptions {
   @BeanProperty var formatOnSave: Boolean = false
 
   def values: Vector[Any] =
-    Vector(executable, executableArguments, projectRoot, profilesDirectory, artifactDirectory, target, previewLimit, colors, notifications,
+    Vector(executable, executableArguments, environmentFiles, projectRoot, profilesDirectory, artifactDirectory, manifestPath, target, previewLimit, colors, notifications,
       selection, exclude, stateDirectory, defer, favorState, formatter, formatterExecutable, formatOnSave)
 
   def copy(): DbtRunOptions = {
     val c = new DbtRunOptions
     c.executable = executable
     c.executableArguments = executableArguments
+    c.environmentFiles = environmentFiles
     c.projectRoot = projectRoot
     c.profilesDirectory = profilesDirectory
     c.artifactDirectory = artifactDirectory
+    c.manifestPath = manifestPath
     c.target = target
     c.previewLimit = previewLimit
     c.colors = colors
@@ -54,15 +58,9 @@ final class DbtRunOptions {
 
 final class DbtSettingsState {
   @BeanProperty var projects: java.util.Map[String, DbtRunOptions] = new java.util.TreeMap[String, DbtRunOptions]()
-  @BeanProperty var runnerSelection: String = ""
-  @BeanProperty var runnerRoot: String = ""
   @BeanProperty var upstreamDepth: Int = 5
   @BeanProperty var downstreamDepth: Int = 5
   @BeanProperty var direction: String = "LR"
-  @BeanProperty var edgeStyle: String = "round-taxi"
-  @BeanProperty var exposures: Boolean = true
-  @BeanProperty var docsVisible: Boolean = true
-  @BeanProperty var docsWidth: Int = 360
   @BeanProperty var pinnedFocus: String = ""
 
   def upstream: Int = DbtSettingsState.depth(upstreamDepth)

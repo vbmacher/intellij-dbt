@@ -9,8 +9,9 @@ import scala.jdk.CollectionConverters._
 private[dbt] final case class DbtProfileContext(directory: Path, targets: Vector[String], defaultTarget: Option[String], adapter: Option[String])
 private[dbt] object DbtExecutionContext {
   def profiles(root: DbtRoot, environment: Map[String, String] = sys.env): DbtProfileContext = {
+    val effectiveEnvironment = environment ++ DbtEnvironment.values(root)
     val configured = Option(root.runOptions.profilesDirectory).filter(_.nonEmpty).map(Paths.get(_))
-    val directory = configured.orElse(environment.get("DBT_PROFILES_DIR").filter(_.nonEmpty).map(Paths.get(_)))
+    val directory = configured.orElse(effectiveEnvironment.get("DBT_PROFILES_DIR").filter(_.nonEmpty).map(Paths.get(_)))
       .map(p => if (p.isAbsolute) p else root.executionDirectory.resolve(p))
       .getOrElse(if (root.psiFile(root.executionDirectory.resolve("profiles.yml").toString).nonEmpty) root.executionDirectory
         else Paths.get(System.getProperty("user.home"), ".dbt"))
@@ -36,11 +37,14 @@ private[dbt] object DbtExecutionContext {
     Vector(".venv/bin/dbt", "venv/bin/dbt", ".venv/Scripts/dbt.exe", "venv/Scripts/dbt.exe")
       .map(root.executionDirectory.resolve(_)).find(Files.isRegularFile(_))
 
-  /** Wrappers need the same local dbt and Python that direct execution discovers. */
-  def environment(root: DbtRoot): Map[String, String] = virtualEnvironmentExecutable(root).map { executable =>
-    val inheritedPath = Option(EnvironmentUtil.getValue("PATH")).getOrElse("")
-    Map("PATH" -> (executable.getParent.toString + java.io.File.pathSeparator + inheritedPath))
-  }.getOrElse(Map.empty)
+  /** Wrappers and tools share configured variables and the discovered local dbt/Python. */
+  def environment(root: DbtRoot): Map[String, String] = {
+    val configured = DbtEnvironment.values(root)
+    configured ++ virtualEnvironmentExecutable(root).map { executable =>
+      val inheritedPath = configured.getOrElse("PATH", Option(EnvironmentUtil.getValue("PATH")).getOrElse(""))
+      Map("PATH" -> (executable.getParent.toString + java.io.File.pathSeparator + inheritedPath))
+    }.getOrElse(Map.empty)
+  }
 
   def activeTarget(root: DbtRoot): Option[String] = root.selectedTarget.orElse(profiles(root).defaultTarget)
 }

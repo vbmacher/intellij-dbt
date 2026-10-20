@@ -19,7 +19,7 @@
         <li>Use local source files and optionally selected JSON or Parquet metadata for navigation.</li>
         <li>Complete dbt calls and SQL columns, inspect macro parameters, validate YAML offline, and use native Rename and Safe Delete.</li>
         <li>Trace column lineage, edit resource documentation, review Git impact and selector/state plans, and inspect bounded typed query or CTE results.</li>
-        <li>Browse native test results and lineage execution evidence; optionally configure SQLFluff/sqlfmt, Metabase, Airflow mappings and local read-only agent tools.</li>
+        <li>Browse native test results and lineage execution evidence; optionally configure SQLFluff/sqlfmt, Metabase, local Airflow DAG discovery and a local read-only MCP server for AI assistants.</li>
       </ul>
       <p>Open a directory containing <code>dbt_project.yml</code> to get started. Enable the bundled YAML plugin.
       SQL navigation works with plain-text files and does not require Database Tools.
@@ -95,6 +95,14 @@
             <className>com.github.vbmacher.intellij.dbt.ide.DbtExpandColumnsIntention</className>
             <category>dbt</category>
         </intentionAction>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtGenerateColumnsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtInheritDescriptionsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
         <codeInsight.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <codeInsight.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <codeInsight.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
@@ -102,6 +110,7 @@
         <platform.backend.documentation.symbolTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtSymbolDocumentationTargetProvider"/>
         <platform.backend.documentation.psiTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinPsiDocumentationTargetProvider"/>
         <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLinkHandler"/>
+        <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtColumnDocumentationLinkHandler"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtDocumentationNavigation" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationNavigation"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationSource" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLoader"/>
         <externalAnnotator language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedAnnotator"/>
@@ -109,6 +118,19 @@
         <notificationGroup id="dbt Workspace" displayType="BALLOON" isLogByDefault="true"/>
         <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
         <projectConfigurable id="dbt.integrations" displayName="dbt Integrations" instance="com.github.vbmacher.intellij.dbt.ide.DbtConsumersConfigurable"/>
+        <gotoRelatedProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtAirflowRelatedProvider"/>
+        <callHierarchyProvider language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <lang.psiStructureViewFactory language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewFactory" order="first"/>
+        <lang.psiStructureViewFactory language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewFactory" order="first"/>
+        <lang.structureViewExtension implementation="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewExtension"/>
+        <xdebugger.breakpointType implementation="com.github.vbmacher.intellij.dbt.ide.DbtCteBreakpointType"/>
+        <configurationType implementation="com.github.vbmacher.intellij.dbt.ide.DbtConfigurationType"/>
+        <runConfigurationProducer implementation="com.github.vbmacher.intellij.dbt.ide.DbtRunProducer"/>
+        <runLineMarkerContributor language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTestRunLineMarker"/>
+        <runLineMarkerContributor language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtModelRunLineMarker"/>
         <toolWindow id="dbt" anchor="bottom" factoryClass="com.github.vbmacher.intellij.dbt.ide.DbtToolWindowFactory" icon="/icons/dbt/table.svg"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
@@ -127,6 +149,22 @@
         <JsonSchema.ProviderFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtYamlSchemaProvider"/>
     </extensions>
     <actions>
+        <action id="Dbt.EditProperties" class="com.github.vbmacher.intellij.dbt.ide.DbtEditPropertiesAction" text="Edit dbt Properties YAML">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.GenerateColumns" class="com.github.vbmacher.intellij.dbt.ide.DbtGenerateColumnsAction" text="dbt Columns">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
+        <action id="Dbt.InheritDescriptions" class="com.github.vbmacher.intellij.dbt.ide.DbtInheritDescriptionsAction" text="Inherit dbt Descriptions">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
+        <action id="Dbt.OpenCompiledSql" class="com.github.vbmacher.intellij.dbt.ide.DbtOpenCompiledSqlAction" text="Open Compiled dbt SQL">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.CompareSql" class="com.github.vbmacher.intellij.dbt.ide.DbtCompareSqlAction" text="Compare Authored and Compiled dbt SQL">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+
         <action id="Dbt.PreviewSql" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewSqlAction" text="Preview selected dbt SQL">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
@@ -146,7 +184,7 @@
         <action id="Dbt.AirflowContext" class="com.github.vbmacher.intellij.dbt.ide.DbtAirflowAction" text="dbt Airflow Context">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
-        <action id="Dbt.AgentTools" class="com.github.vbmacher.intellij.dbt.ide.DbtAgentAction" text="dbt Local Agent Tools">
+        <action id="Dbt.AgentTools" class="com.github.vbmacher.intellij.dbt.ide.DbtAgentAction" text="dbt Local MCP Server">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">

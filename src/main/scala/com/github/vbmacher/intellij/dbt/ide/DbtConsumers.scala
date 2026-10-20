@@ -13,7 +13,7 @@ import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
 import javax.swing._
-import java.awt.GridLayout
+import java.awt.{GridBagConstraints, GridBagLayout, Insets}
 import scala.beans.BeanProperty
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
@@ -21,6 +21,8 @@ import scala.util.control.NonFatal
 final class DbtConsumersState {
   @BeanProperty var metabaseUrl: String = ""
   @BeanProperty var agentEnabled: Boolean = false
+  @BeanProperty var airflowPaths: java.util.List[String] = new java.util.ArrayList[String]()
+  @BeanProperty var airflowUrl: String = ""
 }
 @Service(Array(Service.Level.PROJECT))
 @State(name = "DbtIntegrations", storages = Array(new Storage(StoragePathMacros.WORKSPACE_FILE)))
@@ -41,7 +43,8 @@ final class DbtConsumers(project: Project) {
   @volatile private var cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Configure Metabase URL and API key in dbt Integrations.")
   def snapshot: DbtConsumersCache = cache
   private def credential: CredentialAttributes = new CredentialAttributes("dbt Workspace Metabase " + project.getLocationHash)
-  def hasSecret: Boolean = Option(PasswordSafe.getInstance().getPassword(credential)).exists(_.nonEmpty)
+  private[ide] def apiKey: String = Option(PasswordSafe.getInstance().getPassword(credential)).getOrElse("")
+  def hasSecret: Boolean = apiKey.nonEmpty
   def setSecret(secret: String): Unit = PasswordSafe.getInstance().set(credential, if (secret.isEmpty) null else new Credentials("api-key", secret))
   def clear(): Unit = { cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Refresh Metabase metadata explicitly.") }
   def refresh(w: DbtWorkspace): DbtConsumersCache = refresh(w, Duration.ofSeconds(10))
@@ -174,24 +177,40 @@ private[dbt] object DbtConsumers {
 final class DbtConsumersConfigurable(project: Project) extends Configurable {
   private val url = new JTextField()
   private val secret = new JPasswordField()
-  private val agent = new JCheckBox("Enable local read-only agent tools (start explicitly from Tools)")
-  private val clearSecret = new JCheckBox("Remove saved Metabase API key")
-  private val panel = new JPanel(new GridLayout(0, 1, 4, 4))
-  panel.add(new JLabel("Metabase URL (optional)")); panel.add(url)
-  panel.add(new JLabel("Metabase API key (stored in IDE Password Safe; blank keeps saved key)")); panel.add(secret)
-  panel.add(clearSecret); panel.add(agent)
+  private val agent = new JCheckBox("Enable local read-only MCP server (start explicitly from Tools)")
+  private val airflow = new DbtAirflowSettingsPanel(project)
+  private val panel = new JPanel(new GridBagLayout)
+  private val metabase = new JPanel(new GridBagLayout)
+  metabase.setBorder(BorderFactory.createTitledBorder("Metabase"))
+  Vector[JComponent](new JLabel("Metabase URL (optional)"), url,
+    new JLabel("Metabase API key (stored in IDE Password Safe)"), secret).zipWithIndex.foreach { case (field, row) =>
+    val c = new GridBagConstraints
+    c.gridx = 0; c.gridy = row; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL
+    c.anchor = GridBagConstraints.NORTHWEST; c.insets = new Insets(3, 4, 3, 4)
+    metabase.add(field, c)
+  }
+  secret.setToolTipText("Stored in IDE Password Safe. Clear this field and click Apply to remove the saved API key.")
+  Vector[JComponent](metabase, agent, airflow.component).zipWithIndex.foreach { case (field, row) =>
+    val c = new GridBagConstraints
+    c.gridx = 0; c.gridy = row; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL
+    c.anchor = GridBagConstraints.NORTHWEST; c.insets = new Insets(3, 4, 3, 4)
+    if (field == airflow.component) c.weighty = 1
+    panel.add(field, c)
+  }
   private def settings = project.getService(classOf[DbtConsumersSettings])
   override def getDisplayName: String = "dbt Integrations"
   override def createComponent(): JComponent = { reset(); panel }
-  override def isModified: Boolean = url.getText != settings.getState.metabaseUrl || agent.isSelected != settings.getState.agentEnabled || secret.getPassword.nonEmpty || clearSecret.isSelected
+  override def isModified: Boolean = url.getText != settings.getState.metabaseUrl || agent.isSelected != settings.getState.agentEnabled || new String(secret.getPassword) != project.getService(classOf[DbtConsumers]).apiKey || airflow.isModified
   override def apply(): Unit = {
     val value = url.getText.trim
     if (value.nonEmpty && DbtAirflow.safeUrl(value).isEmpty) throw new com.intellij.openapi.options.ConfigurationException("Use an http(s) Metabase URL without embedded credentials.")
+    airflow.validate()
+    airflow.apply()
     settings.getState.metabaseUrl = value; settings.getState.agentEnabled = agent.isSelected
     val service = project.getService(classOf[DbtConsumers])
-    if (clearSecret.isSelected) service.setSecret("") else if (secret.getPassword.nonEmpty) service.setSecret(new String(secret.getPassword))
+    service.setSecret(new String(secret.getPassword))
     service.clear(); if (!agent.isSelected) project.getService(classOf[DbtAgent]).stop()
-    secret.setText(""); clearSecret.setSelected(false)
   }
-  override def reset(): Unit = { url.setText(settings.getState.metabaseUrl); agent.setSelected(settings.getState.agentEnabled); secret.setText(""); clearSecret.setSelected(false) }
+  override def reset(): Unit = { url.setText(settings.getState.metabaseUrl); agent.setSelected(settings.getState.agentEnabled); secret.setText(project.getService(classOf[DbtConsumers]).apiKey); airflow.reset() }
+  override def disposeUIResources(): Unit = secret.setText("")
 }

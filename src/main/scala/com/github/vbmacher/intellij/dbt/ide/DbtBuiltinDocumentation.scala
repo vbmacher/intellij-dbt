@@ -73,6 +73,9 @@ private[ide] final class DbtBuiltinDocumentationTarget(val symbol: DbtSymbol) ex
 final class DbtBuiltinPsiDocumentationTargetProvider extends PsiDocumentationTargetProvider {
   override def documentationTarget(element: PsiElement, originalElement: PsiElement): DocumentationTarget = element match {
     case e: DbtSymbolElement if e.symbol.kind == "documentation" => new DbtBuiltinDocumentationTarget(e.symbol)
+    case e: DbtSymbolElement if Set("column", "sql_projection")(e.symbol.kind) =>
+      DbtDocumentation.columnTarget(com.github.vbmacher.intellij.dbt.project.DbtWorkspace.get(e.getProject), e.symbol).orNull
+    case e: DbtSymbolElement => new DbtResourceDocumentationTarget(e.symbol)
     case _ => null
   }
 }

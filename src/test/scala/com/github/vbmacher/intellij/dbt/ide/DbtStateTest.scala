@@ -141,7 +141,6 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
     val command = DbtCommand.create(w, selection, "Build", fullRefresh = false).toOption.get
     assertEquals(1, command.arguments.count(_ == "--state"))
     val runner = new DbtRunner(getProject); Disposer.register(getTestRootDisposable, runner)
-    runner.console.getComponent
     assertTrue(runner.start(command))
     PlatformTestUtil.waitWithEventsDispatching("State build fake executable completes", () => !runner.isRunning, 15)
     val invocation = json(Files.readString(directory.resolve("invocation.json")))

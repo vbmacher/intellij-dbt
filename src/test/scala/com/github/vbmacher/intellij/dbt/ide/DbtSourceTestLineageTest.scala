@@ -55,7 +55,7 @@ sys.exit(1)
     assertEquals(Vector("test.analytics.check_orders"), completed.get.results.map(_.id))
     assertEquals("failed", completed.get.results.head.status)
     assertEquals("", completed.get.problem)
-    val graph = DbtGraphData.build(DbtWorkspace.get(getProject), None, 5, 5, exposures = true)
+    val graph = DbtGraphData.build(DbtWorkspace.get(getProject), None, 5, 5)
     val nodes = graph.payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject).toVector
     def execution(id: String) = nodes.find(_.get("id").getAsString == id).get.getAsJsonObject("execution")
     val badge = execution(DbtResourceIdentity.key(w, model))

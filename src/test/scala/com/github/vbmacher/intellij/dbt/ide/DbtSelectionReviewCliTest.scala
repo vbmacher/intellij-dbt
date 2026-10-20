@@ -40,6 +40,8 @@ final class DbtSelectionReviewCliTest extends DbtCodeInsightTestCase {
 - {name: window, definition: '1+c+1'}
 """)
     val w = workspace
+    assertEquals(Set("fqn:analytics.a", "fqn:analytics.b", "fqn:analytics.c", "fqn:analytics.d"),
+      DbtSelectionReview.cliTerms(w, root, "@selector:center").toOption.get.toSet)
     assertEquals(Set("fqn:analytics.b", "fqn:analytics.c", "fqn:analytics.d"),
       DbtSelectionReview.cliTerms(w, root, "1+selector:center+1").toOption.get.toSet)
     assertEquals(Set("fqn:analytics.a", "fqn:analytics.b", "fqn:analytics.c"),
@@ -51,13 +53,13 @@ final class DbtSelectionReviewCliTest extends DbtCodeInsightTestCase {
     add("models/orders.sql", "select 1")
     add("selectors.yml", """selectors:
 - {name: ordinary, definition: orders}
-- {name: runtime, definition: 'config.materialized:incremental'}
+- {name: runtime, definition: 'state:modified'}
 - {name: cycle_a, definition: 'selector:cycle_b'}
 - {name: cycle_b, definition: 'selector:cycle_a'}
 """)
     val w = workspace
-    Vector("selector:cycle_a", "selector:missing", "selector:runtime", "selector:ordinary config.materialized:incremental",
-      "selector:ordinary,state:modified", "@selector:ordinary", "selector:ordinary,,orders").foreach { expression =>
+    Vector("selector:cycle_a", "selector:missing", "selector:runtime", "selector:ordinary result:error",
+      "selector:ordinary,state:modified", "selector:ordinary,,orders").foreach { expression =>
       val result = DbtSelectionReview.cliTerms(w, root, expression)
       assertTrue(expression + " must not be sent to dbt as a named exclusion", result.isLeft)
       assertTrue(result.left.toOption.get.contains("resolve completely"))

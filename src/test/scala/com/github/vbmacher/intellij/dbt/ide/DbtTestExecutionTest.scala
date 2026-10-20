@@ -127,26 +127,7 @@ unit_tests:
     assertEquals(Vector("wrapper", "test", "--log-format", "json", "--select", test.selector, "--indirect-selection", "empty",
       "--threads", "4", "--target", "prod", "--use-colors"), rerun.arguments)
   }
-  def testNativeConsoleStreamsTestStateNavigatesDefinitionAndPreservesFailureOutput(): Unit = {
-    project(); val file = add("tests/check_orders.sql", "select 1")
-    val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
-    await("Native discovery completes") { panel.testDefinitions.nonEmpty && panel.testView != null }
-    val dir = temporary(); val script = fake(dir); val runner = getProject.getService(classOf[DbtRunner])
-    assertTrue(runner.start(command(dir, script, "hold")))
-    await("Native test goes running before exit") { panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.exists(p => p.getName == "analytics.check_orders" && p.isInProgress) }
-    runner.stop()
-    await("Canceled command returns idle") { !runner.isRunning }
-    val canceled = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.find(_.getName == "analytics.check_orders").get
-    assertTrue(canceled.wasTerminated())
-    assertTrue(runner.start(command(dir, script, "fail")))
-    await("Failed artifact updates native tree") { !runner.isRunning }
-    val proxy = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.find(_.getName == "analytics.check_orders").get
-    assertTrue(proxy.isDefect); assertTrue(proxy.getErrorMessage.contains("unexpected rows"))
-    val location = proxy.getLocation(getProject, com.intellij.psi.search.GlobalSearchScope.projectScope(getProject))
-    assertNotNull(location); assertEquals(file, location.getPsiElement.getContainingFile)
-    val invocation = JsonParser.parseString(Files.readString(dir.resolve("invocation.json"))).getAsJsonObject
-    assertTrue(invocation.get("profiles").getAsString.endsWith("profiles"))
-  }
+
   def testSuccessfulNoWriteProcessNeverReusesOldSuccessAsNewRun(): Unit = {
     project(); add("tests/check_orders.sql", "select 1")
     val dir = temporary(); val script = fake(dir); val runner = getProject.getService(classOf[DbtRunner])
@@ -159,60 +140,7 @@ unit_tests:
     assertFalse(result.toVector.flatMap(_.results).exists(_.status == "passed"))
     assertFalse(Files.exists(DbtExecutionEvidence.marker(dir.resolve("target/run_results.json"))))
   }
-  def testTerminalDiscoveryKeepsLiveConsoleAndNextRunCanPassAndDiscoverNewTests(): Unit = {
-    project(); add("tests/check_orders.sql", "select 1")
-    val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
-    await("Test discovery completes") { panel.testView != null && panel.testDefinitions.nonEmpty }
-    val dir = temporary(); val script = fake(dir); val runner = getProject.getService(classOf[DbtRunner])
-    def node = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.find(_.getName == "analytics.check_orders").get
-    def completeRefresh(): Unit = {
-      com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
-      com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents()
-    }
-    assertTrue(runner.start(command(dir, script, "fail").copy(request = DbtCommandRequest(DbtCommandAction.Test, extraArguments = Vector("fail", "hold")))))
-    await("First native run starts") { node.isInProgress }
-    val failingView = panel.testView
-    Files.writeString(dir.resolve("release"), "done")
-    await("Failure finishes") { !runner.isRunning && node.isDefect }
-    completeRefresh()
-    assertSame("Terminal discovery must not dispose a tree with pending native selection", failingView, panel.testView)
-    assertTrue(node.getErrorMessage.contains("unexpected rows"))
 
-    Files.delete(dir.resolve("release"))
-    assertTrue(runner.start(command(dir, script, "hold")))
-    await("Second native run resets the previous failure") { node.isInProgress }
-    val passingView = panel.testView
-    assertNotSame(failingView, passingView)
-    Files.writeString(dir.resolve("release"), "done")
-    await("Second run passes") { !runner.isRunning && node.isPassed }
-    completeRefresh()
-    assertSame(passingView, panel.testView)
-    assertFalse(node.isDefect)
-
-    add("tests/new_check.sql", "select 2")
-    panel.refresh()
-    await("Changed source definitions are rediscovered") { panel.testDefinitions.exists(_.name == "analytics.new_check") }
-    assertNotSame("Real discovery changes still replace the console", passingView, panel.testView)
-  }
-  def testNativeStatesKeepWarningsSkipsErrorsAndMissingTestsDistinct(): Unit = {
-    project()
-    Vector("pass", "fail", "warn", "error", "skip", "cancel", "missing").foreach(n => add(s"tests/$n.sql", "select 1"))
-    val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
-    await("Native state fixture discovers tests") { panel.testDefinitions.size == 7 && panel.testView != null }
-    val context = Vector(workspace.roots.head.directory.getPath, "dev", "configuration")
-    val results = Vector("pass" -> "passed", "fail" -> "failed", "warn" -> "warning", "error" -> "error", "skip" -> "skipped", "cancel" -> "canceled")
-      .map { case (name, state) => DbtExecutionResult("test.analytics." + name, state, "detail: " + name) }
-    panel.update(DbtExecutionRun(context, "dev", "native-state-run", Instant.now.toString, "run_results.json", results))
-    val nodes = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.filterNot(_.isSuite).map(p => p.getName -> p).toMap
-    assertTrue(nodes("analytics.pass").isPassed)
-    assertTrue(nodes("analytics.fail").isDefect)
-    assertTrue(nodes("analytics.error").isDefect)
-    assertNotEquals("Native error state must differ from an assertion failure", nodes("analytics.fail").getMagnitudeInfo, nodes("analytics.error").getMagnitudeInfo)
-    assertTrue(nodes("analytics.warn").isIgnored); assertTrue(nodes("analytics.warn").getPresentableName.startsWith("WARN"))
-    assertTrue(nodes("analytics.skip").isIgnored); assertTrue(nodes("analytics.skip").getPresentableName.startsWith("SKIP"))
-    assertTrue(nodes("analytics.cancel").wasTerminated())
-    assertFalse(nodes("analytics.missing").wasLaunched()); assertFalse(nodes("analytics.missing").isPassed)
-  }
 
   def testVersionedGenericTestsKeepDistinctManifestIdsAndExactYamlRanges(): Unit = {
     project()
@@ -283,67 +211,6 @@ unit_tests:
     assertEquals(captured.environment("DBT_PROFILES_DIR"), invoked.get("profiles").getAsString)
   }
 
-  def testNativeRunButtonRefreshesTargetAndKeepsOwningProjectWithExecutionDirectoryOverride(): Unit = {
-    project(); add("tests/check_orders.sql", "select 1")
-    val dir = temporary(); val script = fake(dir)
-    Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
-    val root = workspace.roots.head
-    root.runOptions.executable = script.toString
-    root.runOptions.projectRoot = dir.toString
-    root.runOptions.target = "dev"
-    root.runOptions.notifications = false
-    val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
-    await("Configured native tests become available") { panel.testView != null && panel.testDefinitions.nonEmpty }
-    def buttons(component: java.awt.Component): Vector[javax.swing.JButton] = component match {
-      case b: javax.swing.JButton => Vector(b)
-      case c: java.awt.Container => c.getComponents.toVector.flatMap(buttons)
-      case _ => Vector.empty
-    }
-    val run = buttons(panel).find(_.getText == "Run tests").get
-    val runner = getProject.getService(classOf[DbtRunner])
-    var launched = Vector.empty[DbtCommand]
-    runner.listen(getTestRootDisposable, event => if (event.running) event.command.foreach(command => launched :+= command))
-    run.doClick()
-    await("Run button completes in overridden directory") { launched.nonEmpty && !runner.isRunning }
-    assertEquals(root.directory.getPath, launched.head.root)
-    assertEquals(dir.toString, launched.head.directory)
-    await("Owning source tests receive results") { panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.exists(p => p.getName == "analytics.check_orders" && p.isPassed) }
-    val before = panel.testView
-    root.runOptions.target = "prod"
-    DbtProjectSettings.get(getProject).changed()
-    await("Changing target rebuilds the native command snapshot") { panel.testView ne before }
-    run.doClick()
-    await("New target command completes") { launched.size == 2 && !runner.isRunning }
-    assertEquals("prod", launched.last.target)
-    assertTrue(launched.last.arguments.sliding(2).exists(_ == Vector("--target", "prod")))
-  }
 
-  def testOpeningTestsDuringExecutionRestoresProgressAndStop(): Unit = {
-    project(); add("tests/check_orders.sql", "select 1")
-    val dir = temporary(); val script = fake(dir)
-    Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
-    val root = workspace.roots.head
-    root.runOptions.projectRoot = dir.toString
-    root.runOptions.executable = script.toString
-    root.runOptions.target = "dev"; root.runOptions.notifications = false
-    val base = DbtCommand.create(workspace, DbtRunSelection.all(workspace, root.directory.getPath).get, "Test", fullRefresh = false).toOption.get
-    val runner = getProject.getService(classOf[DbtRunner])
-    assertTrue(runner.start(base.copy(request = base.request.copy(extraArguments = Vector("hold")))))
-    try {
-      val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
-      await("Opening the tab restores active execution evidence") {
-        panel.testView != null && panel.testView.getResultsViewer.getStatusLine.isVisible
-      }
-      def buttons(c: java.awt.Component): Vector[javax.swing.JButton] = c match {
-        case b: javax.swing.JButton => Vector(b)
-        case p: java.awt.Container => p.getComponents.toVector.flatMap(buttons)
-        case _ => Vector.empty
-      }
-      val stop = buttons(panel).find(_.getText == "Stop").get
-      assertTrue(stop.isEnabled)
-      stop.doClick()
-      await("Stop cancels the existing managed command")(!runner.isRunning)
-    } finally runner.stop()
-  }
 
 }

@@ -30,24 +30,28 @@ and screenshots.
 - [SQL clipboard conversion](editor.md#sql-clipboard-conversion): **Copy for Target DB** and **Paste as dbt Refs**.
 - [Syntax highlighting](editor.md#syntax-highlighting) for SQL/Jinja, YAML/Jinja and Markdown/Jinja.
 
-## dbt window
+## Execution and lineage
 
-- [Runner](workspace.md#runner): run dbt commands, [review selections and baseline state](workspace.md#selection-and-state) and [preview query results](workspace.md#preview-results).
-- [Selected SQL and CTE inspection](workspace.md#selected-sql-and-cte-inspection): preview a query or CTE and step through CTEs.
-- [Lineage](workspace.md#lineage): trace resources, [filter, group and export the graph](workspace.md#filter-group-and-share), read [documentation and column lineage](workspace.md#documentation) and [edit properties](workspace.md#edit-properties).
-- [Build and freshness badges](workspace.md#build-and-freshness-badges) on lineage cards.
-- [Tests](workspace.md#tests): browse, run and rerun tests and inspect failures.
-- [Workspace details](workspace.md#workspace-details): the active execution context and metadata availability.
+- [dbt Run configurations](execution.md#commands) for model, directory and project commands.
+- [Selection review and baseline comparison](execution.md#selection-and-state) in native Find and Diff views.
+- [Query previews](execution.md#preview-results) and read-only compiled SQL editors.
+- [CTE query inspection](execution.md#inspect-cte-queries) in the native Debug window.
+- [Data and unit tests](execution.md#tests) with native test results and pass/fail gutters.
+- [Lineage](workspace.md#lineage), including [filters, grouping and image export](workspace.md#filter-group-and-share).
+- [Build and freshness badges](workspace.md#build-and-freshness-badges) linking to recorded Run results.
+- [CTE Structure and dependency Hierarchy](navigation.md#cte-structure-and-dependency-hierarchy).
+- [YAML property editing and generation](editor.md#edit-and-generate-yaml-properties).
 
 ## Integrations
 
 - [Git change impact](integrations.md#review-the-impact-of-git-changes): affected resources and a suggested validation selection.
 - [Downstream consumers](integrations.md#find-downstream-consumers): declared exposures and Metabase questions and dashboards.
-- [Airflow context](integrations.md#inspect-airflow-context): declared DAG/task associations.
-- [Local agent tools](integrations.md#give-a-local-assistant-read-only-project-access): read-only project access for a local assistant.
+- [Airflow context](integrations.md#inspect-airflow-context): automatic local DAG detection and dbt associations.
+- [Local MCP server](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server): read-only project access for an AI assistant.
 
 ## Reference
 
-- [Configuration](configuration.md): `.dbt-navigation.yml`, `.dbt-airflow.yml`, **Settings → dbt Workspace** and **Settings → dbt Integrations**.
+- [Configuration](configuration.md): `.dbt-navigation.yml`, **Settings → dbt Workspace** and **Settings → dbt Integrations**.
+- [Environment variables](configuration.md#environment-variables): load project environment files for dbt commands and SQL formatters.
 - [Icons](icons.md): icon meanings and where they appear.
 - [Troubleshooting](troubleshooting.md): missing targets, unavailable actions and stale metadata.

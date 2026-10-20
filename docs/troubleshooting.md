@@ -70,4 +70,4 @@ target; see [SQL clipboard conversion](editor.md#sql-clipboard-conversion).
 ## Lineage is blank or a command fails
 
 Check the browser prerequisites in [installation](installation.md) and the
-[Runner](workspace.md#runner) log.
+[Run](execution.md#commands) console.

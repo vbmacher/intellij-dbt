@@ -1,475 +1,79 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettingsState, DbtWorkspace}
-import com.google.gson.JsonParser
-import com.intellij.codeHighlighting.Pass
-import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
-import com.intellij.codeInsight.multiverse.CodeInsightContexts
-import com.intellij.mock.Mock
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.{ApplicationManager, ModalityState}
-import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.fileEditor.{FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
-import com.intellij.openapi.options.ex.ConfigurableCardPanel
-import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.github.vbmacher.intellij.dbt.project._
+import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.wm.{RegisterToolWindowTask, ToolWindowManager}
-import com.intellij.testFramework.{PlatformTestUtil, PsiTestUtil, ServiceContainerUtil}
-import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestFixture}
+import org.jdom.Element
 import org.junit.Assert._
-import java.awt.{Component, Container}
-import java.nio.file.{Files, Paths}
-import javax.swing.{JButton, JCheckBox, JComboBox, JScrollPane, JTextArea, JTextField, SwingUtilities}
-import scala.jdk.CollectionConverters._
 
-/** Exercise the Swing start button and daemon invalidation rather than forcing a new resolver/highlighting run. */
+/** Native Run configurations replace the custom Runner form. */
 final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
-  private var ui: Disposable = _
-  override protected def tearDown(): Unit = try {
-    if (ui != null) Disposer.dispose(ui)
-    DbtProjectSettings.get(getProject).loadState(new DbtSettingsState)
-  } finally super.tearDown()
-  override protected def createTempDirTestFixture(): TempDirTestFixture = IdeaTestFixtureFactory.getFixtureFactory.createTempDirTestFixture()
-
-  private def setupEditor(): Unit = {
-    ui = Disposer.newDisposable()
-    Disposer.register(getTestRootDisposable, ui)
-    val config = project()
-    PsiTestUtil.addContentRoot(getModule, config.getVirtualFile.getParent)
-    configure("models/report.sql", "select * from {{ ref('mis<caret>sing') }}")
-    ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
-      override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceUiTest.this.getProject
-      override def getSelectedTextEditor: com.intellij.openapi.editor.Editor = myFixture.getEditor
-      override def getOpenFiles: Array[com.intellij.openapi.vfs.VirtualFile] = Array(myFixture.getFile.getVirtualFile)
-      override def getSelectedFiles: Array[com.intellij.openapi.vfs.VirtualFile] = getOpenFiles
-    }, ui)
+  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
+  private def configuration(): DbtRunConfiguration = {
+    val factory = ConfigurationTypeUtil.findConfigurationType(classOf[DbtConfigurationType]).getConfigurationFactories.head
+    val value = new DbtRunConfiguration(getProject, factory, "dbt command")
+    value.root = DbtWorkspace.get(getProject).roots.head.directory.getPath
+    value
   }
-
-  private def await(message: String)(condition: => Boolean): Unit =
-    PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
-
-  private def children(component: Component): Vector[Component] = Vector(component) ++ (component match {
-    case container: Container => container.getComponents.toVector.flatMap(children)
-    case _ => Vector.empty
-  })
-
-  private def picker(panel: DbtToolWindowPanel): TextFieldWithBrowseButton = children(panel.runnerPanel).collectFirst {
-    case field: TextFieldWithBrowseButton if field.getName == "dbt.runSelection" => field
-  }.get
-
-  private def button(panel: DbtToolWindowPanel, name: String): JButton = {
-    if (DbtCommand.Actions.contains(name)) children(panel.runnerPanel).collectFirst {
-      case combo: JComboBox[_] if combo.getName == "dbt.command" => combo
-    }.foreach(_.setSelectedItem(name))
-    children(panel.runnerPanel).collectFirst {
-      case button: JButton if button.getText == name || DbtCommand.Actions.contains(name) && button.getName == "dbt.execute" => button
-    }.get
-  }
-
-  private def choose(panel: DbtToolWindowPanel, path: String): Unit = {
-    picker(panel).setText(path)
-    await("The explicit run selection enables commands")(button(panel, "Run").isEnabled)
-  }
-
-  def testRunnerKeepsOneResultAreaAndShowsActiveSelectorsAtNarrowWidths(): Unit = {
-    setupEditor()
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    panel.refresh(follow = true)
-    choose(panel, myFixture.getFile.getVirtualFile.getPath)
-    val controls = children(panel.runnerPanel)
-    val toggle = controls.collectFirst { case b: javax.swing.JToggleButton if b.getName == "dbt.selectorToggle" => b }.get
-    val expression = controls.collectFirst { case f: JTextField if f.getName == "dbt.selection" => f }.get
-    val output = controls.collectFirst { case tabs: javax.swing.JTabbedPane if tabs.getName == "dbt.output" => tabs }.get
-    assertEquals("Console", output.getTitleAt(output.getSelectedIndex))
-    assertFalse("Unused selector fields stay collapsed", expression.getParent.getParent.isVisible)
-    assertFalse("Executable arguments are configured in Settings", controls.exists(_.getName == "dbt.executableArguments"))
-    toggle.doClick()
-    expression.setText("tag:finance+")
-    assertTrue(toggle.getText.endsWith(": on"))
-    assertFalse("Selector execution does not support model Preview", button(panel, "Preview").isEnabled)
-    button(panel, "Run")
-    toggle.doClick()
-    assertFalse(expression.getParent.getParent.isVisible)
-    assertTrue("Collapsed selectors still advertise their effect", toggle.getText.endsWith(": on"))
-    val summary = controls.collectFirst { case l: javax.swing.JLabel if l.getName == "dbt.context" => l }.get
-    assertTrue(summary.getText.contains("tag:finance+"))
-    def layout(component: Component): Unit = component match {
-      case container: Container => container.doLayout(); container.getComponents.foreach(layout)
-      case _ => ()
+  def testEveryCommandPreparesWithoutChangingProjectDefaultsAndRoundTripsOverrides(): Unit = {
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: postgres}, prod: {type: postgres}}}\n")
+    val model = add("models/orders.sql", "{{ config(materialized='incremental') }} select 1 as id")
+    val w = DbtWorkspace.get(getProject); val root = w.roots.head
+    root.runOptions.target = "dev"
+    val config = configuration()
+    config.target = "prod"; config.executable = "/usr/bin/python3"; config.executableArguments = "'wrapper with spaces.py'"
+    for (action <- DbtCommand.Actions :+ "Resolve Selection") {
+      config.action = action
+      config.scope = if (action == "Preview") model.getVirtualFile.getPath else ""
+      config.checkConfiguration()
+      val command = config.prepare().fold(error => fail(action + ": " + error).asInstanceOf[DbtCommand], _._1)
+      assertEquals(action, command.action); assertEquals("prod", command.target)
+      assertEquals(Vector("/usr/bin/python3", "wrapper with spaces.py"), command.prefix)
+      assertEquals("dev", root.runOptions.target)
+      assertEquals("dbt", root.runOptions.executable)
     }
-    for (width <- Vector(600, 1100)) {
-      panel.runnerPanel.setSize(width, 600)
-      layout(panel.runnerPanel)
-      Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
-        val image = new java.awt.image.BufferedImage(width, 600, java.awt.image.BufferedImage.TYPE_INT_RGB)
-        val graphics = image.createGraphics()
-        try panel.runnerPanel.printAll(graphics) finally graphics.dispose()
-        javax.imageio.ImageIO.write(image, "png", new java.io.File(path + "-" + width + ".png"))
-      }
-      for (component <- Vector(picker(panel), button(panel, "Run"), button(panel, "Stop"), button(panel, "More…"), toggle)) {
-        val end = SwingUtilities.convertPoint(component, component.getWidth, component.getHeight, panel.runnerPanel)
-        assertTrue("Controls fit the tool window at " + width + ": " + component, end.x <= width && end.y < 200)
-      }
-      assertTrue("The console keeps most of the tool window; actual height: " + output.getHeight, output.getHeight > 400)
-      toggle.doClick()
-      layout(panel.runnerPanel)
-      assertTrue("Expanded options retain a usable result area", output.getHeight > 250)
-      val fieldEnd = SwingUtilities.convertPoint(expression, expression.getWidth, expression.getHeight, panel.runnerPanel)
-      assertTrue("Selector input fits the expanded tool window", fieldEnd.x <= width)
-      Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
-        val image = new java.awt.image.BufferedImage(width, 600, java.awt.image.BufferedImage.TYPE_INT_RGB)
-        val graphics = image.createGraphics()
-        try panel.runnerPanel.printAll(graphics) finally graphics.dispose()
-        javax.imageio.ImageIO.write(image, "png", new java.io.File(path + "-expanded-" + width + ".png"))
-      }
-      toggle.doClick()
-    }
-    toggle.doClick()
-    expression.setText("")
-    assertFalse(toggle.getText.endsWith(": on"))
-    Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
-      toggle.doClick()
-      panel.runnerPanel.setSize(900, 600)
-      layout(panel.runnerPanel)
-      val image = new java.awt.image.BufferedImage(900, 600, java.awt.image.BufferedImage.TYPE_INT_RGB)
-      val graphics = image.createGraphics()
-      try panel.runnerPanel.printAll(graphics) finally graphics.dispose()
-      javax.imageio.ImageIO.write(image, "png", new java.io.File(path))
-    }
+    config.action = "Build"; config.scope = model.getVirtualFile.getPath; config.fullRefresh = true
+    val xml = new Element("configuration"); config.writeExternal(xml)
+    val restored = configuration(); restored.readExternal(xml)
+    assertEquals(config.scope, restored.scope); assertEquals(config.target, restored.target)
+    assertEquals(config.executableArguments, restored.executableArguments)
+    assertTrue(restored.prepare().toOption.get._1.request.fullRefresh)
   }
-
-  def testSettingsFieldsFitTheSettingsViewportWithLongValues(): Unit = {
-    setupEditor()
-    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
-    val options = DbtProjectSettings.get(getProject).options(directory)
-    options.executable = "/long executable path/" * 30
-    options.executableArguments = "long argument " * 100
-    options.projectRoot = "/long project path/" * 30
-    val configurable = new DbtSettingsConfigurable(getProject)
-    val scroll = ConfigurableCardPanel.createConfigurableComponent(configurable).asInstanceOf[JScrollPane]
-    try {
-      val form = scroll.getViewport.getView.asInstanceOf[Container]
-      val fields = form.getComponents.toVector.flatMap {
-        case field: JTextField => Vector(field)
-        case browse: TextFieldWithBrowseButton => Vector(browse.getTextField)
-        case _ => Vector.empty
-      }
-      assertEquals(8, fields.size)
-      for (width <- Vector(800, 500, 1000)) {
-        scroll.setSize(width, 300); scroll.doLayout(); scroll.getViewport.doLayout()
-        form.doLayout(); form.getComponents.collect { case container: Container => container }.foreach(_.doLayout())
-        assertFalse("No horizontal scrollbar at width " + width, scroll.getHorizontalScrollBar.isVisible)
-        assertEquals(scroll.getViewport.getExtentSize.width, scroll.getViewport.getView.getWidth)
-        fields.foreach { field =>
-          assertTrue("Text fields retain usable space", field.getWidth > 50)
-          assertTrue("Text fields fit inside the viewport", SwingUtilities.convertPoint(field, field.getWidth, 0, form).x <= scroll.getViewport.getExtentSize.width)
-        }
-      }
-      assertFalse("Resizing keeps saved values intact", configurable.isModified)
-    } finally configurable.disposeUIResources()
+  def testStoredConfigurationsHaveIndependentScopesAndGraphFilteringCannotRetargetThem(): Unit = {
+    project(); val one = add("models/one.sql", "select 1"); val two = add("models/two.sql", "select 2")
+    val first = configuration(); first.action = "Run"; first.scope = one.getVirtualFile.getPath
+    val second = configuration(); second.action = "Compile"; second.scope = two.getVirtualFile.getPath
+    val before = first.prepare().toOption.get._1
+    val panel = new DbtToolWindowPanel(getProject); Disposer.register(getTestRootDisposable, panel)
+    panel.handleMessage("""{"type":"filter","id":"two","value":""}""")
+    assertEquals(before.arguments, first.prepare().toOption.get._1.arguments)
+    assertTrue(second.prepare().toOption.get._1.arguments.contains("fqn:analytics.two"))
+    assertFalse(second.prepare().toOption.get._1.arguments.contains("fqn:analytics.one"))
   }
-
-  def testRunAndPreviewUseTheChosenModelAndSaveDocuments(): Unit = {
-    setupEditor()
-    val chosen = add("models/chosen.sql", "select 42")
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
-    val executable = add("fake-dbt", """#!/usr/bin/python3
-import json,pathlib,sys
-pathlib.Path('invocation.json').write_text(json.dumps({'args':sys.argv[1:],'saved':pathlib.Path('models/report.sql').read_text()}))
-print('started from the Run button',flush=True)
-""").getVirtualFile
-    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
-    val options = DbtProjectSettings.get(getProject).options(directory)
-    options.executable = executable.getPath; options.notifications = false
-    val manager = ToolWindowManager.getInstance(getProject)
-    val toolWindow = manager.registerToolWindow(RegisterToolWindowTask.notClosable("dbt-ui-test"))
-    try {
-      val panel = new DbtToolWindowPanel(getProject)
-      Disposer.register(ui, panel)
-      val run = children(panel.runnerPanel).collectFirst { case button: JButton if button.getName == "dbt.execute" => button }.get
-      panel.refresh(follow = true)
-      choose(panel, chosen.getVirtualFile.getPath)
-      val sql = "select 1 -- unsaved editor contents\n"
-      WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-        override def run(): Unit = myFixture.getEditor.getDocument.setText(sql)
-      })
-      ApplicationManager.getApplication.invokeLater(() => run.doClick(), ModalityState.nonModal())
-      val invocation = Paths.get(directory, "invocation.json")
-      await("Run button launches the fake dbt executable")(Files.isRegularFile(invocation))
-      val result = JsonParser.parseString(Files.readString(invocation)).getAsJsonObject
-      assertEquals(sql, result.get("saved").getAsString)
-      assertTrue(result.getAsJsonArray("args").asScala.exists(_.getAsString == "fqn:analytics.chosen"))
-      await("Run returns to idle")(!getProject.getService(classOf[DbtRunner]).isRunning)
-      Files.delete(invocation)
-      myFixture.getEditor.getSelectionModel.setSelection(0, myFixture.getEditor.getDocument.getTextLength)
-      ApplicationManager.getApplication.invokeLater(() => button(panel, "Preview").doClick(), ModalityState.nonModal())
-      await("Preview launches the explicitly chosen model")(Files.isRegularFile(invocation))
-      val preview = JsonParser.parseString(Files.readString(invocation)).getAsJsonObject.getAsJsonArray("args").asScala.map(_.getAsString).toVector
-      assertTrue(preview.contains("fqn:analytics.chosen"))
-      assertFalse(preview.contains("--inline"))
-      await("Preview returns to idle")(!runner.isRunning)
-    } finally toolWindow.remove()
+  def testCliSelectionBecomesUnusableAfterSourceOrExecutionSettingsChange(): Unit = {
+    project(); val file = add("models/orders.sql", "select 1")
+    val config = configuration(); config.action = "Run"; config.selectors = Vector("runtime:unknown")
+    assertTrue(config.prepare().isLeft)
+    config.cliSelection = Some(config.sourceKey(DbtWorkspace.get(getProject)) -> Vector("model.analytics.orders"))
+    assertTrue(config.prepare().isRight)
+    edit(file, "select 2")
+    assertTrue("Stale CLI resolution cannot execute", config.prepare().isLeft)
+    config.cliSelection = Some(config.sourceKey(DbtWorkspace.get(getProject)) -> Vector("model.analytics.orders"))
+    config.target = "prod"
+    assertTrue(config.prepare().isLeft)
+    config.cliSelection = Some(config.sourceKey(DbtWorkspace.get(getProject)) -> Vector("missing.resource"))
+    assertTrue("Unknown CLI identities must never widen execution", config.prepare().isLeft)
   }
-
-  def testFailedDbtLsRefreshDiscardsThePreviousCliReview(): Unit = {
-    setupEditor()
-    val chosen = add("models/chosen.sql", "select 42")
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
-    val executable = add("fake-dbt", """#!/usr/bin/python3
-import json,os,sys
-if os.path.exists('fail-ls'): sys.exit(2)
-if 'ls' in sys.argv: print(json.dumps({'unique_id':'model.analytics.chosen'}),flush=True)
-""").getVirtualFile
-    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
-    val options = DbtProjectSettings.get(getProject).options(directory)
-    options.executable = executable.getPath; options.notifications = false
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    panel.refresh(follow = true)
-    choose(panel, chosen.getVirtualFile.getPath)
-    val review = children(panel.runnerPanel).collectFirst { case a: JTextArea if a.getName == "dbt.selectionReview" => a }.get
-    ApplicationManager.getApplication.invokeLater(() => button(panel, "Refresh with dbt ls").doClick(), ModalityState.nonModal())
-    await("dbt ls review succeeds")(review.getText.contains("model.analytics.chosen") && button(panel, "Copy command").isEnabled)
-    Files.writeString(Paths.get(directory, "fail-ls"), "")
-    ApplicationManager.getApplication.invokeLater(() => button(panel, "Refresh with dbt ls").doClick(), ModalityState.nonModal())
-    await("Failed dbt ls replaces the review")(review.getText.contains("dbt ls did not complete") && !runner.isRunning)
-    assertFalse(review.getText.contains("model.analytics.chosen"))
-    assertFalse(button(panel, "Copy command").isEnabled)
-  }
-
-  def testRunnerUsesConfiguredPrefixAndGeneratesRenderableDocs(): Unit = {
-    setupEditor()
-    val editorOptions = com.intellij.openapi.editor.ex.EditorSettingsExternalizable.getInstance()
-    val ensureNewline = editorOptions.isEnsureNewLineAtEOF
-    editorOptions.setEnsureNewLineAtEOF(true)
-    Disposer.register(ui, () => editorOptions.setEnsureNewLineAtEOF(ensureNewline))
-    val config = DbtWorkspace.get(getProject).roots.head.config.getContainingFile
-    edit(config, config.getText.stripSuffix("\n"))
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val directory = myFixture.getFile.getVirtualFile.getParent.getParent.getPath
-    val executable = add("fake-dbt", """#!/usr/bin/python3
-import json,os,pathlib,sys
-target=pathlib.Path(os.environ['DBT_TARGET_PATH'])
-target.mkdir(parents=True,exist_ok=True)
-target.joinpath('manifest.json').write_text(json.dumps({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/manifest/v12.json'},'nodes':{'model.analytics.report':{'unique_id':'model.analytics.report','resource_type':'model','name':'report','package_name':'analytics','original_file_path':'models/report.sql','description':'Generated for '+sys.argv[1]}}}))
-pathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))
-""").getVirtualFile
-    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
-    val settings = DbtProjectSettings.get(getProject)
-    val options = settings.options(directory)
-    options.executable = executable.getPath; options.executableArguments = "initial"; options.notifications = false
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    val controls = children(panel.runnerPanel)
-    panel.refresh(follow = true)
-    choose(panel, directory)
-    options.executableArguments = "updated-in-settings"; settings.changed()
-    options.executableArguments = "'analytics context'"; settings.changed()
-    ApplicationManager.getApplication.invokeLater(() => button(panel, "Generate Docs").doClick(), ModalityState.nonModal())
-    val invocation = Paths.get(directory, "invocation.json")
-    await("Generate Docs launches the configured executable")(Files.isRegularFile(invocation))
-    assertEquals(Vector("analytics context", "docs", "generate"), JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).take(3).toVector)
-    assertEquals("'analytics context'", settings.options(directory).executableArguments)
-    await("Generated artifacts refresh documentation") {
-      val workspace = DbtWorkspace.get(getProject)
-      workspace.codeSymbols(myFixture.getFile).find(_.kind == "model").exists(symbol =>
-        DbtDocumentation.render(workspace, symbol).contains("Generated for analytics context"))
-    }
-    await("Docs command returns to idle")(!runner.isRunning)
-    assertTrue("Save actions must be committed before capturing the command's artifact context",
-      com.github.vbmacher.intellij.dbt.project.DbtArtifactContext.matches(DbtWorkspace.get(getProject).roots.head))
-  }
-
-  def testDirectorySelectionSurvivesEditorChangesAndRunsWithoutAnOpenEditor(): Unit = {
-    setupEditor()
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val model = add("models/batch/orders.sql", "{{ config(materialized='incremental') }} select 1")
-    add("models/batch/nested/detail.sql", "select 2")
-    val directory = DbtWorkspace.get(getProject).roots.head.directory.getPath
-    val executable = add("fake-dbt", "#!/usr/bin/python3\nimport json,pathlib,sys\npathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))\n").getVirtualFile
-    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
-    val options = DbtProjectSettings.get(getProject).options(directory)
-    options.executable = executable.getPath
-    options.notifications = false
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    panel.refresh(follow = true)
-    def status: String = panel.diagnosticsText
-    await("An empty model path enables all models")(button(panel, "Run").isEnabled)
-    assertTrue(status.contains("Selection: All models: analytics"))
-    assertEquals("", picker(panel).getText)
-    assertTrue(picker(panel).getTextField.isEditable)
-    assertTrue(picker(panel).getButton.isEnabled)
-    val path = model.getVirtualFile.getParent.getPath
-    choose(panel, path)
-    assertFalse("Folder previews require a single model", button(panel, "Preview").isEnabled)
-    val refresh = children(panel.runnerPanel).collectFirst { case box: JCheckBox if box.getText == "Full Refresh" => box }.get
-    assertTrue(refresh.isVisible)
-    refresh.setSelected(true)
-    add("other/dbt_project.yml", "name: marketing\nconfig-version: 2\n")
-    val unrelated = add("other/models/unrelated.sql", "select 3").getVirtualFile
-    ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
-      override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceUiTest.this.getProject
-      override def getSelectedTextEditor: com.intellij.openapi.editor.Editor = null
-      override def getSelectedFiles: Array[com.intellij.openapi.vfs.VirtualFile] = Array(unrelated)
-      override def getOpenFiles: Array[com.intellij.openapi.vfs.VirtualFile] = Array(unrelated)
-    }, ui)
-    val manager = FileEditorManager.getInstance(getProject)
-    getProject.getMessageBus.syncPublisher(FileEditorManagerListener.FILE_EDITOR_MANAGER)
-      .selectionChanged(new FileEditorManagerEvent(manager, null, null))
-    panel.refresh(follow = true)
-    await("Editor changes refresh lineage")(status.contains("Lineage focus: marketing.unrelated"))
-    assertEquals(path, picker(panel).getText)
-    assertTrue("Changing editors preserves the explicit Full Refresh choice", refresh.isSelected)
-    ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
-      override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceUiTest.this.getProject
-      override def getSelectedTextEditor: com.intellij.openapi.editor.Editor = null
-      override def getSelectedFiles: Array[com.intellij.openapi.vfs.VirtualFile] = Array.empty
-      override def getOpenFiles: Array[com.intellij.openapi.vfs.VirtualFile] = Array.empty
-    }, ui)
-    panel.refresh(follow = true)
-    await("Runner remains usable after closing editors")(status.contains("Lineage focus: None"))
-    ApplicationManager.getApplication.invokeLater(() => button(panel, "Run").doClick(), ModalityState.nonModal())
-    val invocation = Paths.get(directory, "invocation.json")
-    await("Run launches the chosen folder without an editor")(Files.isRegularFile(invocation))
-    val args = JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).toVector
-    assertTrue(args.contains("fqn:analytics.batch.orders"))
-    assertTrue(args.contains("fqn:analytics.batch.nested.detail"))
-    assertTrue(args.contains("--full-refresh"))
-    assertFalse(args.exists(_.contains("unrelated")))
-    await("Folder run returns idle")(!getProject.getService(classOf[DbtRunner]).isRunning)
-    choose(panel, directory + "/models/report.sql")
-    assertTrue(button(panel, "Preview").isEnabled)
-    assertFalse(refresh.isVisible)
-    assertFalse(refresh.isSelected)
-    choose(panel, "")
-    Disposer.dispose(panel)
-    val reopened = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, reopened)
-    reopened.refresh(follow = true)
-    assertEquals("", picker(reopened).getText)
-    await("Runner restores its remembered selection")(button(reopened, "Run").isEnabled)
-    assertTrue(reopened.diagnosticsText.contains("Selection: All models: analytics"))
-  }
-
-  def testTypedTargetAndConfiguredArgumentsSurviveRunnerRefreshes(): Unit = {
-    setupEditor()
-    val config = DbtWorkspace.get(getProject).roots.head.config.getContainingFile
-    edit(config, config.getText + "\nprofile: analytics\n")
-    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: duckdb}, qa: {type: duckdb}}}\n")
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val model = myFixture.getFile.getVirtualFile
-    val directory = model.getParent.getParent.getPath
-    val executable = add("fake-dbt", "#!/usr/bin/python3\nimport json,pathlib,sys\npathlib.Path('invocation.json').write_text(json.dumps(sys.argv[1:]))\n").getVirtualFile
-    assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
-    val settings = DbtProjectSettings.get(getProject)
-    val options = settings.options(directory)
-    options.executable = executable.getPath
-    options.notifications = false
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    panel.refresh(follow = true)
-    val controls = children(panel.runnerPanel)
-    val target = controls.collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.target" => combo.asInstanceOf[JComboBox[String]] }.get
-    def status: String = panel.diagnosticsText
-    for ((path, index) <- Vector(model.getPath, model.getParent.getPath, "", directory).zipWithIndex) {
-      choose(panel, path)
-      assertTrue(target.isEnabled)
-      assertTrue("Targets supplied by wrappers must also be editable", target.isEditable)
-      assertTrue((0 until target.getItemCount).map(target.getItemAt).contains("qa"))
-      def layout(component: Component): Unit = component match {
-        case container: Container => container.doLayout(); container.getComponents.foreach(layout)
-        case _ => ()
-      }
-      panel.runnerPanel.setSize(1100, 600)
-      layout(panel.runnerPanel)
-      for (field <- Vector(target, picker(panel).getTextField)) {
-        assertTrue("Runner inputs retain usable space on one row", field.getWidth > 50)
-        assertTrue(SwingUtilities.convertPoint(field, field.getWidth, 0, panel.runnerPanel).x <= 1100)
-      }
-      val positions = Vector(picker(panel), target).map(field =>
-        SwingUtilities.convertPoint(field, 0, field.getHeight / 2, panel.runnerPanel))
-      assertTrue("All controls share one row: " + positions, positions.map(_.y).max - positions.map(_.y).min <= 2)
-      assertEquals("Scope precedes target", positions.map(_.x).sorted, positions.map(_.x))
-      val targetField = target.getEditor.getEditorComponent.asInstanceOf[JTextField]
-      targetField.setText("custom_" + index)
-      options.executableArguments = s"'scope $index'"; settings.changed()
-      val targetModel = target.getModel
-      panel.refresh(follow = false)
-      await("Background refresh completes while input is pending")(status.nonEmpty)
-      assertSame("Unchanged target choices keep the dropdown model", targetModel, target.getModel)
-      assertEquals("custom_" + index, targetField.getText)
-      // Run must save typed values even before Enter or focus loss commits them.
-      ApplicationManager.getApplication.invokeLater(() => button(panel, "Run").doClick(), ModalityState.nonModal())
-      val invocation = Paths.get(directory, "invocation.json")
-      await("Run launches with the edited configuration")(Files.isRegularFile(invocation))
-      val args = JsonParser.parseString(Files.readString(invocation)).getAsJsonArray.asScala.map(_.getAsString).toVector
-      assertEquals(s"scope $index", args.head)
-      assertEquals(path.nonEmpty && path != directory, args.contains("--select"))
-      assertEquals("custom_" + index, args(args.indexOf("--target") + 1))
-      assertEquals("custom_" + index, options.target)
-      assertEquals(s"'scope $index'", options.executableArguments)
-      await("Edited run returns idle")(!runner.isRunning)
-      Files.delete(invocation)
-    }
-  }
-
-  def testRunSelectionAcceptsRelativePathsAndKeepsInvalidInputForCorrection(): Unit = {
-    setupEditor()
-    val runner = new DbtRunner(getProject)
-    Disposer.register(ui, runner)
-    ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, ui)
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(ui, panel)
-    val model = Paths.get(myFixture.getFile.getVirtualFile.getPath)
-    val relative = Paths.get(getProject.getBasePath).relativize(model).toString
-    choose(panel, relative)
-    assertEquals(model.toString, DbtProjectSettings.get(getProject).getState.runnerSelection)
-    assertEquals(relative, picker(panel).getText)
-    assertTrue(picker(panel).getButton.getActionListeners.nonEmpty)
-    val invalid = model.getParent.resolve("missing.sql").toString
-    picker(panel).setText(invalid)
-    def status: String = panel.diagnosticsText
-    await("Invalid model cannot launch commands")(status.contains("Selection: None"))
-    assertFalse(button(panel, "Run").isEnabled)
-    assertEquals(invalid, picker(panel).getText)
-    choose(panel, model.getParent.toString)
-    assertFalse(button(panel, "Preview").isEnabled)
-  }
-
-  def testAddingAReferencedDefinitionInvalidatesOpenEditorHighlighting(): Unit = {
-    setupEditor()
-    myFixture.enableInspections(new DbtUnresolvedReferenceInspection)
-    assertTrue(myFixture.doHighlighting().asScala.exists(h => Option(h.getDescription).contains("Unresolved ref: 'missing'")))
-    val document = myFixture.getEditor.getDocument
-    val stamp = document.getModificationStamp
-    val daemon = com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(getProject).asInstanceOf[DaemonCodeAnalyzerImpl]
-    val status = daemon.getFileStatusMap
-    // Pending setup changes must settle before testing a new change in another file.
-    val quiet = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500)
-    PlatformTestUtil.waitWithEventsDispatching("Initial refresh settles", () => System.nanoTime() >= quiet, 2)
-    status.markFileUpToDate(document, CodeInsightContexts.anyContext(), Pass.EXTERNAL_TOOLS, null)
-    assertNull(status.getFileDirtyScope(document, myFixture.getFile, Pass.EXTERNAL_TOOLS))
-    add("models/missing.sql", "select 1")
-    await("Adding a definition invalidates the unchanged referencing editor")(
-      status.getFileDirtyScope(document, myFixture.getFile, Pass.EXTERNAL_TOOLS) != null)
-    assertEquals(stamp, document.getModificationStamp)
-    assertFalse(myFixture.doHighlighting().asScala.exists(h => Option(h.getDescription).contains("Unresolved ref: 'missing'")))
+  def testPreviewRejectsFoldersAndFreshnessRemainsProjectWide(): Unit = {
+    project(); val model = add("models/orders.sql", "select 1")
+    val config = configuration(); config.action = "Preview"
+    assertTrue(config.prepare().isLeft)
+    config.scope = model.getVirtualFile.getPath
+    assertTrue(config.prepare().isRight)
+    config.action = "Source Freshness"
+    assertTrue(config.prepare().isLeft)
+    config.scope = ""
+    assertEquals(DbtCommandScope.All, config.prepare().toOption.get._1.request.scope)
   }
 }

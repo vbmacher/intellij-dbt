@@ -1,123 +1,59 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
-import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.PlatformTestUtil
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import org.junit.Assert._
-import java.awt.{Component, Container}
-import javax.swing.{JComboBox, JTextArea, JTextField}
-import scala.jdk.CollectionConverters._
 
 final class DbtToolWindowUxTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def children(c: Component): Vector[Component] = Vector(c) ++ (c match {
-    case p: Container => p.getComponents.toVector.flatMap(children)
-    case _ => Vector.empty
-  })
-  private def await(message: String)(condition: => Boolean): Unit =
-    PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
-  private def combo(panel: Component, name: String): JComboBox[String] = children(panel).collectFirst {
-    case c: JComboBox[_] if c.getName == name => c.asInstanceOf[JComboBox[String]]
-  }.get
-  private def layout(c: Component): Unit = c match {
-    case p: Container => p.doLayout(); p.getComponents.foreach(layout)
-    case _ => ()
-  }
-  private def capture(panel: Component, label: String): Unit = Option(System.getProperty("dbt.ux.screenshot")).foreach { prefix =>
-    val lookAndFeel = javax.swing.UIManager.getLookAndFeel
-    javax.swing.UIManager.setLookAndFeel(new com.intellij.ide.ui.laf.IntelliJLaf)
-    javax.swing.SwingUtilities.updateComponentTreeUI(panel)
-    try for (width <- Vector(600, 1100)) {
-      panel.setSize(width, 700); layout(panel)
-      val image = new java.awt.image.BufferedImage(width, 700, java.awt.image.BufferedImage.TYPE_INT_RGB)
-      val graphics = image.createGraphics()
-      try panel.printAll(graphics) finally graphics.dispose()
-      javax.imageio.ImageIO.write(image, "png", new java.io.File(prefix + "-" + label + "-" + width + ".png"))
-    } finally {
-      javax.swing.UIManager.setLookAndFeel(lookAndFeel)
-      javax.swing.SwingUtilities.updateComponentTreeUI(panel)
-    }
-  }
-  def testDiscoveryFiltersKeepDependenciesAndSelectionInspectionNeverExecutes(): Unit = {
-    project()
-    add("models/orders.sql", "select 1 as id")
-    add("tests/check_orders.sql", "select * from {{ ref('orders') }}")
-    add("models/schema.yml", "models: [{name: orders, columns: [{name: id, data_tests: [unique]}]}]\n")
-    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
-    add("dbt_packages/pkg/tests/package_check.sql", "select 1")
-    val panel = new DbtTestPanel(getProject)
-    Disposer.register(getTestRootDisposable, panel); panel.refresh()
-    await("Source and package tests discovered")(panel.testDefinitions.size == 3 && panel.testView != null)
-    assertFalse("Discovery must not show execution progress", panel.testView.getResultsViewer.getStatusLine.isVisible)
-    assertEquals(3, panel.visibleDefinitions.size)
-    combo(panel, "dbt.tests.packages").setSelectedItem("Project-owned")
-    assertEquals(2, panel.visibleDefinitions.size)
-    combo(panel, "dbt.tests.packages").setSelectedItem("Dependencies")
-    assertEquals(Vector("pkg"), panel.visibleDefinitions.map(_.packageName).distinct)
-    assertEquals(3, panel.testDefinitions.size)
-    combo(panel, "dbt.tests.packages").setSelectedItem("All packages")
-    val proxy = panel.testView.getResultsViewer.getTestsRootNode.getAllTests.asScala.find(_.getName == "analytics.check_orders").get
-    panel.testView.getResultsViewer.selectAndNotify(proxy)
-    val details = children(panel).collectFirst { case a: JTextArea if a.getName == "dbt.tests.details" => a }.get
-    await("Selection populates structured details")(details.getText.contains("test.analytics.check_orders"))
-    assertTrue(details.getText.contains("No matching result"))
-    assertFalse("Missing evidence must not claim the test has never run", details.getText.contains("Not run /"))
-    assertTrue(details.getText.contains("Owning resource: model.analytics.orders"))
-    capture(panel, "tests")
-    val search = children(panel).collectFirst { case t: JTextField if t.getName == "dbt.tests.search" => t }.get
-    search.setText("package_check")
-    assertEquals(1, panel.visibleDefinitions.size)
-    assertEquals("Project", combo(panel, "dbt.tests.scope").getSelectedItem)
-    search.setText("missing")
-    assertTrue(panel.visibleDefinitions.isEmpty)
-    assertTrue(details.getText.contains("No tests match"))
-    assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
-  }
-  def testExactTestScopesRejectUnresolvedAndCrossProjectSelectionsWithoutBroadening(): Unit = {
-    project(); val file = add("tests/a.sql", "select 1").getVirtualFile
-    val root = DbtWorkspace.get(getProject).roots.head
-    val base = DbtCommand.create(DbtWorkspace.get(getProject), DbtRunSelection.all(DbtWorkspace.get(getProject), root.directory.getPath).get,
-      "Test", fullRefresh = false).toOption.get
-    val tests = Vector("a", "b").map(n => DbtTestDefinition("test.analytics." + n, n, "Data tests", "orders", root.directory.getPath,
-      file, 0, "fqn:analytics." + n, Vector("model.analytics.orders")))
-    val configured = base.copy(request = base.request.copy(scope = DbtCommandScope.Named("old"), exclude = Vector("old")))
-    val exact = DbtTestDiscovery.select(configured, tests).toOption.get
-    assertEquals(DbtCommandScope.Selected(Vector("fqn:analytics.a", "fqn:analytics.b")), exact.request.scope)
-    assertEquals(Some("empty"), exact.request.indirectSelection)
-    assertTrue(exact.request.exclude.isEmpty)
-    assertEquals(base.target, exact.target); assertEquals(base.environment, exact.environment)
-    assertTrue(DbtTestDiscovery.select(base, Vector.empty).isLeft)
-    assertTrue(DbtTestDiscovery.select(base, Vector(tests.head.copy(selector = ""))).isLeft)
-    assertTrue(DbtTestDiscovery.select(base, Vector(tests.head.copy(root = "/other"))).isLeft)
-    assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
-  }
-
-  def testRunnerProjectChoiceRestoresItsTargetAndSelectorWithoutFollowingInspection(): Unit = {
+  def testResourceDocumentationIncludesAllColumnsAndTestsWithoutASidebar(): Unit = {
     project(); add("models/orders.sql", "select 1")
-    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
-    add("other/models/report.sql", "select 2")
-    val w = DbtWorkspace.get(getProject)
-    val analytics = w.roots.find(_.name == "analytics").get
-    val other = w.roots.find(_.name == "other").get
-    analytics.runOptions.target = "dev"; analytics.runOptions.selection = "orders"
-    other.runOptions.target = "qa"; other.runOptions.selection = "report"
-    DbtProjectSettings.get(getProject).getState.runnerRoot = analytics.directory.getPath
-    val runner = new DbtRunner(getProject)
-    Disposer.register(getTestRootDisposable, runner)
-    com.intellij.testFramework.ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, getTestRootDisposable)
-    val panel = new DbtToolWindowPanel(getProject)
-    Disposer.register(getTestRootDisposable, panel); panel.refresh(follow = false)
-    val projectChoice = combo(panel.runnerPanel, "dbt.project")
-    val target = combo(panel.runnerPanel, "dbt.target")
-    val selector = children(panel.runnerPanel).collectFirst { case f: JTextField if f.getName == "dbt.selection" => f }.get
-    await("Initial project selection restored")(selector.getText == "orders")
-    projectChoice.setSelectedItem(other.directory.getPath)
-    await("Switching execution project restores its options")(selector.getText == "report" && target.getEditor.getItem == "qa")
-    panel.handleMessage("""{"type":"filter","id":"orders","value":""}""")
-    assertEquals("report", selector.getText)
-    assertEquals("orders", analytics.runOptions.selection)
-    projectChoice.setSelectedItem(analytics.directory.getPath)
-    await("Switching back preserves previous input")(selector.getText == "orders" && target.getEditor.getItem == "dev")
-    assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
+    add("models/schema.yml", "models:\n- name: orders\n  description: Orders\n  columns:\n" +
+      (1 to 20).map(i => s"  - name: column_$i\n    description: Description $i\n").mkString + "  data_tests: [unique]\n")
+    val w = DbtWorkspace.get(getProject); val model = w.symbols.find(s => s.kind == "model" && s.isCode).get
+    val html = DbtDocumentation.render(w, model)
+    assertTrue(html.contains("column_20")); assertTrue(html.contains("Description 20")); assertTrue(html.contains("unique"))
+    assertFalse(html.contains("open the Lineage documentation sidebar"))
+    val target = new DbtBuiltinPsiDocumentationTargetProvider().documentationTarget(model.element, model.element)
+    assertNotNull("Declarations support native Quick Documentation", target)
+    assertNotNull(target.createPointer().dereference())
+  }
+  def testStructureViewNavigatesCteDefinitionsAndIgnoresUnrelatedSql(): Unit = {
+    project()
+    val file = configure("models/orders.sql", "with a as (select 1 as id), b as (select id from a) select * from b<caret>")
+    val factory = new DbtSqlStructureViewFactory
+    val builder = factory.getStructureViewBuilder(file).asInstanceOf[com.intellij.ide.structureView.TreeBasedStructureViewBuilder]
+    val model = builder.createStructureViewModel(myFixture.getEditor)
+    try {
+      val nodes = model.getRoot.getChildren.map(_.asInstanceOf[com.intellij.ide.structureView.StructureViewTreeElement])
+      assertEquals(Vector("a", "b"), nodes.map(_.getPresentation.getPresentableText.split("\\.").last).toVector)
+      nodes(1).navigate(true)
+      assertEquals(file.getText.indexOf("b as"), myFixture.getCaretOffset)
+    } finally model.dispose()
+    val plain = add("elsewhere/plain.sql", "select 1")
+    assertNull(factory.getStructureViewBuilder(plain))
+  }
+  def testGeneratedSqlOpensInReadOnlyEditorAndGenerationActionsAreNative(): Unit = {
+    project(); val source = configure("models/orders.sql", "select 1<caret>")
+    DbtSqlEditors.open(getProject, "orders compiled", "select 2")
+    val generated = FileEditorManager.getInstance(getProject).getSelectedFiles.head
+    assertFalse(generated.isWritable)
+    assertEquals("select 2", new String(generated.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8))
+    assertEquals("select 1", source.getText)
+    Vector("Dbt.GenerateColumns", "Dbt.InheritDescriptions", "Dbt.EditProperties", "Dbt.OpenCompiledSql", "Dbt.CompareSql")
+      .foreach(id => assertNotNull(id, ActionManager.getInstance.getAction(id)))
+  }
+  def testNativeDependencyHierarchyPreservesValueAndFilterOrigins(): Unit = {
+    project()
+    add("models/base.sql", "select 1 as id, 1 as active")
+    val file = add("models/report.sql", "select id from {{ ref('base') }} where active = 1")
+    val w = DbtWorkspace.get(getProject); val model = w.codeSymbols(file).head
+    val resourceEdges = DbtHierarchy.related(w, model, downstream = false)
+    assertTrue(resourceEdges.exists(_._1.name == "base"))
+    val column = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(w, file).get.columns.head
+    val symbol = DbtSymbol("sql_projection", column.name, model.namespace, file, column.range, owner = model.name)
+    val origins = DbtHierarchy.related(w, symbol, downstream = false)
+    assertTrue(origins.exists(_._2.startsWith("value")))
+    assertTrue(origins.exists(_._2.startsWith("filter")))
   }
 }

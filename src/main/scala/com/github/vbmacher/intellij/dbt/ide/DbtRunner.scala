@@ -3,9 +3,7 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonArray, JsonElement, JsonParser}
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.process.{ColoredProcessHandler, ProcessEvent, ProcessListener}
-import com.intellij.execution.ui.{ConsoleView, ConsoleViewContentType}
 import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -42,7 +40,7 @@ private[ide] object DbtCommand {
     val options = root.runOptions
     if (Set("Generate Docs", "Source Freshness")(action))
       return DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-        .flatMap(create(w, _, action, fullRefresh = false))
+        .flatMap(create(w, _, action, fullRefresh = false, Some(root.runOptions)))
     val expression = DbtSelectionReview.expression(w, root, requested)
     val local = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
     val available = cliIds.map(_ => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, "").resources)
@@ -63,7 +61,7 @@ private[ide] object DbtCommand {
       all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
       incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
         DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
-      base <- create(w, all, action, fullRefresh && incremental)
+      base <- create(w, all, action, fullRefresh && incremental, Some(root.runOptions))
       excluded <- DbtSelectionReview.cliTerms(w, root, options.exclude)
     } yield {
       val scope = if (expression.isEmpty && cliIds.isEmpty) DbtCommandScope.All
@@ -79,7 +77,7 @@ private[ide] object DbtCommand {
     val exclude = root.runOptions.exclude.trim
     for {
       all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-      base <- prepare(w, all, DbtCommandAction.ResolveSelection, fullRefresh = false)
+      base <- prepare(w, all, DbtCommandAction.ResolveSelection, fullRefresh = false, Some(root.runOptions))
       baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Some(p.toString))
         else Right(None)
       exclusions <- DbtSelectionReview.cliTerms(w, root, exclude)
@@ -96,18 +94,19 @@ private[ide] object DbtCommand {
       base.copy(request = base.request.copy(scope = selected, exclude = exclusions, state = baseline))
     }
   }
-  def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] =
-    DbtCommandAction.fromLabel(action).toRight("Unknown dbt command.").flatMap(prepare(w, requested, _, fullRefresh))
+  def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean, options: Option[DbtRunOptions] = None): Either[String, DbtCommand] =
+    DbtCommandAction.fromLabel(action).toRight("Unknown dbt command.").flatMap(prepare(w, requested, _, fullRefresh, options))
 
-  private def prepare(w: DbtWorkspace, requested: DbtRunSelection, action: DbtCommandAction, fullRefresh: Boolean): Either[String, DbtCommand] = {
+  private def prepare(w: DbtWorkspace, requested: DbtRunSelection, action: DbtCommandAction, fullRefresh: Boolean, executionOptions: Option[DbtRunOptions]): Either[String, DbtCommand] = {
     val selected = if (requested.path.isEmpty && requested.directory)
       DbtRunSelection.all(w, requested.root).filter(_.root == requested.root)
     else DbtRunSelection.available(w).find(s => s.path == requested.path && s.root == requested.root && s.directory == requested.directory)
     for {
-      selection <- selected.toRight("Choose an available model or directory in the Runner.")
+      selection <- selected.toRight("Choose an available model or directory in the dbt run configuration.")
       owner <- DbtRunSelection.owner(w, selection).toRight("The selected dbt project is no longer available.")
       command <- {
-        val root = w.executionRoot(owner)
+        val original = w.executionRoot(owner)
+        val root = executionOptions.fold(original)(original.withRunOptions)
         val options = root.runOptions
         val directory = root.executionDirectory
         val target = DbtExecutionContext.activeTarget(root).getOrElse("")
@@ -121,7 +120,7 @@ private[ide] object DbtCommand {
         } yield directory
         if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
           Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
-        else if (action == DbtCommandAction.SourceFreshness && !all) Left("Choose the whole dbt project in the Runner to check source freshness.")
+        else if (action == DbtCommandAction.SourceFreshness && !all) Left("Choose the whole dbt project to check source freshness.")
         else if (action == DbtCommandAction.Preview && selection.directory) Left("Choose a single model to preview.")
         else if (action != DbtCommandAction.GenerateDocs && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {
@@ -149,7 +148,7 @@ private[ide] object DbtCommand {
 
 private[ide] final case class DbtRunnerEvent(running: Boolean, message: String, refresh: Boolean = false, preview: Option[String] = None,
   result: Option[DbtQueryResult] = None, execution: Option[DbtExecutionRun] = None, command: Option[DbtCommand] = None,
-  previewEvidence: Option[DbtPreviewEvidence] = None, selectionOutput: Option[String] = None)
+  previewEvidence: Option[DbtPreviewEvidence] = None, selectionOutput: Option[String] = None, exitCode: Option[Int] = None)
 
 @Service(Array(Service.Level.PROJECT))
 final class DbtRunner(project: Project) extends Disposable {
@@ -159,30 +158,23 @@ final class DbtRunner(project: Project) extends Disposable {
   @volatile private var disposed = false
   @volatile private var handler: ColoredProcessHandler = _
   private val listeners = new CopyOnWriteArrayList[DbtRunnerEvent => Unit]()
-  lazy val console: ConsoleView = {
-    val builder = TextConsoleBuilderFactory.getInstance().createBuilder(project)
-    builder.setViewer(true)
-    val view = builder.getConsole
-    Disposer.register(this, view); view
-  }
   def isRunning: Boolean = busy.get()
   def listen(parent: Disposable, listener: DbtRunnerEvent => Unit): Unit = {
     listeners.add(listener)
     Disposer.register(parent, new Disposable { override def dispose(): Unit = { listeners.remove(listener); () } })
   }
-  private def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action)
+  private def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action, com.intellij.openapi.application.ModalityState.any())
   private def fire(event: DbtRunnerEvent): Unit = listeners.asScala.foreach(_(event))
 
-  private[ide] def start(command: DbtCommand): Boolean = {
+  private[ide] def start(command: DbtCommand, outputSink: (String, com.intellij.openapi.util.Key[_]) => Unit = (_, _) => ()): Boolean = {
     if (disposed || !busy.compareAndSet(false, true)) false
     else {
       cancelled.set(false)
       evidence.begin(command)
-      console.print(command.arguments.mkString(" ") + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
       fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = evidence.active, command = Some(command)))
       AppExecutorUtil.getAppExecutorService.execute(() => {
         if (disposed || cancelled.get()) onUi {
-          busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled", execution = evidence.finish(command, canceled = true), command = Some(command)))
+          busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled", execution = evidence.finish(command, canceled = true), command = Some(command), exitCode = Some(130)))
         }
         else try {
           val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
@@ -195,6 +187,7 @@ final class DbtRunner(project: Project) extends Disposable {
           process.addProcessListener(new ProcessListener {
             override def onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key[_]): Unit = {
               output.synchronized { if (output.length < 10000000) output.append(event.getText) }
+              outputSink(event.getText, outputType)
               evidence.stream(event.getText)
               evidence.active.foreach(run => onUi { fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = Some(run))) })
             }
@@ -208,7 +201,7 @@ final class DbtRunner(project: Project) extends Disposable {
               val preview = if (success && command.action == "Preview") Some(DbtPreview.format(capturedOutput)) else None
               val result = if (success && command.action == "Preview") DbtQueryResult.parse(capturedOutput,
                 command.target, command.request.limit.max(1).min(1000), (System.nanoTime() - started) / 1000000L,
-                previewEvidence.map(_.displaySql).getOrElse(command.sourceSql)).toOption else None
+                previewEvidence.flatMap(e => e.adapterSql.orElse(Some(e.submitted))).getOrElse(command.sourceSql)).toOption else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
                 if (DbtArtifactContext.fingerprint(command.artifactDirectory) != manifestBefore)
@@ -220,15 +213,14 @@ final class DbtRunner(project: Project) extends Disposable {
                 Some("Malformed or unavailable dbt preview JSON. See raw process output.") else preview
               onUi {
                 handler = null; busy.set(false)
-                console.print("\n" + message + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
                 fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command), previewEvidence,
-                  Option.when(success && command.action == "Resolve Selection")(capturedOutput)))
+                  Option.when(success && command.action == "Resolve Selection")(capturedOutput), Some(event.getExitCode)))
+                com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project).restart("dbt execution results changed")
                 DbtNotifications.publish(project, command, message, success, wasCancelled)
               }
             }
           })
           onUi {
-            console.attachToProcess(process)
             process.startNotify()
             if (cancelled.get()) process.destroyProcess()
           }
@@ -237,8 +229,7 @@ final class DbtRunner(project: Project) extends Disposable {
           case NonFatal(error) => onUi {
             busy.set(false); handler = null
             val message = "Cannot launch dbt: " + Option(error.getMessage).getOrElse(error.toString) + ". Check the executable in dbt Workspace settings."
-            console.print(message + "\n", ConsoleViewContentType.ERROR_OUTPUT)
-            fire(DbtRunnerEvent(running = false, message, execution = evidence.finish(command, canceled = cancelled.get()), command = Some(command))); DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
+            fire(DbtRunnerEvent(running = false, message, execution = evidence.finish(command, canceled = cancelled.get()), command = Some(command), exitCode = Some(1))); DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
           }
         }
       })

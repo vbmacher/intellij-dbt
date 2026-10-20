@@ -11,8 +11,8 @@ private[ide] final case class DbtGraphSnapshot(payload: JsonObject, targets: Map
 private[ide] object DbtGraphData {
   private val gson = new Gson
 
-  def build(w: DbtWorkspace, focus: Option[String], upstream: Int, downstream: Int, exposures: Boolean): DbtGraphSnapshot = {
-    val resources = w.symbols.filter(s => DbtResourceData.GraphKinds(s.kind) && s.isEnabled && (exposures || s.kind != "exposure"))
+  def build(w: DbtWorkspace, focus: Option[String], upstream: Int, downstream: Int): DbtGraphSnapshot = {
+    val resources = w.symbols.filter(s => DbtResourceData.GraphKinds(s.kind) && s.isEnabled)
       .groupBy(DbtResourceIdentity.key(w, _)).values.toVector.flatMap { candidates =>
         val source = candidates.filterNot(_.metadata)
         val preferred = if (source.nonEmpty) source else candidates

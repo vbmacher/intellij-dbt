@@ -19,6 +19,14 @@ import scala.util.control.NonFatal
 
 private[dbt] object DbtAgentProtocol {
   val Version = "1.0"
+  /** Modern versions carry protocol metadata in every request; legacy versions negotiate it with `initialize`. */
+  val ModernVersions: Vector[String] = Vector("2026-07-28")
+  val LegacyVersions: Vector[String] = Vector("2025-11-25", "2025-06-18", "2025-03-26")
+  val SupportedVersions: Vector[String] = ModernVersions ++ LegacyVersions
+  val DefaultLegacyVersion = "2025-03-26"
+  val Instructions = "Read-only access to the dbt projects open in the IDE. Call list_projects first and pass its project " +
+    "directory to the other tools. No tool runs dbt, executes SQL or changes files."
+  val ResponseLimit = 2000000
   val Tools: Vector[(String, String, Vector[String])] = Vector(
     ("list_projects", "List owning project identities and source locations", Vector.empty),
     ("list_resources", "List resource identities in one owning project", Vector("project")),
@@ -37,6 +45,20 @@ private[dbt] object DbtAgentProtocol {
   def strings(values: Iterable[String]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
   def array(values: Iterable[JsonElement]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
   def error(code: Int, message: String): JsonObject = { val o = obj("message" -> message); o.addProperty("code", code); o }
+  /** A JSON-RPC error response; `id` is omitted when the request id could not be read. */
+  def errorResponse(id: Option[JsonElement], code: Int, message: String, data: Option[JsonElement] = None): JsonObject = {
+    val response = obj("jsonrpc" -> "2.0"); id.foreach(response.add("id", _))
+    val e = error(code, message); data.foreach(e.add("data", _)); response.add("error", e); response
+  }
+  def serverInfo: JsonObject = obj("name" -> "dbt-workspace", "version" -> Version)
+  /** The common `mcpServers` JSON block that MCP clients accept for remote HTTP servers. */
+  def clientConfiguration(url: String, token: String): String = {
+    val headers = obj("Authorization" -> ("Bearer " + token))
+    val server = obj("type" -> "http", "url" -> url); server.add("headers", headers)
+    val servers = new JsonObject; servers.add("dbt-workspace", server)
+    val root = new JsonObject; root.add("mcpServers", servers)
+    new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(root)
+  }
   def schemas: JsonArray = array(Tools.map { case (name, description, required) =>
     val schema = obj("type" -> "object")
     val properties = new JsonObject
@@ -198,7 +220,7 @@ private[dbt] object DbtAgentProtocol {
   }
 }
 
-/** Authenticated loopback HTTP JSON-RPC. There are deliberately no execution tools. */
+/** Authenticated loopback MCP server (Streamable HTTP, JSON responses only). There are deliberately no execution tools. */
 @Service(Array(Service.Level.PROJECT))
 final class DbtAgent(project: Project) extends Disposable {
   private var server: HttpServer = _
@@ -209,11 +231,11 @@ final class DbtAgent(project: Project) extends Disposable {
   private var disposed = false
   private[ide] def activeRequestCount: Int = active.size()
   def endpoint: Option[(String, String)] = synchronized {
-    Option(server).map(s => ("http://127.0.0.1:" + s.getAddress.getPort + "/tools", token))
+    Option(server).map(s => ("http://127.0.0.1:" + s.getAddress.getPort + "/mcp", token))
   }
   def start(): Either[String, (String, String)] = synchronized {
     if (disposed || project.isDisposed) Left("Project is disposed.")
-    else if (!project.getService(classOf[DbtConsumersSettings]).getState.agentEnabled) Left("Enable local agent tools in Settings > dbt Integrations first.")
+    else if (!project.getService(classOf[DbtConsumersSettings]).getState.agentEnabled) Left("Enable the local MCP server in Settings > dbt Integrations first.")
     else endpoint match {
       case Some(value) => Right(value)
       case None => try {
@@ -223,8 +245,8 @@ final class DbtAgent(project: Project) extends Disposable {
         executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue[Runnable](8), threads, new ThreadPoolExecutor.AbortPolicy)
         timer = Executors.newSingleThreadScheduledExecutor(threads)
         server.setExecutor(executor)
-        server.createContext("/tools", new HttpHandler { override def handle(exchange: HttpExchange): Unit = boundedRequest(exchange) })
-        server.start(); endpoint.toRight("Local tools failed to start.")
+        server.createContext("/", new HttpHandler { override def handle(exchange: HttpExchange): Unit = boundedRequest(exchange) })
+        server.start(); endpoint.toRight("Local MCP server failed to start.")
       } catch { case NonFatal(_) => stop(); Left("Local loopback transport is unavailable.") }
     }
   }
@@ -241,51 +263,151 @@ final class DbtAgent(project: Project) extends Disposable {
     finally { deadline.cancel(false); active.remove(indicator); Thread.interrupted(); exchange.close() }
   }
   private def handleRequest(exchange: HttpExchange): Unit = {
-    def send(code: Int, body: String): Unit = {
-      val bytes = body.getBytes(StandardCharsets.UTF_8)
-      exchange.getResponseHeaders.set("Content-Type", "application/json; charset=utf-8")
+    import DbtAgentProtocol._
+    def send(code: Int, body: Option[String], headers: (String, String)*): Unit = {
+      headers.foreach { case (k, v) => exchange.getResponseHeaders.set(k, v) }
       exchange.getResponseHeaders.set("Cache-Control", "no-store")
-      exchange.sendResponseHeaders(code, bytes.length.toLong)
-      val output = exchange.getResponseBody; try output.write(bytes) finally output.close()
+      body match {
+        case None => exchange.sendResponseHeaders(code, -1)
+        case Some(text) =>
+          val bytes = text.getBytes(StandardCharsets.UTF_8)
+          exchange.getResponseHeaders.set("Content-Type", "application/json; charset=utf-8")
+          exchange.sendResponseHeaders(code, bytes.length.toLong)
+          val output = exchange.getResponseBody; try output.write(bytes) finally output.close()
+      }
     }
+    def fail(code: Int, rpcCode: Int, message: String, headers: (String, String)*): Unit =
+      send(code, Some(errorResponse(None, rpcCode, message).toString), headers: _*)
     try {
       val auth = Option(exchange.getRequestHeaders.getFirst("Authorization")).getOrElse("")
       val expected = synchronized { "Bearer " + token }
-      if (exchange.getRequestMethod != "POST" || exchange.getRequestURI.getPath != "/tools") send(405, "{}")
-      else if (exchange.getRequestHeaders.containsKey("Origin") || !MessageDigest.isEqual(auth.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8))) send(403, "{}")
+      if (exchange.getRequestURI.getPath != "/mcp") fail(404, -32600, "Unknown endpoint; use /mcp.")
+      else if (exchange.getRequestMethod != "POST") fail(405, -32600, "Only POST is supported; this server does not open SSE streams or sessions.", "Allow" -> "POST")
+      else if (exchange.getRequestHeaders.containsKey("Origin")) fail(403, -32600, "Requests with an Origin header are rejected.")
+      else if (!MessageDigest.isEqual(auth.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8)))
+        fail(401, -32600, "Missing or invalid bearer token.", "WWW-Authenticate" -> "Bearer")
       else {
         val input = exchange.getRequestBody.readNBytes(65537)
-        if (input.length > 65536) send(413, "{}")
+        if (input.length > 65536) fail(413, -32600, "Request exceeds the 64 KiB limit.")
         else {
-          val request = JsonParser.parseString(new String(input, StandardCharsets.UTF_8)).getAsJsonObject
-          val result = rpc(request)
-          val serialized = result.toString
-          if (serialized.length > 2000000) send(413, "{\"error\":\"Response exceeds 2 MB limit; narrow the request.\"}") else send(200, serialized)
+          val reply = handle(name => Option(exchange.getRequestHeaders.getFirst(name)), new String(input, StandardCharsets.UTF_8))
+          reply.body.map(_.toString) match {
+            case Some(text) if text.length > ResponseLimit => fail(500, -32603, "Response exceeds the 2 MB limit; narrow the request.")
+            case body => send(reply.status, body)
+          }
         }
       }
-    } catch { case NonFatal(_) => try send(400, "{\"error\":\"Invalid or canceled tool request.\"}") catch { case NonFatal(_) => () } }
+    } catch { case NonFatal(_) => try fail(500, -32603, "Request failed or was canceled.") catch { case NonFatal(_) => () } }
     finally exchange.close()
   }
-  private[ide] def rpc(request: JsonObject): JsonObject = {
+
+  /**
+   * Handles one MCP Streamable HTTP POST body. Requests that carry `_meta` protocol metadata (or a modern
+   * `MCP-Protocol-Version` header) follow the stateless 2026-07-28 rules; all other messages follow the
+   * `initialize`-based 2025-03-26 .. 2025-11-25 rules. A `None` body means HTTP 202 Accepted.
+   */
+  private[ide] def handle(header: String => Option[String], text: String): DbtAgent.Reply = {
     import DbtAgentProtocol._
-    val result = obj("jsonrpc" -> "2.0")
-    result.add("id", Option(request.get("id")).getOrElse(com.google.gson.JsonNull.INSTANCE))
-    val method = Option(request.get("method")).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
-    if (disposed || project.isDisposed) result.add("error", error(-32000, "Project is disposed."))
-    else method match {
-      case "initialize" =>
-        val initialized = obj("protocolVersion" -> "2024-11-05")
-        initialized.add("serverInfo", obj("name" -> "dbt-workspace-local-tools", "version" -> Version))
-        val capabilities = new JsonObject; capabilities.add("tools", new JsonObject); initialized.add("capabilities", capabilities)
-        initialized.addProperty("transport", "authenticated-loopback-jsonrpc-http")
-        result.add("result", initialized)
-      case "ping" | "notifications/initialized" => result.add("result", new JsonObject)
-      case "tools/list" => val listed = new JsonObject; listed.add("tools", schemas); result.add("result", listed)
-      case "tools/call" =>
-        val params = Option(request.get("params")).filter(_.isJsonObject).map(_.getAsJsonObject).getOrElse(new JsonObject)
-        val name = Option(params.get("name")).filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString).getOrElse("")
-        val args = Option(params.get("arguments")).filter(_.isJsonObject).map(_.getAsJsonObject).getOrElse(new JsonObject)
-        val required = Tools.find(_._1 == name).map(_._3)
+    import DbtAgent.Reply
+    scala.util.Try(JsonParser.parseString(text)).toOption match {
+      case Some(batch) if batch.isJsonArray =>
+        val version = header("MCP-Protocol-Version").map(DbtAgent.decodeHeader).getOrElse(DefaultLegacyVersion)
+        val items = batch.getAsJsonArray.asScala.toVector
+        if (version != DefaultLegacyVersion || items.isEmpty || !items.forall(_.isJsonObject))
+          Reply(400, Some(errorResponse(None, -32600, "Batches are accepted only for protocol version 2025-03-26 and must contain JSON-RPC objects.")))
+        else {
+          val responses = items.flatMap(item => legacy(item.getAsJsonObject, version).body)
+          if (responses.isEmpty) Reply(202, None) else Reply(200, Some(array(responses)))
+        }
+      case Some(message) if message.isJsonObject =>
+        val request = message.getAsJsonObject
+        val meta = DbtAgent.objectField(DbtAgent.objectField(request, "params").getOrElse(new JsonObject), "_meta")
+        val headerVersion = header("MCP-Protocol-Version").map(DbtAgent.decodeHeader)
+        if (meta.exists(_.has(DbtAgent.ProtocolVersionKey)) || headerVersion.exists(ModernVersions.contains)) modern(header, request)
+        else legacy(request, headerVersion.getOrElse(DefaultLegacyVersion))
+      case Some(_) => Reply(400, Some(errorResponse(None, -32600, "Invalid JSON-RPC message.")))
+      case None => Reply(400, Some(errorResponse(None, -32700, "Parse error.")))
+    }
+  }
+
+  private def modern(header: String => Option[String], request: JsonObject): DbtAgent.Reply = {
+    import DbtAgentProtocol._
+    import DbtAgent._
+    val id = Option(request.get("id"))
+    val method = stringField(request, "method")
+    val params = objectField(request, "params").getOrElse(new JsonObject)
+    val meta = objectField(params, "_meta")
+    val headerVersion = header("MCP-Protocol-Version").map(decodeHeader)
+    val requested = meta.flatMap(stringField(_, ProtocolVersionKey)).orElse(headerVersion).getOrElse("")
+    def unsupported = {
+      val data = new JsonObject; data.add("supported", strings(SupportedVersions)); data.addProperty("requested", requested)
+      Reply(400, Some(errorResponse(id, -32022, "Unsupported protocol version.", Some(data))))
+    }
+    if (method.isEmpty) clientMessage(request)
+    else if (!ModernVersions.contains(requested)) unsupported
+    else if (id.isDefined && !meta.exists(m => stringField(m, ProtocolVersionKey).isDefined && objectField(m, ClientCapabilitiesKey).isDefined))
+      Reply(400, Some(errorResponse(id, -32602, "Request params._meta must contain " + ProtocolVersionKey + " and " + ClientCapabilitiesKey + ".")))
+    else if (!headerVersion.contains(requested) || !header("Mcp-Method").map(decodeHeader).contains(method.get) ||
+      (method.contains("tools/call") && header("Mcp-Name").map(decodeHeader) != stringField(params, "name")))
+      Reply(400, Some(errorResponse(id, -32020, "MCP-Protocol-Version, Mcp-Method and Mcp-Name headers must match the request body.")))
+    else if (id.isEmpty) Reply(202, None)
+    else if (disposed || project.isDisposed) Reply(200, Some(errorResponse(id, -32603, "Project is disposed.")))
+    else {
+      def complete(result: JsonObject): Reply = { result.addProperty("resultType", "complete"); Reply(200, Some(success(id.get, result))) }
+      def cacheable(result: JsonObject): JsonObject = { result.addProperty("ttlMs", 300000); result.addProperty("cacheScope", "private"); result }
+      method.get match {
+        case "server/discover" =>
+          val result = new JsonObject
+          result.add("supportedVersions", strings(SupportedVersions))
+          result.add("capabilities", toolCapabilities)
+          val resultMeta = new JsonObject; resultMeta.add(ServerInfoKey, serverInfo); result.add("_meta", resultMeta)
+          result.addProperty("instructions", Instructions)
+          complete(cacheable(result))
+        case "tools/list" => val result = new JsonObject; result.add("tools", schemas); complete(cacheable(result))
+        case "tools/call" => toolsCall(params).fold(error => Reply(200, Some(errorResponse(id, error._1, error._2))), complete)
+        case _ => Reply(404, Some(errorResponse(id, -32601, "Unknown method.")))
+      }
+    }
+  }
+
+  private def legacy(request: JsonObject, version: String): DbtAgent.Reply = {
+    import DbtAgentProtocol._
+    import DbtAgent._
+    val id = Option(request.get("id"))
+    val method = stringField(request, "method")
+    if (method.isEmpty) clientMessage(request)
+    else if (!LegacyVersions.contains(version)) {
+      val data = new JsonObject; data.add("supported", strings(SupportedVersions)); data.addProperty("requested", version)
+      Reply(400, Some(errorResponse(id, -32022, "Unsupported protocol version.", Some(data))))
+    }
+    else if (id.isEmpty) Reply(202, None)
+    else if (disposed || project.isDisposed) Reply(200, Some(errorResponse(id, -32603, "Project is disposed.")))
+    else {
+      val params = objectField(request, "params").getOrElse(new JsonObject)
+      def ok(result: JsonObject): Reply = Reply(200, Some(success(id.get, result)))
+      method.get match {
+        case "initialize" =>
+          val requested = stringField(params, "protocolVersion").filter(LegacyVersions.contains).getOrElse(LegacyVersions.head)
+          val result = obj("protocolVersion" -> requested, "instructions" -> Instructions)
+          result.add("capabilities", toolCapabilities); result.add("serverInfo", serverInfo)
+          ok(result)
+        case "ping" => ok(new JsonObject)
+        case "tools/list" => val result = new JsonObject; result.add("tools", schemas); ok(result)
+        case "tools/call" => toolsCall(params).fold(error => Reply(200, Some(errorResponse(id, error._1, error._2))), ok)
+        case _ => Reply(200, Some(errorResponse(id, -32601, "Unknown method.")))
+      }
+    }
+  }
+
+  /** Runs one read tool. Unknown tools are protocol errors; invalid arguments and failed lookups are tool errors. */
+  private def toolsCall(params: JsonObject): Either[(Int, String), JsonObject] = {
+    import DbtAgentProtocol._
+    import DbtAgent._
+    val name = stringField(params, "name").getOrElse("")
+    val args = objectField(params, "arguments").getOrElse(new JsonObject)
+    Tools.find(_._1 == name).map(_._3) match {
+      case None => Left((-32602, "Unknown tool: " + name))
+      case Some(required) =>
         val invalid = args.entrySet().asScala.exists { entry =>
           val v = entry.getValue
           !allowedArguments(name).contains(entry.getKey) || !v.isJsonPrimitive ||
@@ -293,20 +415,27 @@ final class DbtAgent(project: Project) extends Disposable {
              else !v.getAsJsonPrimitive.isString || v.getAsString.length > 16384)
         }
         val badDirection = Option(args.get("direction")).exists(v => !v.isJsonPrimitive || !Set("upstream", "downstream")(v.getAsString))
-        if (required.isEmpty) result.add("error", error(-32601, "Unknown read tool."))
-        else if (invalid || badDirection || !required.get.forall(k => Option(args.get(k)).exists(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString && v.getAsString.nonEmpty)))
-          result.add("error", error(-32602, "Arguments do not match the tool schema or exceed request limits."))
+        if (invalid || badDirection || !required.forall(k => stringField(args, k).exists(_.nonEmpty)))
+          Right(toolResult(None, "Arguments do not match the tool input schema or exceed request limits.", isError = true))
         else {
           val output = if (name == "suggest_validation_selection") DbtAgentProtocol.impact(project, args)
           else ReadAction.computeBlocking[JsonObject, RuntimeException](() => DbtAgentProtocol.call(DbtWorkspace.get(project), name, args))
-          val content = new JsonObject; content.add("structuredContent", output)
-          val textItem = obj("type" -> "text", "text" -> output.toString); content.add("content", array(Vector(textItem)))
-          result.add("result", content)
+          val failed = stringField(output, "status").exists(Set("error", "unsupported", "disposed"))
+          val result = toolResult(Some(output), output.toString, failed)
+          if (result.toString.length > ResponseLimit - 4096)
+            Right(toolResult(None, "The result exceeds the 2 MB response limit. Narrow the request.", isError = true))
+          else Right(result)
         }
-      case _ => result.add("error", error(-32601, "Unknown method."))
     }
-    result
   }
+
+  private def clientMessage(message: JsonObject): DbtAgent.Reply =
+    if (message.has("id") && (message.has("result") || message.has("error"))) DbtAgent.Reply(202, None)
+    else DbtAgent.Reply(400, Some(DbtAgentProtocol.errorResponse(Option(message.get("id")), -32600, "Invalid JSON-RPC message.")))
+
+  /** Dispatches one message with legacy (2025-03-26) rules and returns the JSON-RPC response, or an empty object for notifications. */
+  private[ide] def rpc(request: JsonObject): JsonObject =
+    legacy(request, DbtAgentProtocol.DefaultLegacyVersion).body.map(_.getAsJsonObject).getOrElse(new JsonObject)
   def stop(): Unit = synchronized {
     active.asScala.foreach(_.cancel())
     if (server != null) server.stop(0)
@@ -315,4 +444,33 @@ final class DbtAgent(project: Project) extends Disposable {
     server = null; executor = null; timer = null; token = ""
   }
   override def dispose(): Unit = synchronized { disposed = true; stop() }
+}
+
+private[ide] object DbtAgent {
+  /** An HTTP status and JSON body; no body means 202 Accepted. */
+  final case class Reply(status: Int, body: Option[JsonElement])
+  val ProtocolVersionKey = "io.modelcontextprotocol/protocolVersion"
+  val ClientCapabilitiesKey = "io.modelcontextprotocol/clientCapabilities"
+  val ServerInfoKey = "io.modelcontextprotocol/serverInfo"
+  def stringField(o: JsonObject, key: String): Option[String] =
+    Option(o.get(key)).filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString)
+  def objectField(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+  def success(id: JsonElement, result: JsonObject): JsonObject = {
+    val response = DbtAgentProtocol.obj("jsonrpc" -> "2.0"); response.add("id", id); response.add("result", result); response
+  }
+  def toolCapabilities: JsonObject = { val c = new JsonObject; c.add("tools", new JsonObject); c }
+  def toolResult(structured: Option[JsonObject], text: String, isError: Boolean): JsonObject = {
+    val result = new JsonObject
+    result.add("content", DbtAgentProtocol.array(Vector(DbtAgentProtocol.obj("type" -> "text", "text" -> text))))
+    structured.foreach(result.add("structuredContent", _))
+    if (isError) result.addProperty("isError", true)
+    result
+  }
+  /** Header values may be sent as `=?base64?<value>?=` when they contain non-ASCII characters. */
+  def decodeHeader(value: String): String = {
+    val v = value.trim
+    if (v.startsWith("=?base64?") && v.endsWith("?=") && v.length >= 11)
+      scala.util.Try(new String(java.util.Base64.getDecoder.decode(v.substring(9, v.length - 2)), StandardCharsets.UTF_8)).getOrElse(v)
+    else v
+  }
 }

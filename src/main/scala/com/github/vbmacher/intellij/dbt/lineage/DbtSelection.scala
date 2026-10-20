@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.lineage
 
 import com.github.vbmacher.intellij.dbt.project.DbtResourceIdentity
-import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtManifestPolicy, DbtManifestReader, DbtRoot, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.progress.ProgressManager
 import org.jetbrains.yaml.psi.{YAMLMapping, YAMLScalar, YAMLSequence, YAMLValue}
@@ -22,13 +22,42 @@ private[dbt] object DbtSelection {
     }
   }
   private val Methods = Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test",
-    "function", "check", "resource_type", "selector")
+    "function", "check", "resource_type", "selector", "file", "type", "access", "config.materialized", "config.tags")
   def resolve(w: DbtWorkspace, root: DbtRoot, expression: String, exclude: String = ""): DbtSelection = {
     val problems = scala.collection.mutable.ArrayBuffer.empty[String]
     def identity(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
     def union(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.flatten.distinctBy(identity)
     def intersect(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.headOption.getOrElse(Vector.empty)
       .filter(s => xs.drop(1).forall(_.exists(t => identity(t) == identity(s))))
+    lazy val manifestSelectors = root.setting("manifest").toVector.flatMap(path =>
+      DbtManifestReader.get(w.project).read(root, path, DbtManifestPolicy.Navigation).toOption.toVector.flatMap(_.in("selectors")))
+    def json(value: com.google.gson.JsonElement, visiting: Set[String]): Vector[DbtSymbol] = {
+      if (value.isJsonPrimitive && value.getAsJsonPrimitive.isString) terms(value.getAsString, visiting)
+      else if (value.isJsonArray) union(value.getAsJsonArray.asScala.toVector.map(json(_, visiting)))
+      else if (value.isJsonObject) {
+        val mapping = value.getAsJsonObject
+        def get(key: String) = Option(mapping.get(key)).filterNot(_.isJsonNull)
+        def text(key: String) = get(key).filter(_.isJsonPrimitive).map(_.getAsString)
+        val combined = get("union").orElse(get("intersection"))
+        val selected = combined match {
+          case Some(array) if array.isJsonArray =>
+            val includes = array.getAsJsonArray.asScala.toVector.filterNot(e => e.isJsonObject && e.getAsJsonObject.has("exclude")).map(json(_, visiting))
+            if (mapping.has("intersection")) intersect(includes) else union(includes)
+          case Some(_) => problems += "Unsupported named selector definition."; Vector.empty
+          case None if mapping.has("definition") => json(mapping.get("definition"), visiting)
+          case None if text("method").nonEmpty && text("value").nonEmpty =>
+            term((if (text("childrens_parents").contains("true")) "@" else "") +
+              (if (text("parents").contains("true")) text("parents_depth").getOrElse("") + "+" else "") +
+              text("method").get + ":" + text("value").get +
+              (if (text("children").contains("true")) "+" + text("children_depth").getOrElse("") else ""), visiting)
+          case _ => problems += "Unsupported named selector definition."; Vector.empty
+        }
+        val excludes = combined.toVector.filter(_.isJsonArray).flatMap(_.getAsJsonArray.asScala).filter(_.isJsonObject)
+          .flatMap(e => Option(e.getAsJsonObject.get("exclude"))) ++ get("exclude")
+        val removed = excludes.flatMap(json(_, visiting)).map(identity).toSet
+        selected.filterNot(s => removed(identity(s)))
+      } else { problems += "Unsupported named selector definition."; Vector.empty }
+    }
     def yaml(value: YAMLValue, visiting: Set[String]): Vector[DbtSymbol] = value match {
       case scalar: YAMLScalar => terms(scalar.getTextValue, visiting)
       case sequence: YAMLSequence => union(sequence.getItems.asScala.toVector.flatMap(i => Option(i.getValue).map(yaml(_, visiting))))
@@ -48,7 +77,8 @@ private[dbt] object DbtSelection {
             if (method.nonEmpty && value.nonEmpty) {
               val parents = DbtYaml.string(mapping, "parents").contains("true")
               val children = DbtYaml.string(mapping, "children").contains("true")
-              term((if (parents) DbtYaml.string(mapping, "parents_depth").getOrElse("") + "+" else "") +
+              term((if (DbtYaml.string(mapping, "childrens_parents").contains("true")) "@" else "") +
+                (if (parents) DbtYaml.string(mapping, "parents_depth").getOrElse("") + "+" else "") +
                 method.get + ":" + value.get + (if (children) "+" + DbtYaml.string(mapping, "children_depth").getOrElse("") else ""), visiting)
             } else {
               val shorthand = mapping.getKeyValues.asScala.toVector.filter(k => Methods(k.getKeyText))
@@ -67,17 +97,25 @@ private[dbt] object DbtSelection {
       ProgressManager.checkCanceled()
       val core = raw.replaceFirst("^[0-9]*\\+", "").replaceFirst("\\+[0-9]*$", "")
       val method = if (core.contains(":")) core.takeWhile(_ != ':') else "fqn"
-      if (raw.isEmpty || core.isEmpty || !Methods(method) || !raw.matches("([0-9]*\\+)?[^+,\\s]+(\\+[0-9]*)?") || raw.contains("{{") || raw.startsWith("@")) {
+      if (raw.startsWith("@") && raw.length > 1 && !raw.startsWith("@@")) {
+        val seeds = term(raw.drop(1), visiting)
+        val edges = DbtLineage.edges(w)
+        val children = union(Vector(seeds, seeds.flatMap(s => DbtLineage.traverse(edges, s, downstream = true, Int.MaxValue))))
+        union(Vector(children, children.flatMap(s => DbtLineage.traverse(edges, s, downstream = false, Int.MaxValue))))
+      } else if (raw.isEmpty || core.isEmpty || !Methods(method) || !raw.matches("([0-9]*\\+)?[^+,\\s]+(\\+[0-9]*)?") || raw.contains("{{") || raw.contains("@")) {
         problems += s"Selector '$raw' requires explicit dbt ls resolution."; Vector.empty
       } else if (method == "selector") {
         val name = core.stripPrefix("selector:")
         if (visiting(name)) { problems += s"Selector cycle: $name"; Vector.empty }
         else {
-          val definitions = w.rootFile(root, "selectors.yml").flatMap(DbtYaml.mapping).toVector
+          val selectorFile = w.rootFile(root, "selectors.yml")
+          val definitions = selectorFile.flatMap(DbtYaml.mapping).toVector
             .flatMap(DbtYaml.items(_, "selectors")).filter(m => DbtYaml.string(m, "name").contains(name))
-          if (definitions.size != 1) { problems += s"Selector '$name' is missing or ambiguous."; Vector.empty }
+          val recorded = if (selectorFile.isEmpty) manifestSelectors.filter(_.id == name) else Vector.empty
+          if (definitions.size + recorded.size != 1) { problems += s"Selector '$name' is missing or ambiguous."; Vector.empty }
           else {
-            val selected = DbtYaml.value(definitions.head, "definition").toVector.flatMap(yaml(_, visiting + name))
+            val selected = definitions.headOption.toVector.flatMap(m => DbtYaml.value(m, "definition").toVector.flatMap(yaml(_, visiting + name))) ++
+              recorded.flatMap(r => json(r.data, visiting + name))
             val prefix = "^[0-9]*\\+".r.findFirstIn(raw)
             val suffix = "\\+[0-9]*$".r.findFirstIn(raw)
             val edges = if (prefix.nonEmpty || suffix.nonEmpty) DbtLineage.edges(w) else Vector.empty

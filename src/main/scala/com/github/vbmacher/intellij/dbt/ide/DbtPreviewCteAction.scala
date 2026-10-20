@@ -5,7 +5,6 @@ import com.github.vbmacher.intellij.dbt.project.DbtWorkspace
 import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.application.{ModalityState, ReadAction, WriteIntentReadAction}
 import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.util.concurrent.Callable
 
@@ -44,10 +43,7 @@ final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
         case Right((snapshot, _)) if !expected.contains(snapshot) || !current().contains(snapshot) =>
           com.intellij.openapi.ui.Messages.showInfoMessage(project, "Source or execution settings changed; no query was launched. Invoke Preview CTE again.", "Preview dbt CTE")
         case Right((_, command)) =>
-          if (project.getService(classOf[DbtRunner]).start(command)) {
-            val window = ToolWindowManager.getInstance(project).getToolWindow("dbt")
-            if (window != null) { Option(window.getContentManager.findContent("Runner")).foreach(window.getContentManager.setSelectedContent(_)); window.show() }
-          } else com.intellij.openapi.ui.Messages.showInfoMessage(project, "Another dbt command is already running. Stop it before previewing this CTE.", "Preview dbt CTE")
+          DbtRunConfiguration.launch(project, command)
       }).submit(AppExecutorUtil.getAppExecutorService)
     }
   })

@@ -22,6 +22,24 @@ entry to open the corresponding reference.
 
 <img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="460">
 
+## CTE structure and dependency hierarchy
+
+For a dbt SQL model, **Structure** and the **File Structure** popup list CTE
+(named WITH-query) definitions, including nested CTEs. Select an entry to open its
+definition. Browsing this outline runs no query.
+
+**Navigate → Call Hierarchy** on a model or column opens **Upstream dependencies**
+and **Downstream consumers** in the native Hierarchy window. Model entries follow
+resource dependencies. Column entries distinguish value, join and filter inputs,
+and mark incomplete origins. Cycles stop expanding when they revisit a resource
+already present in that branch. Existing Find Usages continues to show concrete
+reference locations.
+
+**Navigate → Related Symbol** on a resource includes detected Airflow DAG/task
+definitions. Resource Quick Documentation includes their detected selection,
+exclusions and schedule. See [Airflow context](integrations.md#inspect-airflow-context)
+for discovery boundaries.
+
 ## Where references work
 
 | Location | References you can follow |

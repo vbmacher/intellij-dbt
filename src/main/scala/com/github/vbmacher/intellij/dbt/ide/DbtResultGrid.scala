@@ -54,7 +54,7 @@ private[ide] object DbtQueryResult {
     }
 }
 
-private[ide] final class DbtResultGrid(onLimit: Int => Unit = null) extends JPanel(new BorderLayout) {
+private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Project, onLimit: Int => Unit = null) extends JPanel(new BorderLayout) {
   private val label = new JBLabel("Run an explicit preview to see rows.")
   private val filter = new JBTextField(20)
   filter.getAccessibleContext.setAccessibleName("Filter preview rows")
@@ -98,8 +98,8 @@ private[ide] final class DbtResultGrid(onLimit: Int => Unit = null) extends JPan
       }.queue()
     }
   })
-  private val sql = new JButton("SQL / raw output")
-  sql.addActionListener(_ => result.foreach(r => DbtTextDialog.show("Preview execution", r.sql + "\n\n" + r.raw)))
+  private val sql = new JButton("Open SQL")
+  sql.addActionListener(_ => result.foreach(r => DbtSqlEditors.open(project, "dbt preview", r.sql)))
   Vector[Component](copy, format, export, sql).foreach(bar.add)
   add(bar, BorderLayout.NORTH); add(new JBScrollPane(table), BorderLayout.CENTER)
   table.setCellSelectionEnabled(true); table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)

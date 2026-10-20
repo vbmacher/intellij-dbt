@@ -5,11 +5,11 @@ import com.google.gson.{JsonObject, JsonParser}
 import com.intellij.openapi.util.JDOMUtil
 import com.intellij.util.xmlb.XmlSerializer
 import org.junit.Assert._
-import javax.swing.JCheckBox
+import javax.swing.{JPanel, JPasswordField}
 import scala.jdk.CollectionConverters._
 
 /** Acceptance boundaries across project ownership, uncertain metadata and read-only clients. */
-/** Contract: features/project-context.md and local-agent-tools.md: owning identities and read-only integrations. */
+/** Contract: features/project-context.md and local-mcp-server.md: owning identities and read-only integrations. */
 final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
   private def workspace = DbtWorkspace.get(getProject)
   private def root = workspace.roots.find(r => r.name == "analytics" && !r.directory.getPath.endsWith("/other")).get
@@ -82,39 +82,14 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue(DbtImpact.validationCommand(both, result.copy(affected = result.affected :+ (foreign -> Vector.empty))).isLeft)
   }
 
-  def testAirflowResolvesOnlyTheDeclaredProjectTreeAndEncodesExactTaskLinks(): Unit = {
-    project()
-    add("models/orders.sql", "select 1")
-    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
-    add("dbt_packages/pkg/models/orders.sql", "select 2")
-    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
-    add("other/models/orders.sql", "select 3")
-    val mapping = add(".dbt-airflow.yml", """airflow_url: https://airflow.test/base/
-tasks:
-- {dag: 'finance /daily', task: 'build & report', project: pkg, select: orders}
-- {dag: wrong_tree, task: build, project: other, select: orders}
-""")
-    add("other/.dbt-airflow.yml", "tasks: [{dag: independent, task: build, project: other, select: orders}]\n")
-    add("dags/side_effect.py", "from pathlib import Path\nPath('dag-was-executed').write_text('unexpected')\nraise RuntimeError('never import DAG code')\n")
-    val tasks = DbtAirflow.tasks(workspace)
-    val packageTask = tasks.find(_.task == "build & report").get
-    assertEquals(Vector("model.pkg.orders"), packageTask.resources.map(_.uniqueId))
-    assertEquals(mapping.getVirtualFile.getPath, packageTask.evidence)
-    assertEquals(mapping.getText.indexOf("{dag:"), packageTask.offset)
-    assertEquals(Some("https://airflow.test/base/dags/finance%20%2Fdaily/grid?task_id=build%20%26%20report"), packageTask.url)
-    val wrong = tasks.find(_.dag == "wrong_tree").get
-    assertTrue(wrong.resources.isEmpty); assertTrue(wrong.problems.exists(_.contains("Project")))
-    assertEquals(Vector("model.other.orders"), tasks.find(_.dag == "independent").get.resources.map(_.uniqueId))
-    assertTrue(root.directory.findChild("dag-was-executed") == null)
-  }
-
-  def testAirflowRejectsAmbiguousProjectsAndCredentialBearingUrls(): Unit = {
-    project()
-    add("dbt_packages/duplicate/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
-    add(".dbt-airflow.yml", "airflow_url: https://user:secret@airflow.test\ntasks: [{dag: daily, task: build, project: analytics, select: '*'}]\n")
-    val task = DbtAirflow.tasks(workspace).head
-    assertTrue(task.resources.isEmpty); assertTrue(task.problems.exists(_.contains("ambiguous")))
-    assertTrue(task.url.isEmpty)
+  def testAirflowSettingsPersistLocalSourcesAndRejectCredentialBearingLinks(): Unit = {
+    val state = new DbtConsumersState
+    state.airflowPaths = new java.util.ArrayList[String](Vector("/dags/one", "/dags/two").asJava)
+    state.airflowUrl = "https://airflow.test/base"
+    val restored = XmlSerializer.deserialize(XmlSerializer.serialize(state), classOf[DbtConsumersState])
+    assertEquals(Vector("/dags/one", "/dags/two"), restored.airflowPaths.asScala.toVector)
+    assertEquals("https://airflow.test/base", restored.airflowUrl)
+    assertTrue(DbtAirflow.safeUrl("https://user:secret@airflow.test").isEmpty)
     assertTrue(DbtAirflow.safeUrl("file:///etc/passwd").isEmpty)
     assertTrue(DbtAirflow.safeUrl("javascript:alert(1)").isEmpty)
   }
@@ -151,14 +126,33 @@ tasks:
     val settings = getProject.getService(classOf[DbtConsumersSettings])
     val configurable = new DbtConsumersConfigurable(getProject)
     val panel = configurable.createComponent().asInstanceOf[javax.swing.JPanel]
+    val metabase = panel.getComponents.collectFirst {
+      case section: JPanel if section.getBorder.isInstanceOf[javax.swing.border.TitledBorder] &&
+        section.getBorder.asInstanceOf[javax.swing.border.TitledBorder].getTitle == "Metabase" => section
+    }.get
+    val key = metabase.getComponents.collectFirst { case field: JPasswordField => field }.get
+    assertEquals("acceptance-secret-must-not-export", new String(key.getPassword))
+    assertFalse(configurable.isModified)
     configurable.apply()
-    assertTrue("Blank API key retains Password Safe credential", service.hasSecret)
+    assertTrue(service.hasSecret)
+    assertFalse(configurable.isModified)
+    key.setText("replacement-key")
+    assertTrue(configurable.isModified)
+    configurable.apply()
+    assertEquals("replacement-key", service.apiKey)
+    assertFalse(configurable.isModified)
+    key.setText("")
+    configurable.reset()
+    assertEquals("replacement-key", new String(key.getPassword))
     val serialized = JDOMUtil.writeElement(XmlSerializer.serialize(settings.getState))
     assertFalse(serialized.contains("acceptance-secret-must-not-export"))
     assertFalse(service.snapshot.toString.contains("acceptance-secret-must-not-export"))
-    panel.getComponents.collectFirst { case box: JCheckBox if box.getText == "Remove saved Metabase API key" => box }.get.setSelected(true)
+    key.setText("")
+    assertTrue(configurable.isModified)
     configurable.apply()
     assertFalse(service.hasSecret)
+    assertFalse(configurable.isModified)
+    configurable.disposeUIResources()
   }
 
   def testMetabaseStalledResponseBodyTimesOutWithoutReplacingTheCache(): Unit = {
@@ -212,13 +206,19 @@ tasks:
       """{"project":"","reference":"orders"}"""
     ).foreach { args =>
       val request = json("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"resolve_reference","arguments":""" + args + "}}")
-      assertEquals(-32602, service.rpc(request).getAsJsonObject("error").get("code").getAsInt)
+      assertTrue(service.rpc(request).getAsJsonObject("result").get("isError").getAsBoolean)
     }
-    val initialized = service.rpc(json("""{"jsonrpc":"2.0","id":2,"method":"initialize"}""")).getAsJsonObject("result")
+    val unknownTool = json("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_sql","arguments":{}}}""")
+    assertEquals(-32602, service.rpc(unknownTool).getAsJsonObject("error").get("code").getAsInt)
+    val initialized = service.rpc(json("""{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""")).getAsJsonObject("result")
     assertEquals(DbtAgentProtocol.Version, initialized.getAsJsonObject("serverInfo").get("version").getAsString)
+    assertEquals("2025-06-18", initialized.get("protocolVersion").getAsString)
     assertTrue(initialized.getAsJsonObject("capabilities").has("tools"))
+    val negotiated = service.rpc(json("""{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}""")).getAsJsonObject("result")
+    assertEquals(DbtAgentProtocol.LegacyVersions.head, negotiated.get("protocolVersion").getAsString)
+    assertEquals(0, service.rpc(json("""{"jsonrpc":"2.0","method":"notifications/initialized"}""")).size())
     service.dispose()
-    assertEquals(-32000, service.rpc(json("""{"jsonrpc":"2.0","id":3,"method":"tools/list"}""")).getAsJsonObject("error").get("code").getAsInt)
+    assertEquals(-32603, service.rpc(json("""{"jsonrpc":"2.0","id":3,"method":"tools/list"}""")).getAsJsonObject("error").get("code").getAsInt)
   }
 
   def testAgentReadToolsRespectOwningFilesAndExclusionsWithoutStartingDbt(): Unit = {

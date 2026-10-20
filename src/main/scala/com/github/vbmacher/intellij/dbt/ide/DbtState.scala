@@ -116,6 +116,33 @@ private[ide] object DbtState {
       }
     }
   }
+  /** The diff labels distinguish recorded baseline values from authored, unresolved source values. */
+  def comparison(w: DbtWorkspace, root: DbtRoot, id: String): Either[String, (String, String)] = manifest(root).map { baseline =>
+    val before = entries(baseline).get(id).map { entry =>
+      val result = new JsonObject
+      result.addProperty("raw_code", str(entry, "raw_code").orElse(str(entry, "raw_sql")).getOrElse(""))
+      result.addProperty("description", str(entry, "description").getOrElse(""))
+      result.add("config", obj(entry, "unrendered_config").orElse(obj(entry, "config")).getOrElse(new JsonObject))
+      result.add("columns", obj(entry, "columns").getOrElse(new JsonObject))
+      result
+    }
+    val after = current(w, root).get(id).filter(_.size == 1).flatMap(_.headOption).map { symbol =>
+      val result = new JsonObject
+      result.addProperty("raw_code", if (symbol.isCode) symbol.file.getText else "")
+      result.addProperty("description", sourceDescription(w, symbol))
+      val config = new JsonObject
+      sourceConfig(w, symbol).toVector.sortBy(_._1).foreach { case (key, value) => config.add(key, value) }
+      result.add("config", config)
+      val columns = new JsonObject
+      w.columns(symbol).filterNot(_.metadata).foreach { column =>
+        column.mapping.foreach(m => columns.add(column.name, yaml(m)))
+      }
+      result.add("columns", columns); result
+    }
+    val gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create()
+    before.map(gson.toJson(_)).getOrElse("") -> after.map(gson.toJson(_)).getOrElse("")
+  }
+
   def compare(w: DbtWorkspace, root: DbtRoot): Either[String, Vector[DbtStateChange]] = manifest(root).map(compareManifest(w, root, _))
   private[ide] def compareManifest(w: DbtWorkspace, root: DbtRoot, baseline: DbtManifest): Vector[DbtStateChange] = {
     val old = entries(baseline)

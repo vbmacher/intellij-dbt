@@ -1,0 +1,4 @@
+Static Airflow discovery adapted from dbt-airflow-lineage by Tri Chandra Pamungkas.
+https://github.com/tchandrap/dbt-airflow-lineage
+Reference commit: 89e13e28de17df745c0d5de00be9bb2175ea3967
+Distributed under the MIT license in LICENSE.

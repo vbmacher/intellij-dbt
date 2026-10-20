@@ -100,6 +100,39 @@ Overloads are supported on Snowflake and Postgres.
 
 ## Variables and environment
 
+### Environment variables
+
+The plugin loads `.env` from the owning dbt root for dbt commands and SQL formatters.
+The owning root is the directory containing that project's `dbt_project.yml`.
+Create `.env` beside it with one assignment per line:
+
+```dotenv
+# .env
+ATHENA_WORK_GROUP=my-workgroup
+DBT_SCHEMA=analytics
+```
+
+For Athena, reference the variable in the selected `profiles.yml` target:
+
+```yaml
+work_group: "{{ env_var('ATHENA_WORK_GROUP', 'primary') }}"
+```
+
+dbt reads the variable when the command runs. In this example, `primary` is used
+when `ATHENA_WORK_GROUP` is absent.
+
+To choose other files for a project:
+
+1. Open **Settings → dbt Workspace** and select **Owning dbt root**.
+2. In **Environment files**, use the browse button to choose a file, or enter
+   paths separated by semicolons, such as `.env; .env.local`.
+3. Click **Apply**. The next command uses those files.
+
+Paths are absolute or relative to the owning dbt root, including when **Project
+root override** points elsewhere. Each owning root saves its own file list.
+A nonempty setting replaces the file list in `.dbt-navigation.yml`. Leave it blank
+to use `env-files`, or `.env` when `env-files` is absent:
+
 ```yaml
 # .dbt-navigation.yml
 env-files: [.env, .env.local]
@@ -117,8 +150,25 @@ target: dev
 select: orders
 ```
 
-Run-config `vars` and `env` override project defaults. Values come only from the
-configured files; shell variables, `dbt --vars` and IDE run configurations are not read.
+Commands inherit the IDE's environment. Files override inherited values in their
+listed order; the last assignment wins. The run-config `env` mapping overrides
+files and accepts scalar values, including quoted empty strings. Each new command
+reads the current file contents. Missing files and invalid assignments are skipped.
+Use `env-files: []` with a blank **Environment files** setting to disable file loading.
+
+Environment files support `export KEY=value`, empty values, single or double quotes,
+and comments. An unquoted inline comment starts with whitespace followed by `#`;
+quoted `#` characters are literal. Double quotes support `\n`, `\r`, `\t`, `\"` and
+`\\`. Multiline values, `$VAR` substitution and shell commands are not evaluated.
+
+**Profiles directory** takes precedence over `DBT_PROFILES_DIR` from these files.
+The plugin sets `DBT_TARGET_PATH` from **Artifact directory**. A discovered local
+virtual environment is prepended to the configured `PATH`.
+
+### dbt variables
+
+For editor navigation, run-config `vars` override project defaults. Shell values,
+`dbt --vars` and other IDE run configurations do not supply editor declarations.
 
 Core 1.12+ supports a top-level `vars` mapping in `vars.yml`. Define variables there
 or in `dbt_project.yml`; nonempty mappings in both leave conflicts unresolved.
@@ -190,7 +240,7 @@ For check-view and column navigation examples, see [Navigation](navigation.md#in
 See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
 and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
 
-## Workspace and runner settings
+## Workspace execution defaults
 
 Open **Settings → dbt Workspace** and choose **Owning dbt root**. Executable,
 profiles, target, formatter and state settings apply independently to that root.
@@ -198,37 +248,91 @@ The settings are saved with the IDE project.
 
 | Setting | Default and effect |
 | --- | --- |
-| **dbt executable** | `dbt`; a project `.venv` or `venv` is discovered first. A command name, executable or wrapper script is accepted. |
-| **Executable arguments** | Empty. Arguments precede the dbt command; quote arguments containing spaces. |
+| **Executable or external tool** | `dbt`; a project `.venv` or `venv` is discovered first. A command name, executable or wrapper script is accepted. |
+| **Arguments before dbt command** | Empty. Arguments precede the dbt command; quote arguments containing spaces. |
+| **Environment files** | Blank uses `env-files` from `.dbt-navigation.yml`, or `.env`. Choose a file or enter semicolon-separated paths. See [Variables and environment](#variables-and-environment). |
 | **Project root override** | The owning directory containing `dbt_project.yml`. |
 | **Profiles directory** | `DBT_PROFILES_DIR`, project-local `profiles.yml`, then `~/.dbt`. Choose the directory containing `profiles.yml`. |
 | **Artifact directory** | `target`. Active commands write artifacts here. |
+| **Manifest file (optional)** | Blank uses `manifest.json` in the artifact directory. Choose a file, or enter a path relative to the execution project. An explicit `.dbt-navigation.yml` `manifest` entry takes precedence. |
 | **Active target (blank uses profile default)** | Blank. Uses the selected profile's default target. |
 | **Preview row limit** | 10; accepts 1–1000. |
 | **Colored output** | Enabled. |
 | **Desktop notifications when dbt commands finish** | Enabled. Requires system notifications to be available and permitted. |
 
 Commands run with `DBT_TARGET_PATH`, `DBT_PROFILES_DIR` and `--target` set from
-these settings. `manifest.json` and `catalog.json` in the artifact directory load
+these settings. The selected manifest and `catalog.json` in the artifact directory load
 automatically; [local metadata paths](#local-metadata) can add other files.
 
 Desktop notifications also require **Settings → Appearance & Behavior → Notifications →
 Enable system notifications** and appear only while the IDE window is inactive.
 
-### Script wrappers
+### External tools and script wrappers
 
-Use the browse button beside **dbt executable** to select a script or executable,
-or type a command name. For example:
+Use **Executable or external tool** for `dbt`, a script, an interpreter or a tool
+that launches dbt. Use **Arguments before dbt command** for its fixed arguments.
+Every command, including tests, previews, documentation and selection resolution,
+uses the same prefix:
 
-| Setting | Value |
+```text
+<executable> <arguments before dbt command> <dbt command> <dbt options>
+```
+
+| Executable or external tool | Arguments before dbt command | Example invocation |
+| --- | --- | --- |
+| `dbt` | *(empty)* | `dbt test …` |
+| `uv` | `run dbt` | `uv run dbt test …` |
+| `poetry` | `run dbt` | `poetry run dbt test …` |
+| `zsh` | `scripts/run_dbt.zsh analytics` | `zsh scripts/run_dbt.zsh analytics test …` |
+| `bash` | `"scripts/dbt wrapper.sh"` | `bash "scripts/dbt wrapper.sh" test …` |
+
+The selected tool must exist and accept the dbt command and options appended by the
+plugin. A wrapper must forward those arguments, for example `dbt "$@"` in a shell
+script, preserve dbt’s exit code, and leave its output and artifacts available.
+The plugin does not validate third-party tool syntax.
+
+Commands run in **Project root override**, or the owning dbt root when it is blank.
+Executable paths containing `/` or `\` resolve relative to that directory.
+Prefix arguments are split with quoted strings kept together and passed as individual
+arguments. Shell substitutions, pipes, `$VAR` expansion and `~` expansion are not
+evaluated; put shell logic in the wrapper script. A local `.venv` or `venv`
+containing dbt is added to `PATH`.
+
+`DBT_PROFILES_DIR` and `DBT_TARGET_PATH` supply the configured profile and artifact
+directories. The plugin appends target and color options, plus the command’s selection
+and other options. Put launcher arguments in the prefix; choose the dbt command and
+its scope in a [dbt Run configuration](#dbt-run-configurations).
+
+### dbt Run configurations
+
+In **Run → Edit Configurations…**, add **dbt**. Each configuration stores its own
+scope and optional execution overrides; switching editors does not retarget it.
+
+| Field | Effect |
 | --- | --- |
-| **dbt executable** | `zsh` |
-| **Executable arguments** | `scripts/dbt-wrapper.zsh analytics` |
+| **Owning dbt root** | Source project's dbt_project.yml directory; use its browse button. |
+| **Scope** | Absolute path to a model or model directory. Blank selects the whole execution project. |
+| **Command** | Run, Build, Test, Compile, Preview, Generate Docs, Source Freshness or Resolve Selection. |
+| **Target** | Override the project's active target. Blank inherits the project setting or profile default. |
+| **Selection** | dbt selector expression; overrides Scope's model/directory selection. Ctrl+Space offers completions. |
+| **Exclude** | Selector terms to remove; also supports Ctrl+Space. |
+| **Named selector (overrides Selection)** | A definition in selectors.yml. |
+| **Full Refresh (Run / Build)** | Rebuild selected incremental resources using all source data. |
+| **Inline SQL (Preview only)** | Saved SELECT query to preview in the selected source model's context. Blank previews the complete model. |
+| **Executable override** | Executable or wrapper for this configuration. Blank inherits the project's executable and prefix arguments. |
+| **Prefix arguments** | Fixed arguments for the overridden executable, before the dbt command. |
+| **Profiles directory override** | Directory containing profiles.yml. Blank inherits the project setting. |
 
-Every command then runs as `zsh scripts/dbt-wrapper.zsh analytics <dbt command and options>`.
-Executable paths containing `/` or `\` resolve relative to the execution root.
-Arguments are passed as-is; shell expressions are not evaluated. A local `.venv`
-or `venv` containing dbt is added to `PATH`.
+Generate Docs is project-wide. Source Freshness requires the whole project.
+Configuration overrides do not modify project settings. Other defaults come from
+[workspace execution settings](#workspace-execution-defaults).
+
+Configurations created from test declarations select exact test identities.
+Failed-test reruns within a session keep the original command context. Saved
+configurations read current project defaults for fields without overrides.
+
+See [execution](execution.md) for selection review, baseline comparison, query
+results and CTE inspection.
 
 ## Lineage settings
 
@@ -236,12 +340,11 @@ These **Settings → dbt Workspace** options apply to the IDE project's lineage 
 
 | Setting | Default and choices |
 | --- | --- |
-| **Upstream depth** / **Downstream depth** | 5 each; accepts 1–20. |
+| **Upstream levels to show** | Number of dependency levels before the focused resource. 1 shows direct inputs; 2 also shows their inputs. Default 5; accepts 1–20. |
+| **Downstream levels to show** | Number of dependent levels after the focused resource. 1 shows resources that use it directly; 2 also shows resources that use those. Default 5; accepts 1–20. |
 | **Layout direction** | `LR` (left to right). Also `TB` (top to bottom), `RL` (right to left), `BT` (bottom to top). |
-| **Edge style** | `round-taxi`. Also `bezier`, `taxi`, `segments`, `straight`, `unbundled-bezier`, `haystack`. |
-| **Show dbt exposures in lineage** | Enabled. Includes downstream consumers declared as dbt exposures. |
 
-For graph controls and resource documentation, see [Workspace](workspace.md).
+For graph controls, see [Workspace](workspace.md). For resource documentation, see [Editing](editor.md#quick-documentation).
 
 ## State comparison and deferral
 
@@ -264,7 +367,7 @@ Both options are off by default and unavailable for `engine: v2`. Set the
 **Favor baseline relations**, dbt uses a relation that already exists in the active
 target instead of the baseline one.
 
-For comparison results, selections and dependency review, see [Workspace](workspace.md#selection-and-state).
+For comparison results, selections and dependency review, see [Execution](execution.md#selection-and-state).
 
 ## SQL linting and formatting
 
@@ -290,8 +393,7 @@ Open **Settings → dbt Integrations**:
 | Setting | Effect |
 | --- | --- |
 | **Metabase URL (optional)** | Base HTTP or HTTPS URL without embedded credentials. Use HTTPS for a remote server. |
-| **Metabase API key (stored in IDE Password Safe; blank keeps saved key)** | Saves the API key outside project files. A blank field retains the saved key. |
-| **Remove saved Metabase API key** | Deletes the stored key when settings are applied. |
+| **Metabase API key (stored in IDE Password Safe)** | Shows the saved key as masked text. **Apply** saves the field value outside project files; clearing the field and clicking **Apply** removes the saved key. |
 
 The API key needs read access to questions, databases and their table/field metadata,
 and any dashboards you want to see. Redirects are refused, so enter the final server
@@ -301,64 +403,82 @@ URL. Applying these settings clears the cached Metabase data; see
 A refresh reads at most 20 databases, 1,000 questions and 100 dashboards; consumers
 beyond these limits are missing.
 
-## Airflow task mappings
+## Airflow DAG discovery
 
-Create `.dbt-airflow.yml` at the dbt project root that owns the mappings:
+Open **Settings → dbt Integrations → Airflow — local DAG discovery**:
 
-```yaml
-airflow_url: https://airflow.example.com
-tasks:
-  - dag: daily_finance
-    task: build_finance
-    project: analytics
-    select: tag:finance+
-    exclude: resource_type:seed
-    upstream_ingestion: [raw_orders_loaded]
-  - dag: monthly_finance
-    task: reports
-    project: analytics
-    selector: finance_reports
-```
+| Setting | Effect |
+| --- | --- |
+| **DAG projects** | Click **Add folder…** to choose DAG folders or complete Airflow checkouts. Python files are scanned recursively, including folders outside the IDEA project. **Remove** removes a selected folder from discovery. |
+| **Airflow URL (optional)** | HTTP or HTTPS web URL without embedded credentials. Supplies browser links to detected DAGs and tasks. |
 
-Each entry requires `dag`, `task` and `project`. The project name must uniquely match
-a dbt project within the same consuming project and its packages. Use either
-`select` with optional `exclude`, or `selector` naming a definition in `selectors.yml`.
-Selections support the same local forms as [Workspace selection review](workspace.md#selection-and-state).
+Discovery runs automatically for the configured DAG projects. With one dbt project
+open, it uses that project. With several, it uses the nearest dbt project containing
+the DAG file; files outside all dbt projects remain unresolved. Remove all DAG
+projects to stop discovery.
 
-Tasks without a selection, or with dynamic values such as `{{ ... }}` or `${...}`,
-are shown as unresolved. `upstream_ingestion` lists ingestion task names to display.
-`airflow_url` supplies browser links and must be an HTTP or HTTPS URL without
-embedded credentials. Files larger than 1 MB are skipped, and only the first 1,000
-tasks are read.
-For viewing and opening mappings, see [Airflow context](integrations.md#inspect-airflow-context).
+Folders can also be workspace-relative paths in saved IDE settings. Discovery skips
+`.git`, `.venv`, `venv`, `node_modules` and `__pycache__` directories. Changes to
+watched DAG files, including unsaved editor changes, update the detected associations.
+Files larger than 1 MB are skipped; unreadable paths are reported in **dbt Airflow Context**.
 
-## Local agent tools
+Discovery reads fixed dbt selections from Python keyword arguments, dictionaries
+and dbt shell commands. It supports constants, lists, concatenation and string joins.
+Dynamic Python and runtime templates remain unresolved. Python code is never
+executed, and discovery does not contact Airflow or a cloud storage service.
 
-In **Settings → dbt Integrations**, select **Enable local read-only agent tools
+See [Airflow context](integrations.md#inspect-airflow-context) for detected pipelines
+and [resource documentation](editor.md#quick-documentation) for model context.
+
+## Local MCP server
+
+In **Settings → dbt Integrations**, select **Enable local read-only MCP server
 (start explicitly from Tools)** and apply. The option is off by default; the service
 still starts only when you click **Start**. Clearing the option stops it. See
-[Local agent actions](integrations.md#give-a-local-assistant-read-only-project-access).
+[Connect an AI assistant](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server).
 
-The client must send authenticated HTTP JSON-RPC requests, directly or through a
-bridge. The endpoint supports `initialize`, `ping`, `tools/list` and `tools/call`;
-it is not a full MCP Streamable HTTP or SSE endpoint. It listens on `127.0.0.1` at
-a random port under `/tools` and rejects requests from browsers.
+The service is an MCP server (Model Context Protocol). It uses the Streamable HTTP
+transport at `http://127.0.0.1:<port>/mcp`; the port is random and changes on every
+start. Every request must be a POST with the header `Authorization: Bearer <token>`.
 
-Send POST requests to the displayed endpoint with `Authorization: Bearer <token>`
-and a JSON body, for example:
+| Rule | Result |
+|---|---|
+| Wrong or missing token | HTTP 401 |
+| Request has an `Origin` header (sent by browsers) | HTTP 403 |
+| GET or DELETE | HTTP 405. The server opens no event streams and keeps no sessions. |
+| Notification or client response | HTTP 202 with no body |
+| Request body over 64 KiB | HTTP 413 |
+| Call takes over 30 seconds | Canceled |
 
-```json
-{"jsonrpc":"2.0","id":1,"method":"tools/list"}
-```
+Responses are always single JSON bodies (`application/json`), never SSE streams.
+
+Supported MCP versions:
+
+| Version | How the client connects | Methods |
+|---|---|---|
+| `2026-07-28` | No handshake. Each request carries `_meta` with `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities`, and the headers `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name`. A header that does not match the body gives HTTP 400 with error `-32020`. | `server/discover`, `tools/list`, `tools/call` |
+| `2025-11-25`, `2025-06-18`, `2025-03-26` | `initialize` first. If the client asks for another version, the server answers with `2025-11-25`. Later requests send `MCP-Protocol-Version`; without it, the server assumes `2025-03-26`. Only `2025-03-26` accepts batches (JSON arrays). | `initialize`, `ping`, `tools/list`, `tools/call` |
+
+An unsupported version gives HTTP 400 with error `-32022` and the list of supported
+versions. The server offers only tools; it has no resources, prompts or logging.
+It has no stdio transport, so a client that only starts local commands needs an
+HTTP bridge.
 
 `tools/list` returns the tool names and argument schemas. The `project` argument
 accepts a directory returned by `list_projects`, or a unique project name.
-For example:
+Example call with version `2025-06-18`, after `initialize`:
 
 ```json
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_column_lineage","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report","column":"amount","direction":"upstream"}}}
 ```
 
-Requests are limited to 64 KiB, responses to 2 MB, and calls to 30 seconds; results
-cut short by a limit are marked partial. Responses never include profile or
-environment values, connection secrets or warehouse rows.
+A tool returns its answer in `structuredContent` and as JSON text in `content`. The
+answer has a `status`: `ok`, `partial`, `missing`, `ambiguous`, `error`,
+`unsupported` or `disposed`. For `error`, `unsupported` and `disposed`, and for
+arguments that do not match the schema, the result has `isError: true`. An unknown
+tool name gives error `-32602`.
+
+Responses are limited to 2 MB; a larger tool answer is replaced by an error that
+asks you to narrow the request. Lists and traces cut short by a cap have status
+`partial`. Responses never include profile or environment values, connection
+secrets or warehouse rows.

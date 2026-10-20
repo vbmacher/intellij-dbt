@@ -37,7 +37,6 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val runner = new DbtRunner(getProject)
     Disposer.register(getTestRootDisposable, runner)
     Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(directory.toFile))
-    runner.console.getComponent
     val events = ArrayBuffer.empty[DbtRunnerEvent]
     runner.listen(getTestRootDisposable, e => events += e)
     (runner, directory, fake(directory), events)
@@ -62,11 +61,14 @@ sys.exit(7 if '--fail' in sys.argv else 0)
   def testProcessStreamsAnsiBeforeExitAndKeepsArgumentVectorCwdAndEnvironment(): Unit = {
     val (runner, directory, executable, events) = setup()
     val sql = "select 'path with spaces'\nfrom db.schema.orders"
-    assertTrue(runner.start(command(directory, executable, Vector("show", "--inline", sql, "--target", "dev", "--hold"))))
+    val console = com.intellij.execution.filters.TextConsoleBuilderFactory.getInstance.createBuilder(getProject).getConsole
+    Disposer.register(getTestRootDisposable, console); console.getComponent
+    assertTrue(runner.start(command(directory, executable, Vector("show", "--inline", sql, "--target", "dev", "--hold")),
+      (text, kind) => console.print(text, com.intellij.execution.ui.ConsoleViewContentType.getConsoleViewType(kind))))
     assertFalse("A second toolbar/regeneration command must not start", runner.start(command(directory, executable, Vector("run"))))
-    await("Output streams before completion") { runner.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText.contains("streamed output") }
+    await("Output streams before completion") { console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText.contains("streamed output") }
     assertTrue(runner.isRunning)
-    val text = runner.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText
+    val text = console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText
     assertFalse(text.contains("\u001b[31m"))
     val invocation = JsonParser.parseString(Files.readString(directory.resolve("invocation.json"))).getAsJsonObject
     assertEquals(Vector("show", "--inline", sql, "--limit", "10", "--output", "json", "--hold", "--target", "dev", "--use-colors"), invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector)

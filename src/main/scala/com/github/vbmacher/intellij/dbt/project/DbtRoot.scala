@@ -22,7 +22,15 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   def yaml(path: String): Option[YAMLMapping] = psiFile(path).flatMap(DbtYaml.mapping)
 
-  def runOptions: DbtRunOptions = DbtProjectSettings.get(config.getProject).options(directory.getPath)
+  private var executionOptions: Option[DbtRunOptions] = None
+  def runOptions: DbtRunOptions = executionOptions.getOrElse(DbtProjectSettings.get(config.getProject).options(directory.getPath))
+
+  /** Execution overrides do not change this project's declaration/package identity. */
+  def withRunOptions(options: DbtRunOptions): DbtRoot = {
+    val configured = copy()
+    configured.executionOptions = Some(options)
+    configured
+  }
 
   def executionDirectory: java.nio.file.Path = {
     val overridePath = Option(runOptions.projectRoot).filter(_.nonEmpty).map(Paths.get(_))
@@ -35,7 +43,8 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   }
 
   def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key)).orElse(key match {
-    case "manifest" => Some(artifactDirectory.resolve("manifest.json").toString)
+    case "manifest" => Some(Option(runOptions.manifestPath).filter(_.nonEmpty)
+      .map(p => executionDirectory.resolve(p).normalize()).getOrElse(artifactDirectory.resolve("manifest.json")).toString)
     case "catalog" => Some(artifactDirectory.resolve("catalog.json").toString)
     case "target" => Option(runOptions.target).filter(_.nonEmpty)
     case _ => None
@@ -51,7 +60,8 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def profilesFile: String = runtimeSetting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
-    settings.map(DbtYaml.strings(_, "env-files", Vector(".env"))).getOrElse(Vector(".env")).flatMap(psiFile)
+    (if (runOptions.environmentFiles.trim.nonEmpty) runOptions.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
+    else settings.map(DbtYaml.strings(_, "env-files", Vector(".env"))).getOrElse(Vector(".env"))).flatMap(psiFile)
 
   /** Whether a file holds node selection expressions, in addition to `selectors.yml`. */
   def isSelectionFile(file: PsiFile): Boolean = relative(file.getVirtualFile)

@@ -7,8 +7,9 @@ packages and declarations available only through metadata are read-only.
 
 ## Completion and parameter information
 
-Invoke **Code → Code Completion → Basic** inside a dbt call to suggest resource
-names, macro names, configuration keys or named macro arguments:
+Press **Ctrl+Space** (or choose **Code → Code Completion → Basic**) inside a dbt
+call to suggest resource names, macro names, configuration keys or named macro
+arguments:
 
 ```jinja
 {{ ref('ord') }}
@@ -40,10 +41,12 @@ or materialization configuration call through **Insert Live Template**.
 ## Quick documentation
 
 Hover a model argument in `ref`, a table argument in `source`, or a macro name,
-or invoke **Quick Documentation**. The popup includes descriptions, known columns
-and dependencies. It shows up to 15 columns and eight dependencies in each
-direction, with counts. See the [documentation sidebar](workspace.md#documentation)
-for the full lists.
+or put the caret on it and press **Ctrl+Q** (on macOS: **F1**). The popup includes descriptions, known columns
+and dependencies. Resource documentation includes the complete known column and
+dependency lists, attached test declarations and detected Airflow context. Click a
+column name for its upstream and downstream dependencies; value, join and filter
+dependencies are labeled separately. You can keep these details in the native
+Documentation tool window.
 
 Builtin names such as `ref`, `source` and `var` open the official dbt reference
 article in the Documentation tool window. Links to other dbt reference articles
@@ -51,6 +54,22 @@ stay in that window. Source headings show logical names such as
 `analytics.raw.events`; known physical database, schema and relation names are
 listed separately. To open local definitions instead, see
 [local builtin definitions](configuration.md#local-builtin-definitions).
+
+## Edit and generate YAML properties
+
+Use **Edit dbt Properties YAML** from a resource's editor to open its authored YAML.
+Descriptions, tags, data tests, types and other custom fields remain editable in
+that source file.
+
+Choose **Code → Generate → dbt Columns** to add missing known column declarations.
+Choose **Inherit dbt Descriptions** to fill empty descriptions only for proven
+single-column passthroughs. Applicable **Alt+Enter** intentions provide the same
+operations. Review the native **Current YAML / Generated YAML** diff, then choose
+**Apply**. Changes support Undo; changed sources or settings require a fresh review.
+
+Existing custom fields and tests are retained. Parameterized tests, YAML anchors,
+commented sequences and inherited model-version columns may require direct YAML
+edits; the generator explains when it cannot preserve them.
 
 ## Editor warnings
 
@@ -113,7 +132,7 @@ select * exclude id from {{ ref('orders') }}
 ```
 
 Write the columns explicitly or remove the modifier. For unknown columns, declare
-them in YAML or [generate documentation](workspace.md#runner).
+them in YAML or [generate documentation](execution.md#commands).
 
 ## Rename and Safe Delete
 
@@ -150,7 +169,7 @@ Existing files are not overwritten. Names computed at runtime and installed
 packages have no creation action.
 
 To edit descriptions, tags, tests and columns together, see
-[documentation editing](workspace.md#documentation).
+[documentation editing](#quick-documentation).
 
 ## SQL linting and formatting
 
@@ -196,7 +215,7 @@ names and explicit versions are retained; other text stays unchanged. Marked
 Jinja comments from the copy action are restored. Pasting supports Undo.
 
 Both actions need documentation generated for the current project and target; see
-[Generate Docs](workspace.md#runner). The action warns when the metadata may belong
+[Generate Docs](execution.md#commands). The action warns when the metadata may belong
 to another project or target. Both shortcuts can be reassigned in **Settings → Keymap**.
 
 ## Syntax highlighting

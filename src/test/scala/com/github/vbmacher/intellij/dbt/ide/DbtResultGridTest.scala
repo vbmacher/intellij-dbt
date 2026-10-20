@@ -18,7 +18,7 @@ final class DbtResultGridTest extends DbtCodeInsightTestCase {
     "dev", 20, 12, "select * from orders").toOption.get
 
   def testTypedNullRendererPreservesEmptyLiteralNullUnicodeAndWideValues(): Unit = {
-    val grid = new DbtResultGrid; val r = result; grid.showResult(r)
+    val grid = new DbtResultGrid(getProject); val r = result; grid.showResult(r)
     val table = component(grid, classOf[JTable])
     assertEquals(classOf[java.math.BigDecimal], table.getColumnClass(0))
     val nullCell = table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2).asInstanceOf[JLabel]
@@ -32,7 +32,7 @@ final class DbtResultGridTest extends DbtCodeInsightTestCase {
     assertEquals(java.lang.Boolean.TRUE, table.getValueAt(0, 3))
   }
   def testSortingFilteringSelectionCopyAndCsvTsvKeepExactValuesAndViewOrder(): Unit = {
-    val grid = new DbtResultGrid; grid.showResult(result)
+    val grid = new DbtResultGrid(getProject); grid.showResult(result)
     val table = component(grid, classOf[JTable])
     table.getRowSorter.toggleSortOrder(0)
     assertEquals(new java.math.BigDecimal("2"), table.getValueAt(0, 0))
@@ -52,7 +52,7 @@ final class DbtResultGridTest extends DbtCodeInsightTestCase {
   }
   def testChangingLimitSortingAndFilteringNeverRunsQueriesUntilExplicitButton(): Unit = {
     val requests = ArrayBuffer.empty[Int]
-    val grid = new DbtResultGrid(value => requests += value); grid.showResult(result)
+    val grid = new DbtResultGrid(getProject, value => requests += value); grid.showResult(result)
     val spinner = component(grid, classOf[JSpinner])
     spinner.setValue(Int.box(100))
     component(grid, classOf[JTextField]).setText("wide")
@@ -64,7 +64,7 @@ final class DbtResultGridTest extends DbtCodeInsightTestCase {
     assertFalse(button(grid, "Copy selection").isEnabled); assertFalse(button(grid, "Export CSV").isEnabled)
   }
   def testEmptyAndMalformedResultsAreDistinctAndRowsAreBoundedWithHeterogeneousColumns(): Unit = {
-    val grid = new DbtResultGrid
+    val grid = new DbtResultGrid(getProject)
     grid.showResult(DbtQueryResult.parse("{\"show\":[]}", "prod", 10, 5, "select empty").toOption.get)
     assertTrue(components(grid).collect { case l: JLabel => l.getText }.mkString(" ").contains("No data returned"))
     assertEquals("", grid.exportText(','))
@@ -78,7 +78,7 @@ final class DbtResultGridTest extends DbtCodeInsightTestCase {
     assertTrue(components(grid).collect { case l: JLabel => l.getText }.mkString(" ").contains("Malformed output"))
   }
   def testNullAwareFilteringAndNumericSortingDoNotConfuseNullWithEmptyText(): Unit = {
-    val grid = new DbtResultGrid
+    val grid = new DbtResultGrid(getProject)
     grid.showResult(DbtQueryResult.parse("{\"show\":[{\"v\":null},{\"v\":\"\"},{\"v\":\"NULL\"}]}", "dev", 20, 1, "").toOption.get)
     component(grid, classOf[JTextField]).setText("NULL")
     assertEquals(2, component(grid, classOf[JTable]).getRowCount)

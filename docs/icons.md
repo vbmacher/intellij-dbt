@@ -66,16 +66,15 @@ action icons. See [the dbt window](workspace.md) for the corresponding controls.
 | Icon | Meaning | Rule |
 | --- | --- | --- |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
-| Run triangle | Run | Runner **Run** button. |
-| Build/compile symbol | Build or Compile | Runner **Build** and **Compile** buttons; the button label distinguishes the command. |
-| Test/run symbol | Run tests | Runner **Test** button. |
-| Preview symbol | Preview rows | Runner **Preview** button. |
-| Preview/details symbol | Documentation | Runner **Generate Docs** button and Lineage **Toggle documentation** button. |
-| Refresh arrows | Refresh or generate | Runner **Source Freshness** and Lineage **Regenerate Docs** buttons; the label or tooltip identifies which command runs. |
-| Suspend/stop symbol | Stop execution | Runner **Stop** button. |
-| Clear/garbage-collection symbol | Clear output | Runner **Clear** button. |
-| Gear | Settings | Runner **Settings** button. |
-| Close cross | Clear or close | Lineage **Clear search** and **Close documentation** buttons; each has its own tooltip. |
+| Run triangle | Run a model | Editor gutter at the first non-whitespace leaf of a dbt model. Opens standard Run actions for that model. |
+| Preview/details symbol | Open Documentation | Lineage toolbar; opens native Documentation for the selected or focused resource. |
+| Refresh arrows | Configure documentation generation | Lineage **Regenerate Docs**; opens a native Generate Docs configuration without executing it. |
+| Run triangle in Lineage | Configure filtered scope | **Use in Run Configuration** opens a native configuration with the graph's selector fields. |
+| Green test marker | Passed | Editor Run gutter at a test declaration with compatible current passing evidence. |
+| Red test marker | Failed or errored | Editor Run gutter at a test declaration with compatible current failure/error evidence; takes precedence when tests share a line. |
+| Yellow test marker | Warning or skipped | Editor Run gutter with compatible warning/skip evidence and no failing or unresolved test on that line. |
+| Test Run triangle | Result unavailable | Editor Run gutter without compatible current evidence, including after source or execution settings change. |
+| Close cross | Clear or close | Lineage **Clear search** and **Clear filter** buttons; each has its own tooltip. |
 | Magnifier plus/minus | Zoom | Lineage **Zoom in** and **Zoom out** buttons. |
 | Fit-content corners | Fit graph | Lineage **Fit graph** button. |
 
@@ -85,8 +84,8 @@ The graph shows these symbols next to resource kinds.
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| ▤ | Model or other resource | Model cards and documentation headings; also the fallback for resource kinds without another graph symbol. |
-| ⇥ | Source table | Source-table cards and documentation headings. |
-| ▦ | Seed | Seed cards and documentation headings. |
-| ◷ | Snapshot | Snapshot cards and documentation headings. |
-| ◈ | Exposure | Exposure cards and documentation headings. |
+| ▤ | Model or other resource | Model cards; also the fallback for resource kinds without another graph symbol. |
+| ⇥ | Source table | Source-table cards. |
+| ▦ | Seed | Seed cards. |
+| ◷ | Snapshot | Snapshot cards. |
+| ◈ | Exposure | Exposure cards. |

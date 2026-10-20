@@ -33,7 +33,9 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     val cycle = DbtSelection.resolve(w, root, "selector:cycle_a")
     assertTrue(cycle.resources.isEmpty); assertTrue(cycle.problems.exists(_.contains("cycle")))
     assertFalse(DbtSelection.resolve(w, root, "c,,d").complete)
-    assertFalse(DbtSelection.resolve(w, root, "@c").complete)
+    val atSelection = DbtSelection.resolve(w, root, "@c")
+    assertTrue(atSelection.complete)
+    assertEquals(Set("a", "b", "c", "d"), atSelection.resources.map(_.name).toSet)
     assertFalse(DbtSelection.resolve(w, root, "selector:missing").complete)
   }
 

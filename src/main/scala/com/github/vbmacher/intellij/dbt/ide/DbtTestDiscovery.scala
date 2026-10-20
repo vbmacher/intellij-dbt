@@ -15,7 +15,7 @@ private[ide] final case class DbtTestDefinition(id: String, name: String, kind: 
 /** Source definitions remain browsable offline. Manifest identities enrich generated generic tests without guessing their hashes. */
 private[ide] object DbtTestDiscovery {
   import DbtExecutionEvidence._
-  def discover(w: DbtWorkspace): Vector[DbtTestDefinition] = {
+  def discover(w: DbtWorkspace, executionOptions: Map[String, DbtRunOptions] = Map.empty): Vector[DbtTestDefinition] = {
     lazy val sourceDependencies = DbtLineage.edges(w).filter(e => !e.ambiguous && DbtSymbol.RelationKinds(e.to.kind))
       .groupMap(_.from.id)(_.to.uniqueId)
     val source = w.symbols.filter(s => Set("test", "unit_test")(s.kind) && !s.metadata && s.isEnabled && !w.symbols.exists(g => g.kind == "generic_test" && g.file == s.file)).flatMap { s =>
@@ -56,7 +56,7 @@ private[ide] object DbtTestDiscovery {
       }}
     }.distinctBy(t => (t.root, t.file.getPath, t.offset, t.dependencies))
     val declarations = source ++ attached
-    val manifest = w.roots.map(w.executionRoot).distinct.flatMap { root =>
+    val manifest = w.roots.map(w.executionRoot).distinct.map(r => executionOptions.get(r.directory.getPath).fold(r)(r.withRunOptions)).flatMap { root =>
       root.setting("manifest").flatMap(p => DbtManifestReader.get(w.project)
         .read(root, p, DbtManifestPolicy.TestDiscovery).toOption).toVector.flatMap { top =>
         top.in("nodes", "unit_tests").map(_.data).filter(n => Set("test", "unit_test")(string(n, "resource_type")) && string(obj(n, "config"), "enabled") != "false").flatMap { n =>

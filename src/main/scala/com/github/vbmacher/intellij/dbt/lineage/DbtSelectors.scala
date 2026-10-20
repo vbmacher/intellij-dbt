@@ -22,7 +22,7 @@ private[dbt] object DbtSelectors {
   private val SelectableKinds = Set("model", "seed", "snapshot", "source_table", "test", "generic_test", "analysis", "exposure", "metric",
     "saved_query", "function", "check", "group", "unit_test", "semantic_model")
   private val MethodKeys = Set("fqn", "path", "package", "source", "tag", "group", "exposure", "metric", "saved_query", "test", "function",
-    "check", "resource_type")
+    "check", "resource_type", "type", "file", "access", "config.materialized", "config.tags")
 
   def selectable(symbol: DbtSymbol): Boolean = SelectableKinds(symbol.kind) && symbol.isEnabled
 
@@ -34,7 +34,7 @@ private[dbt] object DbtSelectors {
     val suffix = "\\+[0-9]*$".r.findFirstIn(expression)
     val core = expression.drop(prefix.map(_.length).getOrElse(0)).dropRight(suffix.map(_.length).getOrElse(0))
     val split = core.split(":", 2)
-    val method = if (split.length == 2) split.head else "fqn"
+    val method = if (split.length == 2) split.head else if (core.contains("/") || core.matches(".*\\.(sql|csv|py)")) "path" else "fqn"
     val value = split.last
     if (method == "selector") return if (root.supports(12)) w.symbols.filter(s => s.kind == "selector" &&
       s.name == value && w.root(s.file).contains(root)).map(_.element) else Vector.empty
@@ -45,13 +45,18 @@ private[dbt] object DbtSelectors {
         val relative = w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).map(_.stripSuffix("." + s.file.getVirtualFile.getExtension).replace('/', '.')).getOrElse("")
         val folders = w.owner(s).flatMap(_.resourceFolders(s.file.getVirtualFile)).map(_._2).getOrElse(Vector.empty)
         val identity = (Vector(s.namespace) ++ folders ++ Vector(s.name) ++ s.version.map("v" + _)).mkString(".")
-        glob(value, identity) || glob(value, s.name) || glob(value, s.namespace + "." + s.name) || glob(value, s.namespace + "." + relative.stripPrefix("models."))
+        val parts = Vector(s.namespace) ++ folders ++ Vector(s.name) ++ s.version.map("v" + _)
+        val prefixes = parts.indices.map(i => parts.take(i + 1).mkString(".")) ++ parts.drop(1).indices.map(i => parts.drop(1).take(i + 1).mkString("."))
+        glob(value, identity) || glob(value, s.name) || prefixes.exists(glob(value, _)) || glob(value, s.namespace + "." + s.name) || glob(value, s.namespace + "." + relative.stripPrefix("models."))
       case "path" => w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).exists(p => glob(value, p) || p.startsWith(value.stripSuffix("/") + "/"))
+      case "file" => glob(value, s.file.getName.replaceFirst("\\.(sql|py|csv)$", ""))
       case "package" => glob(value, s.namespace)
-      case "tag" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
+      case "tag" | "config.tags" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
+      case "access" => s.attributes.get("access").exists(glob(value, _))
+      case "config.materialized" => s.attributes.get("materialized").exists(glob(value, _))
       case "source" => s.kind == "source_table" && (glob(value, s.owner + "." + s.name) || glob(value, s.owner) ||
         glob(value, s.namespace + "." + s.owner + "." + s.name))
-      case "resource_type" => s.kind == value
+      case "resource_type" | "type" => glob(value, if (s.kind == "source_table") "source" else s.kind) || s.kind == value
       case "group" => s.kind == "group" && glob(value, s.name) || s.attributes.get("group").exists(glob(value, _))
       case "exposure" | "metric" | "saved_query" => s.kind == method && (glob(value, s.name) || glob(value, s.namespace + "." + s.name))
       case "function" | "check" | "test" => s.kind == method && glob(value, s.name)

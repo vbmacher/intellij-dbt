@@ -188,37 +188,6 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
     assertEquals(1, result.size); assertTrue(result.head.confidence.startsWith("inferred"))
   }
 
-  def testAirflowLiteralNamedGraphExcludeAndDynamicMappings(): Unit = {
-    project()
-    add("models/orders.sql", "select 1")
-    add("models/report.sql", "select * from {{ ref('orders') }}")
-    add("selectors.yml", "selectors: [{name: reports, definition: report}]\n")
-    val definition = add(".dbt-airflow.yml", """airflow_url: https://airflow.test
-tasks:
-- {dag: daily_finance, task: build_all, project: analytics, select: 'orders+', exclude: report, upstream_ingestion: [orders_loaded]}
-- {dag: daily_finance, task: named, project: analytics, selector: reports}
-- {dag: dynamic, task: build, project: analytics, select: '{{ runtime_selector }}'}
-""")
-    add("dags/evil.py", "raise RuntimeError('must never execute')")
-    val tasks = DbtAirflow.tasks(workspace)
-    assertEquals(3, tasks.size)
-    assertEquals(Vector("orders"), tasks.head.resources.map(_.name))
-    assertEquals(Vector("report"), tasks(1).resources.map(_.name))
-    assertTrue(tasks(2).resources.isEmpty); assertTrue(tasks(2).problems.exists(_.contains("Dynamic")))
-    assertEquals(Vector("orders_loaded"), tasks.head.ingestion)
-    assertEquals(definition.getVirtualFile.getPath, tasks.head.evidence)
-    assertEquals(Some("https://airflow.test/dags/daily_finance/grid?task_id=build_all"), tasks.head.url)
-  }
-
-  def testAirflowMissingProjectAndMissingSelectionStayExplicit(): Unit = {
-    project()
-    add(".dbt-airflow.yml", "tasks: [{dag: daily, task: missing_project, project: absent, select: '*'}, {dag: daily, task: no_selection, project: analytics}]\n")
-    val tasks = DbtAirflow.tasks(workspace)
-    assertTrue(tasks.forall(_.resources.isEmpty))
-    assertTrue(tasks.head.problems.exists(_.contains("Project")))
-    assertTrue(tasks(1).problems.exists(_.contains("unknown")))
-  }
-
   def testAgentContractProvidesExactIdentitiesLocationsAndSourceFirstDocsWithoutRunningDbt(): Unit = {
     project()
     val code = add("models/orders.sql", "select 1 as amount")
@@ -273,7 +242,7 @@ tasks:
     val socket = new java.net.Socket("127.0.0.1", uri.getPort)
     socket.setSoTimeout(2000)
     try {
-      val request = "POST /tools HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + endpoint._2 + "\r\nContent-Length: 1000\r\n\r\n{"
+      val request = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + endpoint._2 + "\r\nContent-Length: 1000\r\n\r\n{"
       socket.getOutputStream.write(request.getBytes(java.nio.charset.StandardCharsets.UTF_8)); socket.getOutputStream.flush()
       val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
       while (service.activeRequestCount == 0 && System.nanoTime() < deadline) Thread.sleep(10)
@@ -294,19 +263,71 @@ tasks:
     val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
     def send(token: String, body: String = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""") = client.send(HttpRequest.newBuilder(URI.create(endpoint._1)).timeout(Duration.ofSeconds(5))
       .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
-    assertEquals(403, send("wrong").statusCode())
+    assertEquals(401, send("wrong").statusCode())
     val response = send(endpoint._2)
     assertEquals(200, response.statusCode()); assertTrue(response.body().contains("get_documentation"))
     assertFalse(response.body().contains(endpoint._2))
     val invalid = send(endpoint._2, """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"resolve_reference","arguments":{"project":"analytics","reference":"orders","offset":1.5}}}""")
-    assertEquals(-32602, JsonParser.parseString(invalid.body()).getAsJsonObject.getAsJsonObject("error").get("code").getAsInt)
+    assertTrue(JsonParser.parseString(invalid.body()).getAsJsonObject.getAsJsonObject("result").get("isError").getAsBoolean)
     val impact = send(endpoint._2, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"suggest_validation_selection","arguments":{"baseline":"nonexistent-fixture-revision"}}}""")
     assertEquals("error", JsonParser.parseString(impact.body()).getAsJsonObject.getAsJsonObject("result").getAsJsonObject("structuredContent").get("status").getAsString)
     val docs = send(endpoint._2, """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_documentation","arguments":{"project":"analytics","resource_id":"model.analytics.orders"}}}""")
     assertEquals("ok", JsonParser.parseString(docs.body()).getAsJsonObject.getAsJsonObject("result").getAsJsonObject("structuredContent").get("status").getAsString)
+    assertEquals(202, send(endpoint._2, """{"jsonrpc":"2.0","method":"notifications/initialized"}""").statusCode())
+    val batch = send(endpoint._2, """[{"jsonrpc":"2.0","id":5,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]""")
+    assertEquals(200, batch.statusCode()); assertEquals(1, JsonParser.parseString(batch.body()).getAsJsonArray.size())
+    val get = client.send(HttpRequest.newBuilder(URI.create(endpoint._1)).header("Authorization", "Bearer " + endpoint._2).GET().build(), HttpResponse.BodyHandlers.ofString())
+    assertEquals(405, get.statusCode())
     service.stop(); assertTrue(service.endpoint.isEmpty)
     val restarted = service.start().toOption.get
     assertNotEquals(endpoint._2, restarted._2)
     service.stop()
+  }
+
+  def testAgentServesStatelessMcpRequestsWithMatchingHeaders(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    val service = getProject.getService(classOf[DbtAgent])
+    getProject.getService(classOf[DbtConsumersSettings]).getState.agentEnabled = true
+    val endpoint = service.start().toOption.get
+    val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
+    val meta = """"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"""
+    def send(body: String, headers: (String, String)*) = {
+      val builder = HttpRequest.newBuilder(URI.create(endpoint._1)).timeout(Duration.ofSeconds(5)).header("Authorization", "Bearer " + endpoint._2)
+      headers.foreach { case (k, v) => builder.header(k, v) }
+      val response = client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+      (response.statusCode(), if (response.body().isEmpty) new JsonObject else JsonParser.parseString(response.body()).getAsJsonObject)
+    }
+    try {
+      val (discoverStatus, discover) = send("""{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{""" + meta + "}}",
+        "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "server/discover")
+      assertEquals(200, discoverStatus)
+      val discovered = discover.getAsJsonObject("result")
+      assertEquals("complete", discovered.get("resultType").getAsString)
+      assertTrue(discovered.getAsJsonArray("supportedVersions").asScala.map(_.getAsString).toSet.contains("2026-07-28"))
+      assertEquals("dbt-workspace", discovered.getAsJsonObject("_meta").getAsJsonObject("io.modelcontextprotocol/serverInfo").get("name").getAsString)
+      val (listStatus, listed) = send("""{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{""" + meta + "}}",
+        "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "tools/list")
+      assertEquals(200, listStatus); assertEquals("private", listed.getAsJsonObject("result").get("cacheScope").getAsString)
+      val call = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{},""" + meta + "}}"
+      val (callStatus, called) = send(call, "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "tools/call",
+        "Mcp-Name" -> ("=?base64?" + java.util.Base64.getEncoder.encodeToString("list_projects".getBytes) + "?="))
+      assertEquals(200, callStatus); assertEquals("complete", called.getAsJsonObject("result").get("resultType").getAsString)
+      val (mismatchStatus, mismatch) = send(call, "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "tools/call", "Mcp-Name" -> "get_lineage")
+      assertEquals(400, mismatchStatus); assertEquals(-32020, mismatch.getAsJsonObject("error").get("code").getAsInt)
+      val future = """{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"""
+      val (futureStatus, unsupported) = send(future, "MCP-Protocol-Version" -> "2099-01-01", "Mcp-Method" -> "tools/list")
+      assertEquals(400, futureStatus); assertEquals(-32022, unsupported.getAsJsonObject("error").get("code").getAsInt)
+      assertTrue(unsupported.getAsJsonObject("error").getAsJsonObject("data").getAsJsonArray("supported").size() > 0)
+      val (missingMetaStatus, missingMeta) = send("""{"jsonrpc":"2.0","id":5,"method":"tools/list"}""", "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "tools/list")
+      assertEquals(400, missingMetaStatus); assertEquals(-32602, missingMeta.getAsJsonObject("error").get("code").getAsInt)
+      val (unknownStatus, unknown) = send("""{"jsonrpc":"2.0","id":6,"method":"resources/list","params":{""" + meta + "}}",
+        "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "resources/list")
+      assertEquals(404, unknownStatus); assertEquals(-32601, unknown.getAsJsonObject("error").get("code").getAsInt)
+      val (notificationStatus, _) = send("""{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":3,""" + meta + "}}",
+        "MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "notifications/cancelled")
+      assertEquals(202, notificationStatus)
+      assertEquals(400, send("{not json")._1)
+    } finally service.stop()
   }
 }

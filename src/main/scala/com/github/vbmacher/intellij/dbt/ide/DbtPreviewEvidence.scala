@@ -113,11 +113,14 @@ private[ide] object DbtPreviewEvidence {
 /** Shared by the Runner and CTE inspector; failed queries have no result grid to hold these controls. */
 private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new FlowLayout(FlowLayout.LEFT)) {
   private var evidence = Option.empty[DbtPreviewEvidence]
-  private val details = new JButton("Preview SQL / raw output")
+  private val details = new JButton("Open preview SQL")
   private val navigate = new JButton("Go to CTE error")
   private val label = new JBLabel
   label.putClientProperty("html.disable", java.lang.Boolean.TRUE)
-  details.addActionListener(_ => evidence.foreach(e => DbtTextDialog.show("Preview execution", e.displaySql + "\n\nRaw output:\n" + e.raw)))
+  details.addActionListener(_ => evidence.foreach { e =>
+    DbtSqlEditors.open(project, "dbt submitted preview", e.submitted)
+    e.adapterSql.foreach(sql => DbtSqlEditors.open(project, "dbt adapter preview", sql))
+  })
   navigate.addActionListener(_ => WriteIntentReadAction.run(() => evidence.flatMap(_.location).foreach { at =>
     val file = Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl))
     val current = file.flatMap(f => Option(FileDocumentManager.getInstance.getDocument(f)))

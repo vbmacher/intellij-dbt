@@ -14,7 +14,7 @@ private[ide] object DbtCommandAction {
   case object ResolveSelection extends DbtCommandAction("Resolve Selection", Vector("ls", "--quiet", "--output", "json"), usesState = false)
 
   val toolbar: Vector[DbtCommandAction] = Vector(Run, Build, Test, Compile, Preview, GenerateDocs, SourceFreshness)
-  def fromLabel(label: String): Option[DbtCommandAction] = toolbar.find(_.label == label)
+  def fromLabel(label: String): Option[DbtCommandAction] = (toolbar :+ ResolveSelection).find(_.label == label)
 }
 
 private[ide] sealed abstract class DbtCommandScope

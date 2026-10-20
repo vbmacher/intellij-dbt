@@ -16,7 +16,7 @@ final class DbtPreviewAcceptanceTest extends DbtCodeInsightTestCase {
   private def component[A](grid: DbtResultGrid, kind: Class[A]): A = components(grid).find(kind.isInstance).map(kind.cast).get
 
   def testExportSnapshotRetainsFilteredSortedReorderedViewAfterTheGridIsCleared(): Unit = {
-    val grid = new DbtResultGrid
+    val grid = new DbtResultGrid(getProject)
     val rows = """{"show":[{"id":10,"text":"a,\"b\"\n日本語","kind":"keep"},{"id":2,"text":"","kind":"keep"},{"id":1,"text":null,"kind":"hide"}]}"""
     grid.showResult(DbtQueryResult.parse(rows, "prod", 20, 17, "select * from orders").toOption.get)
     val table = component(grid, classOf[JTable])
@@ -44,7 +44,7 @@ final class DbtPreviewAcceptanceTest extends DbtCodeInsightTestCase {
     assertEquals(1000, result.rows.size)
     assertEquals(Vector("id", "wide"), result.columns)
     assertEquals("analytics-dev", result.target); assertEquals(81L, result.elapsedMillis)
-    val grid = new DbtResultGrid; grid.showResult(result)
+    val grid = new DbtResultGrid(getProject); grid.showResult(result)
     val snapshot = grid.exportSnapshot('\t')
     grid.clear("Closed preview")
     val text = CompletableFuture.supplyAsync(() => snapshot()).get(10, TimeUnit.SECONDS)

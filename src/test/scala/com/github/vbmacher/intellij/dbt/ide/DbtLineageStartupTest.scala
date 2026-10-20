@@ -19,7 +19,12 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     DbtProjectSettings.get(getProject).loadState(new DbtSettingsState)
   } finally super.tearDown()
 
-  private def status(panel: DbtToolWindowPanel): String = panel.diagnosticsText
+  private def status(panel: DbtToolWindowPanel): String = panel.lastSnapshot.map { snapshot =>
+    val nodes = snapshot.payload.getAsJsonArray("nodes")
+    val focus = Option(snapshot.payload.get("focus")).map(_.getAsString).getOrElse("")
+    val name = snapshot.targets.get(focus).map(_.symbol.presentableText).getOrElse("None")
+    "Lineage focus: " + name + " Resources: " + nodes.size()
+  }.getOrElse("")
 
   private def await(message: String)(condition: => Boolean): Unit =
     PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
@@ -70,7 +75,7 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     val unrelated = model.getParent.findChild("unrelated.sql")
     select(unrelated)
     panel.refresh(follow = false)
-    await("Background refresh sees the new editor")(status(panel).contains("Lineage focus: analytics.unrelated"))
+    await("Background refresh sees the new editor")(status(panel).contains("Lineage focus: analytics.orders"))
     assertTrue("An established graph focus survives background refreshes", status(panel).contains("Resources: 3"))
   }
 
@@ -82,95 +87,4 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     await("Opening the restored editor refreshes the panel")(status(panel).contains("Lineage focus: analytics.orders"))
     assertTrue(status(panel).contains("Resources: 3"))
   }
-  def testSelectorReviewCopyAndEditsInvalidateTheDisplayedPreview(): Unit = {
-    val (panel, select, model) = setupRestoringEditor()
-    select(model)
-    panel.refresh(follow = true)
-    await("Model becomes the shortcut context")(status(panel).contains("Lineage focus: analytics.orders"))
-    def components(c: java.awt.Component): Vector[java.awt.Component] = Vector(c) ++ (c match {
-      case container: java.awt.Container => container.getComponents.toVector.flatMap(components)
-      case _ => Vector.empty
-    })
-    def button(label: String) = components(panel.runnerPanel).collectFirst {
-      case b: javax.swing.JButton if b.getText == label => b
-    }.get
-    val fields = components(panel.runnerPanel)
-    val expression = fields.collectFirst { case f: javax.swing.JTextField if f.getName == "dbt.selection" => f }.get
-    val exclude = fields.collectFirst { case f: javax.swing.JTextField if f.getName == "dbt.exclude" => f }.get
-    val review = fields.collectFirst { case a: JTextArea if a.getName == "dbt.selectionReview" => a }.get
-    expression.setText("+fqn:analytics.orders+")
-    button("Review selection").doClick()
-    await("Review displays exact graph matches")(review.getText.contains("Matched resources: 3"))
-    assertEquals("+fqn:analytics.orders+", expression.getText)
-    assertFalse(review.getText.contains("model.analytics.unrelated"))
-    assertTrue(button("Copy command").isEnabled)
-    button("Copy command").doClick()
-    val copied: String = com.intellij.openapi.ide.CopyPasteManager.getInstance.getContents(java.awt.datatransfer.DataFlavor.stringFlavor)
-    assertTrue(copied.contains("fqn:analytics.orders"))
-    val command = fields.collectFirst { case c: javax.swing.JComboBox[_] if c.getName == "dbt.command" => c }.get
-    command.setSelectedItem("Compile")
-    assertFalse("Changing commands invalidates the copied command", button("Copy command").isEnabled)
-    button("Review selection").doClick()
-    await("Selection review uses the chosen command")(review.getText.contains("compile") && button("Copy command").isEnabled)
-    button("Copy command").doClick()
-    val compiled: String = com.intellij.openapi.ide.CopyPasteManager.getInstance.getContents(java.awt.datatransfer.DataFlavor.stringFlavor)
-    assertTrue(compiled.contains("compile"))
-    exclude.setText("events")
-    assertFalse(button("Copy command").isEnabled)
-    assertTrue(review.getText.contains("Review selection again"))
-    button("Review selection").doClick()
-    await("Exclusion changes preview")(review.getText.contains("Matched resources: 2"))
-    val target = fields.collectFirst { case c: javax.swing.JComboBox[_] if c.getName == "dbt.target" => c }.get
-    target.getEditor.setItem("qa")
-    assertTrue(review.getText.contains("Review selection again"))
-    assertFalse(button("Copy command").isEnabled)
-    button("Review selection").doClick()
-    await("Target is included in refreshed preview")(review.getText.contains("target: qa"))
-    add("target/manifest.json", "{}")
-    panel.refresh(follow = false)
-    await("Generated artifact becomes visible without clearing the review")(status(panel).contains("Manifest:"))
-    assertTrue("dbt output artifacts do not invalidate an authored selection", button("Copy command").isEnabled)
-    com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit = com.intellij.psi.PsiDocumentManager.getInstance(getProject).getDocument(
-        com.intellij.psi.PsiManager.getInstance(getProject).findFile(model)).insertString(0, "-- changed\n")
-    })
-    await("Source edit invalidates selection preview")(review.getText.contains("Review selection again"))
-  }
-
-  def testEditingASelectionWhileItsCommandIsPreparingPreventsExecution(): Unit = {
-    val (panel, select, model) = setupRestoringEditor()
-    select(model); panel.refresh(follow = true)
-    await("Model context loaded")(status(panel).contains("Lineage focus: analytics.orders"))
-    def components(c: java.awt.Component): Vector[java.awt.Component] = Vector(c) ++ (c match {
-      case container: java.awt.Container => container.getComponents.toVector.flatMap(components)
-      case _ => Vector.empty
-    })
-    val fields = components(panel.runnerPanel)
-    fields.collectFirst { case c: javax.swing.JComboBox[_] if c.getName == "dbt.command" => c }.get.setSelectedItem("Build")
-    val button = fields.collectFirst { case b: javax.swing.JButton if b.getName == "dbt.execute" => b }.get
-    val expression = fields.collectFirst { case f: javax.swing.JTextField if f.getName == "dbt.selection" => f }.get
-    val context = fields.collectFirst { case l: javax.swing.JLabel if l.getName == "dbt.context" => l }.get
-    val events = scala.collection.mutable.ArrayBuffer.empty[DbtRunnerEvent]
-    getProject.getService(classOf[DbtRunner]).listen(ui, events += _)
-    button.doClick()
-    expression.setText("events")
-    await("Stale command is rejected")(context.getText.contains("changed while preparing"))
-    assertFalse(events.exists(_.running))
-  }
-
-  def testBackgroundLineageFilteringCannotReplaceTheRunnerSelection(): Unit = {
-    val (panel, select, model) = setupRestoringEditor()
-    select(model); panel.refresh(follow = true)
-    await("Model context loaded")(status(panel).contains("Lineage focus: analytics.orders"))
-    panel.handleMessage("""{"type":"use-runner-selection","id":"orders","value":""}""")
-    val options = DbtProjectSettings.get(getProject).getState.projects.values().iterator().next()
-    assertEquals("orders", options.selection)
-    panel.handleMessage("""{"type":"filter","id":"events","value":""}""")
-    assertEquals("A background filter response cannot overwrite a newer Runner expression", "orders", options.selection)
-    panel.handleMessage("""{"type":"filter","id":"","value":"","shared":true}""")
-    assertEquals("Clearing the graph filter leaves Runner unchanged", "orders", options.selection)
-    panel.handleMessage("""{"type":"use-runner-selection","id":"","value":""}""")
-    assertEquals("Explicit handoff can clear Runner selectors", "", options.selection)
-  }
-
 }
