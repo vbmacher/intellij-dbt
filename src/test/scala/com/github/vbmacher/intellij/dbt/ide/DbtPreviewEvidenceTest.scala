@@ -21,7 +21,7 @@ final class DbtPreviewEvidenceTest extends DbtCodeInsightTestCase {
     root.add("info", info); root.add("data", data); root.toString
   }
   private def command(source: String, query: DbtCteQuery, path: String = "/source/report.sql", url: String = "file:///source/report.sql"): DbtCommand =
-    DbtCommand(Vector("dbt", "show", "--inline", query.sql), "/source", Map.empty, "Preview", "dev", false, "/target", Vector.empty,
+    DbtCommand(Vector("dbt"), DbtCommandRequest(DbtCommandAction.Preview, DbtCommandScope.Inline(query.sql)), "/source", Map.empty, "dev", false, "/target", Vector.empty,
       previewSource = Some(DbtPreviewSource(path, source, query.sql, query.spans, node, url)))
   private def position(sql: String, needle: String): (Int, Int) = {
     val offset = sql.indexOf(needle); assertTrue(offset >= 0)

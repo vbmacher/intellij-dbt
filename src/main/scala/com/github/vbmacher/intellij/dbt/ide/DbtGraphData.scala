@@ -10,27 +10,26 @@ import scala.jdk.CollectionConverters._
 private[ide] final case class DbtGraphSnapshot(payload: JsonObject, targets: Map[String, DbtSymbolElement])
 private[ide] object DbtGraphData {
   private val gson = new Gson
-  def key(w: DbtWorkspace, s: DbtSymbol): String = w.owner(s).map(_.directory.getPath).getOrElse("") + "|" + s.uniqueId
 
   def build(w: DbtWorkspace, focus: Option[String], upstream: Int, downstream: Int, exposures: Boolean): DbtGraphSnapshot = {
     val resources = w.symbols.filter(s => DbtResourceData.GraphKinds(s.kind) && s.isEnabled && (exposures || s.kind != "exposure"))
-      .groupBy(key(w, _)).values.toVector.flatMap { candidates =>
+      .groupBy(DbtResourceIdentity.key(w, _)).values.toVector.flatMap { candidates =>
         val source = candidates.filterNot(_.metadata)
         val preferred = if (source.nonEmpty) source else candidates
         val code = preferred.filter(_.isCode)
         if (code.nonEmpty) code else preferred.filterNot(s => s.isProperty && preferred.exists(t => t != s && !t.isProperty))
       }
     // Resource ids include the declaration location when there are genuinely ambiguous declarations.
-    val groups = resources.groupBy(key(w, _))
+    val groups = resources.groupBy(DbtResourceIdentity.key(w, _))
     def id(s: DbtSymbol): String = {
-      val k = key(w, s)
+      val k = DbtResourceIdentity.key(w, s)
       if (groups.getOrElse(k, Vector.empty).size > 1) k + "|" + s.id else k
     }
     val byId = resources.map(s => id(s) -> s).toMap
-    def canonical(s: DbtSymbol): Vector[String] = groups.getOrElse(key(w, s), Vector.empty).map(id)
+    def canonical(s: DbtSymbol): Vector[String] = groups.getOrElse(DbtResourceIdentity.key(w, s), Vector.empty).map(id)
     val edges = DbtLineage.edges(w).filter(e => DbtResourceData.GraphKinds(e.from.kind) && DbtResourceData.GraphKinds(e.to.kind))
       .flatMap(e => for (from <- canonical(e.to); to <- canonical(e.from) if from != to) yield (from, to, e.ambiguous)).distinct
-    val start = focus.filter(byId.contains).orElse(focus.flatMap(k => resources.find(s => key(w, s) == k).map(id)))
+    val start = focus.filter(byId.contains).orElse(focus.flatMap(k => resources.find(s => DbtResourceIdentity.key(w, s) == k).map(id)))
     def walk(down: Boolean, depth: Int): Set[String] = {
       val adjacency = edges.groupMap(e => if (down) e._1 else e._2)(e => if (down) e._2 else e._1)
       val seen = mutable.Set.empty[String] ++ start
@@ -59,7 +58,7 @@ private[ide] object DbtGraphData {
       node.addProperty("folder", w.owner(s).flatMap(_.relative(s.file.getVirtualFile)).getOrElse("").split('/').dropRight(1).mkString("/"))
       node.add("tags", gson.toJsonTree(data.tags.asJava))
       node.addProperty("manifest", data.attributes.contains("artifact-project"))
-      node.addProperty("candidate", groups(key(w, s)).size > 1)
+      node.addProperty("candidate", groups(DbtResourceIdentity.key(w, s)).size > 1)
       val executionRoot = w.owner(s).map(w.executionRoot).map(_.directory.getPath)
       val runs = executionRoot.flatMap(executionRuns.get).getOrElse(Vector.empty)
       node.add("execution", evidence.overlay(s, runs, testDefinitions.filter(t => executionRoot.contains(t.root))))
@@ -92,6 +91,8 @@ private[ide] object DbtGraphData {
     val data = DbtResourceData.get(w, s)
     val doc = new JsonObject
     doc.addProperty("name", DbtDocumentation.displayName(s)); doc.addProperty("kind", s.kind); doc.addProperty("description", data.description)
+    doc.addProperty("shortName", s.name + s.version.map(" v" + _).getOrElse(""))
+    doc.addProperty("identity", s.uniqueId)
     doc.addProperty("source", s.file.getVirtualFile.getPath); doc.addProperty("logical", s.relationName)
     doc.addProperty("editable", !s.metadata && s.file.isWritable && w.owner(s).exists(w.packageOwner(_).isEmpty))
     doc.addProperty("rawSql", data.rawSql.orNull); doc.addProperty("compiledSql", data.compiledSql.orNull)
@@ -125,13 +126,13 @@ private[ide] object DbtGraphData {
 
   def columnPaths(w: DbtWorkspace, resource: DbtSymbol, column: String): JsonObject = {
     val edges = com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage.edges(w)
-    val resources = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind)).distinctBy(s => (key(w, s)))
+    val resources = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind)).distinctBy(s => (DbtResourceIdentity.key(w, s)))
     def owner(c: DbtSymbol): Option[DbtSymbol] = resources.find(r => r.namespace == c.namespace &&
       r.relationName == c.owner && r.version == c.version && w.owner(r) == w.owner(c))
-    val seen = mutable.Set(key(w, resource) -> column.toLowerCase)
+    val seen = mutable.Set(DbtResourceIdentity.key(w, resource) -> column.toLowerCase)
     val lines = mutable.ArrayBuffer.empty[String]
     def walk(up: Boolean): Unit = {
-      val visited = mutable.Set(key(w, resource) -> column.toLowerCase)
+      val visited = mutable.Set(DbtResourceIdentity.key(w, resource) -> column.toLowerCase)
       var frontier = Vector(resource -> column)
       while (frontier.nonEmpty && visited.size < 1000) {
       ProgressManager.checkCanceled()
@@ -146,7 +147,7 @@ private[ide] object DbtGraphData {
           } else Vector.empty
         }
       }
-      frontier = next.filter { case (s, name) => visited.add(key(w, s) -> name.toLowerCase) }
+      frontier = next.filter { case (s, name) => visited.add(DbtResourceIdentity.key(w, s) -> name.toLowerCase) }
       }
       seen ++= visited
     }

@@ -3,9 +3,8 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
-import com.google.gson.{JsonArray, JsonElement, JsonObject, JsonParser}
+import com.google.gson.{JsonArray, JsonElement, JsonObject}
 import com.intellij.openapi.progress.ProgressManager
-import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, LinkOption, Path, Paths}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -17,17 +16,13 @@ private[ide] final case class DbtStatePreview(baseline: String, selected: Vector
 
 /** Static source comparison is deliberately distinct from dbt's runtime state and warehouse existence checks. */
 private[ide] object DbtState {
-  private val Limit = 50000000
-  private val Sections = Vector("nodes", "sources", "exposures", "unit_tests", "metrics", "semantic_models", "saved_queries")
-  private val Schemas = (9 to 12).map(v => s"https://schemas.getdbt.com/dbt/manifest/v$v.json").toSet
   private val ConfigKeys = Set("materialized", "enabled", "alias", "database", "schema", "tags", "access", "group", "unique_key",
     "on_schema_change", "incremental_strategy", "partition_by", "cluster_by", "contract", "persist_docs", "grants", "quoting", "full_refresh", "meta", "pre_hook", "post_hook")
   private val ColumnKeys = Set("description", "data_type", "quote", "constraints", "meta", "tags")
   private def obj(json: JsonObject, key: String): Option[JsonObject] = Option(json.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
   private def str(json: JsonObject, key: String): Option[String] = Option(json.get(key)).filter(e =>
     e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
-  private def entries(json: JsonObject): Map[String, JsonObject] = Sections.flatMap(section => obj(json, section).toVector
-    .flatMap(_.entrySet().asScala).map(e => e.getKey -> e.getValue.getAsJsonObject)).toMap
+  private def entries(manifest: DbtManifest): Map[String, JsonObject] = manifest.resources.map(r => r.id -> r.data).toMap
 
   /** Resolve real existing ancestors too, so a not-yet-created output directory cannot hide a symlink alias. */
   private[ide] def canonical(path: Path): Either[String, Path] = Try {
@@ -58,49 +53,8 @@ private[ide] object DbtState {
         (), "Baseline directory must contain manifest.json.")
     } yield resolved
   }
-  def manifest(root: DbtRoot): Either[String, JsonObject] = baseline(root).flatMap { path =>
-    val file = path.resolve("manifest.json")
-    val source = root.psiFile(file.toString)
-    val content = source match {
-      case Some(psi) if psi.getTextLength > Limit => Left("Baseline manifest exceeds the 50 MB limit.")
-      case Some(psi) => Right(psi.getText)
-      case None => Try {
-        val stream = Files.newInputStream(file)
-        try stream.readNBytes(Limit + 1) finally stream.close()
-      }.toEither.left.map(_ => "Cannot read baseline manifest.").flatMap(bytes =>
-        if (bytes.length > Limit) Left("Baseline manifest exceeds the 50 MB limit.") else Right(new String(bytes, StandardCharsets.UTF_8)))
-    }
-    content.flatMap(parse)
-  }
-  private[ide] def parse(text: String): Either[String, JsonObject] = {
-    if (text.length > Limit) Left("Baseline manifest exceeds the 50 MB limit.")
-    else Try(JsonParser.parseString(text)).toEither.left.map(_ => "Baseline manifest is malformed.").flatMap { parsed =>
-      if (!parsed.isJsonObject) Left("Baseline manifest must be an object.")
-      else {
-        val json = parsed.getAsJsonObject
-        val schema = obj(json, "metadata").flatMap(str(_, "dbt_schema_version"))
-        val sectionsValid = Sections.forall(key => !json.has(key) || obj(json, key).nonEmpty)
-        if (!schema.exists(Schemas) || obj(json, "nodes").isEmpty) Left("Baseline manifest schema is missing or unsupported; supported manifest schemas are v9-v12.")
-        else if (!sectionsValid) Left("Baseline manifest resource sections must be objects.")
-        else {
-          val resources = Sections.flatMap(section => obj(json, section).toVector.flatMap(_.entrySet().asScala))
-          val valid = resources.map(_.getKey).distinct.size == resources.size && resources.forall { entry =>
-            val value = entry.getValue
-            value.isJsonObject && {
-              val node = value.getAsJsonObject
-              str(node, "unique_id").forall(_ == entry.getKey) &&
-                Vector("config", "columns", "depends_on").forall(key => !node.has(key) || obj(node, key).nonEmpty) &&
-                obj(node, "columns").forall(_.entrySet().asScala.forall(_.getValue.isJsonObject)) &&
-                obj(node, "depends_on").flatMap(d => Option(d.get("nodes"))).forall(e => e.isJsonArray &&
-                  e.getAsJsonArray.asScala.forall(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString))
-            }
-          }
-          if (resources.size > 50000) Left("Baseline manifest exceeds 50000 resource entries.")
-          else if (!valid) Left("Baseline resource identities, columns, config or dependency shapes are malformed.")
-          else Right(json)
-        }
-      }
-    }
+  def manifest(root: DbtRoot): Either[String, DbtManifest] = baseline(root).flatMap { path =>
+    DbtManifestReader.get(root.config.getProject).read(root, path.resolve("manifest.json").toString, DbtManifestPolicy.Baseline)
   }
   private def current(w: DbtWorkspace, root: DbtRoot): Map[String, Vector[DbtSymbol]] = w.symbols.filter(s => !s.metadata &&
     (s.isCode || s.kind == "source_table" || s.kind == "exposure" || s.isProperty && Set("unit_test", "metric", "semantic_model", "saved_query")(s.kind)) &&
@@ -163,7 +117,7 @@ private[ide] object DbtState {
     }
   }
   def compare(w: DbtWorkspace, root: DbtRoot): Either[String, Vector[DbtStateChange]] = manifest(root).map(compareManifest(w, root, _))
-  private[ide] def compareManifest(w: DbtWorkspace, root: DbtRoot, baseline: JsonObject): Vector[DbtStateChange] = {
+  private[ide] def compareManifest(w: DbtWorkspace, root: DbtRoot, baseline: DbtManifest): Vector[DbtStateChange] = {
     val old = entries(baseline)
     val now = current(w, root)
     (old.keySet ++ now.keySet).toVector.sorted.flatMap { id =>
@@ -253,7 +207,7 @@ private[ide] object DbtState {
     if (root.runOptions.favorState && (!root.runOptions.defer || root.engine != "core" || !root.supports(4)))
       problems += "Favor state requires deferral and configured dbt Core 1.4+; the command is not executable with these options."
     val edges = DbtLineage.edges(w)
-    def key(s: DbtSymbol): String = w.owner(s).map(_.directory.getPath).getOrElse("") + "|" + s.uniqueId
+    def key(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
     def term(raw: String): Vector[DbtSymbol] = {
       val core = raw.replaceFirst("^[0-9]*\\+", "").replaceFirst("\\+[0-9]*$", "")
       if (!core.startsWith("state:")) {

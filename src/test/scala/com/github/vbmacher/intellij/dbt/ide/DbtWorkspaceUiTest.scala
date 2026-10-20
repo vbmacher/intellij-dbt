@@ -89,10 +89,12 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
     assertFalse("Executable arguments are configured in Settings", controls.exists(_.getName == "dbt.executableArguments"))
     toggle.doClick()
     expression.setText("tag:finance+")
-    assertTrue(toggle.getText.contains("active"))
+    assertTrue(toggle.getText.endsWith(": on"))
+    assertFalse("Selector execution does not support model Preview", button(panel, "Preview").isEnabled)
+    button(panel, "Run")
     toggle.doClick()
     assertFalse(expression.getParent.getParent.isVisible)
-    assertTrue("Collapsed selectors still advertise their effect", toggle.getText.contains("active"))
+    assertTrue("Collapsed selectors still advertise their effect", toggle.getText.endsWith(": on"))
     val summary = controls.collectFirst { case l: javax.swing.JLabel if l.getName == "dbt.context" => l }.get
     assertTrue(summary.getText.contains("tag:finance+"))
     def layout(component: Component): Unit = component match {
@@ -102,15 +104,33 @@ final class DbtWorkspaceUiTest extends DbtCodeInsightTestCase {
     for (width <- Vector(600, 1100)) {
       panel.runnerPanel.setSize(width, 600)
       layout(panel.runnerPanel)
+      Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
+        val image = new java.awt.image.BufferedImage(width, 600, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try panel.runnerPanel.printAll(graphics) finally graphics.dispose()
+        javax.imageio.ImageIO.write(image, "png", new java.io.File(path + "-" + width + ".png"))
+      }
       for (component <- Vector(picker(panel), button(panel, "Run"), button(panel, "Stop"), button(panel, "More…"), toggle)) {
         val end = SwingUtilities.convertPoint(component, component.getWidth, component.getHeight, panel.runnerPanel)
         assertTrue("Controls fit the tool window at " + width + ": " + component, end.x <= width && end.y < 200)
       }
-      assertTrue("The console keeps most of the tool window", output.getHeight > 400)
+      assertTrue("The console keeps most of the tool window; actual height: " + output.getHeight, output.getHeight > 400)
+      toggle.doClick()
+      layout(panel.runnerPanel)
+      assertTrue("Expanded options retain a usable result area", output.getHeight > 250)
+      val fieldEnd = SwingUtilities.convertPoint(expression, expression.getWidth, expression.getHeight, panel.runnerPanel)
+      assertTrue("Selector input fits the expanded tool window", fieldEnd.x <= width)
+      Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
+        val image = new java.awt.image.BufferedImage(width, 600, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try panel.runnerPanel.printAll(graphics) finally graphics.dispose()
+        javax.imageio.ImageIO.write(image, "png", new java.io.File(path + "-expanded-" + width + ".png"))
+      }
+      toggle.doClick()
     }
     toggle.doClick()
     expression.setText("")
-    assertFalse(toggle.getText.contains("active"))
+    assertFalse(toggle.getText.endsWith(": on"))
     Option(System.getProperty("dbt.ux.screenshot")).foreach { path =>
       toggle.doClick()
       panel.runnerPanel.setSize(900, 600)

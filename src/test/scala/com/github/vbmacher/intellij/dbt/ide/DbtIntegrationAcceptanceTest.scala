@@ -9,6 +9,7 @@ import javax.swing.JCheckBox
 import scala.jdk.CollectionConverters._
 
 /** Acceptance boundaries across project ownership, uncertain metadata and read-only clients. */
+/** Contract: features/project-context.md and local-agent-tools.md: owning identities and read-only integrations. */
 final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
   private def workspace = DbtWorkspace.get(getProject)
   private def root = workspace.roots.find(r => r.name == "analytics" && !r.directory.getPath.endsWith("/other")).get
@@ -33,7 +34,7 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     add("other/models/orders.sql", "select 2 as amount")
     add("other/models/report.sql", "select amount * 3 as total from {{ ref('orders') }}")
     val w = workspace
-    val changed = DbtImpact.current(w).find(_.id == DbtImpact.key(w, model(w, "orders"))).get
+    val changed = DbtImpact.current(w).find(_.id == DbtResourceIdentity.key(w, model(w, "orders"))).get
     val affected = DbtImpact.affectedResources(w, Vector(DbtImpactChange(changed, "changed", Vector("amount"))))
     assertEquals(Set("orders", "report"), affected.map(_._1.name).toSet)
     assertTrue(affected.forall(a => w.owner(a._1).contains(root)))
@@ -69,7 +70,7 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     val result = DbtImpactResult("fixture-baseline", Vector.empty, resources.map(_ -> Vector("fixture evidence")), selection, Vector.empty)
     val command = DbtImpact.validationCommand(w, result).toOption.get
     assertEquals(Vector("dbt-fixture-must-not-run", "--wrapper", "argument with spaces", "build"), command.arguments.take(4))
-    assertEquals(Vector("fqn:analytics.orders", "fqn:analytics.report"), command.arguments.dropWhile(_ != "--select").drop(1))
+    assertEquals(Vector("fqn:analytics.orders", "fqn:analytics.report"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")))
     assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "review_target")))
     assertTrue(command.environment("DBT_PROFILES_DIR").endsWith("/profiles with spaces"))
     assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)

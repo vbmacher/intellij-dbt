@@ -1,7 +1,7 @@
 - Always start with a short plan before editing.
-- Prefer minimal diffs.
+- Prefer minimal diffs, consolidated and cohesive output.
 - Ask before large refactors or new dependencies.
-- After changes, run relevant tests if available.
+- After code changes (not documentation), run relevant tests if available.
 - Explain what changed in plain language.
 - Be concise and act like a collaborative pair programmer.
 
@@ -44,3 +44,21 @@ The user documentation should have a structure/organization:
 - workspace.md: Describes the "dbt" window - Runner, Lineage and Status tabs. All information regarding Runner, Lineage or Status (e.g. controls, buttons, behavior) should be documented only in this file.
 - configuration.md: Describes plugin configuration file and settings UI. No other document should describe them, but if applicable, other documents should only reference configuration.md file.
 - others - if there are more "categories" to be documented which do not fall into previous ones above. Need to be consolidated. Every documented feature is from user perspective - and should be documented ONLY if it's visible and controllable by the user.
+
+## Features
+
+- Organize around named capabilities with clear purposes, boundaries, and
+  consistent terminology. Extend existing capabilities before adding new ones.
+- Design orthogonal concepts that compose through explicit contracts.
+  Document dependencies, constraints, and justified exceptions.
+- Keep modules cohesive, interfaces small, and dependencies acyclic.
+  Do not force one feature per directory or abstract merely similar code.
+- Maintain a capability index linking to authoritative specifications.
+  Define each rule once; reference it elsewhere.
+- Specifications describe behavior, inputs, outputs, invariants, failures,
+  and significant interactions. Scale detail to complexity.
+- Separate current contracts, implementation details, proposals, and ADRs.
+  Readers must not reconstruct current behavior from decision history.
+- Keep specifications, implementation, examples, and tests aligned.
+  Verify contracts and significant feature combinations; report unverified
+  behavior and known deviations explicitly.

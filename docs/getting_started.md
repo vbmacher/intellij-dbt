@@ -4,6 +4,9 @@ dbt Workspace lets you explore, edit, run and inspect dbt projects in IntelliJ I
 Open a project containing `dbt_project.yml`; resources are recognized from local
 files without running dbt. See [installation](installation.md) for requirements.
 
+See the [capability index](../features/README.md) for feature contracts, examples
+and screenshots.
+
 <img src="screenshots/model-usages.png" alt="Find Usages lists the references to the orders model in YAML files" width="640">
 
 ## Navigation

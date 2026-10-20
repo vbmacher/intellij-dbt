@@ -11,6 +11,7 @@ import java.nio.file.{Files, Path}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 
+/** Contract: features/workspace.md and query-preview.md: managed execution, cancellation and captured context. */
 final class DbtRunnerProcessTest extends BasePlatformTestCase {
   private def fake(directory: Path): Path = {
     val executable = directory.resolve("fake dbt")
@@ -41,9 +42,22 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     runner.listen(getTestRootDisposable, e => events += e)
     (runner, directory, fake(directory), events)
   }
-  private def command(directory: Path, executable: Path, args: Vector[String]): DbtCommand =
-    DbtCommand(executable.toString +: args, directory.toString, Map("DBT_TARGET_PATH" -> directory.resolve("artifacts with spaces").toString,
-      "DBT_PROFILES_DIR" -> directory.resolve("profiles with spaces").toString), if (args.contains("show")) "Preview" else "Run", "dev", notifySystem = false, directory.resolve("target").toString, Vector(directory.toString, "dev", "configuration"))
+  private def command(directory: Path, executable: Path, args: Vector[String]): DbtCommand = {
+    val action = args.head match {
+      case "show" => DbtCommandAction.Preview
+      case "compile" => DbtCommandAction.Compile
+      case "ls" => DbtCommandAction.ResolveSelection
+      case _ => DbtCommandAction.Run
+    }
+    def option(name: String): Option[String] = args.sliding(2).find(_.headOption.contains(name)).flatMap(_.lift(1))
+    val options = Set("--inline", "--target", "--output", "--limit")
+    val extra = args.indices.drop(1).filter(i => !options(args(i)) && !options(args(i - 1))).map(args).toVector
+    val scope = option("--inline").map(DbtCommandScope.Inline).getOrElse(DbtCommandScope.All)
+    DbtCommand(Vector(executable.toString), DbtCommandRequest(action, scope, extraArguments = extra), directory.toString,
+      Map("DBT_TARGET_PATH" -> directory.resolve("artifacts with spaces").toString,
+        "DBT_PROFILES_DIR" -> directory.resolve("profiles with spaces").toString),
+      option("--target").getOrElse("dev"), notifySystem = false, directory.resolve("target").toString, Vector(directory.toString, "dev", "configuration"))
+  }
 
   def testProcessStreamsAnsiBeforeExitAndKeepsArgumentVectorCwdAndEnvironment(): Unit = {
     val (runner, directory, executable, events) = setup()
@@ -55,7 +69,7 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val text = runner.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText
     assertFalse(text.contains("\u001b[31m"))
     val invocation = JsonParser.parseString(Files.readString(directory.resolve("invocation.json"))).getAsJsonObject
-    assertEquals(Vector("show", "--inline", sql, "--target", "dev", "--hold"), invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector)
+    assertEquals(Vector("show", "--inline", sql, "--limit", "10", "--output", "json", "--hold", "--target", "dev", "--use-colors"), invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector)
     assertEquals(directory.toString, invocation.get("cwd").getAsString)
     assertTrue(invocation.get("profiles").getAsString.endsWith("profiles with spaces"))
     assertTrue(invocation.get("target").getAsString.endsWith("artifacts with spaces"))
@@ -113,7 +127,7 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     DbtArtifactContext.record(artifact.toString, command(directory, executable, Vector("run")).artifactContext)
     val marker = artifact.resolve(".dbt-workspace-context")
     val before = Files.readString(marker)
-    val run = command(directory, executable, Vector("compile", "--target", "prod")).copy(action = "Compile", target = "prod", artifactContext = Vector(directory.toString, "prod", "configuration"))
+    val run = command(directory, executable, Vector("compile", "--target", "prod")).copy(target = "prod", artifactContext = Vector(directory.toString, "prod", "configuration"))
     assertTrue(runner.start(run))
     await("No-write command completes") { !runner.isRunning }
     assertEquals("The old target must retain its provenance", before, Files.readString(marker))
@@ -131,9 +145,9 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     val marker = artifact.resolve(".dbt-workspace-context")
     val before = Files.readString(marker)
     val run = command(directory, executable, Vector("compile", "--target", "prod", "--write-manifest"))
-      .copy(action = "Compile", target = "prod", environment = Map("DBT_TARGET_PATH" -> artifact.toString),
+      .copy(target = "prod", environment = Map("DBT_TARGET_PATH" -> artifact.toString),
         artifactContext = Vector(directory.toString, "prod", "configuration"))
-    assertTrue(runner.start(run.copy(arguments = run.arguments :+ "--fail")))
+    assertTrue(runner.start(run.copy(request = run.request.copy(extraArguments = run.request.extraArguments :+ "--fail"))))
     await("Failed artifact write completes") { !runner.isRunning }
     assertEquals("A failed command must not certify its manifest", before, Files.readString(marker))
     assertTrue(runner.start(run))
@@ -146,7 +160,7 @@ sys.exit(7 if '--fail' in sys.argv else 0)
 
   def testExplicitSelectorRefreshSharesSingleProcessStopAndCapturedOutput(): Unit = {
     val (runner, directory, executable, events) = setup()
-    val ls = command(directory, executable, Vector("ls", "--output", "json", "--hold")).copy(action = "Resolve Selection")
+    val ls = command(directory, executable, Vector("ls", "--output", "json", "--hold"))
     assertTrue(runner.start(ls))
     assertFalse(runner.start(command(directory, executable, Vector("run"))))
     await("Selector process starts") { Files.exists(directory.resolve("invocation.json")) }
@@ -154,7 +168,7 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     await("Selector cancellation restores idle") { !runner.isRunning }
     assertTrue(events.last.selectionOutput.isEmpty)
     assertTrue(events.last.message.contains("cancelled"))
-    assertTrue(runner.start(ls.copy(arguments = ls.arguments.filterNot(_ == "--hold"))))
+    assertTrue(runner.start(ls.copy(request = ls.request.copy(extraArguments = ls.request.extraArguments.filterNot(_ == "--hold")))))
     await("Selector refresh finishes") { !runner.isRunning }
     assertEquals(Right(Vector("model.analytics.orders")), DbtSelectionReview.cliResources(events.last.selectionOutput.get))
     assertFalse(events.last.refresh)

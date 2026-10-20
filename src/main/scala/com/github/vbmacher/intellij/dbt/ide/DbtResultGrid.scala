@@ -24,7 +24,7 @@ private[ide] final case class DbtQueryResult(columns: Vector[String], rows: Vect
     } else element.toString
   }
   /** Quoted strings distinguish empty text and the literal "NULL" from SQL NULL in CSV and TSV. */
-  def export(delimiter: Char = ',', selectedRows: Vector[Int] = rows.indices.toVector,
+  def `export`(delimiter: Char = ',', selectedRows: Vector[Int] = rows.indices.toVector,
     selectedColumns: Vector[Int] = columns.indices.toVector, includeHeaders: Boolean = true): String = {
     def quote(text: String): String = "\"" + text.replace("\"", "\"\"") + "\""
     def cell(row: Int, column: Int): String = {
@@ -77,7 +77,7 @@ private[ide] final class DbtResultGrid(onLimit: Int => Unit = null) extends JPan
     CopyPasteManager.getInstance().setContents(new StringSelection(exportText('\t', selectedOnly = true))))
   private val format = new JComboBox[String](Array("CSV", "TSV"))
   format.getAccessibleContext.setAccessibleName("Preview export format")
-  private val export = new JButton("Export CSV")
+  private val `export` = new JButton("Export CSV")
   format.addActionListener(_ => export.setText("Export " + format.getSelectedItem))
   export.addActionListener(_ => result.foreach { _ =>
     val chooser = new JFileChooser

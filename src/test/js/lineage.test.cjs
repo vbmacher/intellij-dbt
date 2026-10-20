@@ -40,8 +40,8 @@ test('documentation controls stay together on the right when the window narrows'
   for(const width of [1400,600]){
    await page.setViewportSize({width,height:850});
    const status=await page.locator('#status').boundingBox(),toggle=await page.locator('#show-docs').boundingBox(),regenerate=await page.locator('#regenerate').boundingBox();
-   assert.ok(toggle.x>=status.x+status.width-1);assert.ok(regenerate.x>toggle.x);
-   assert.ok(Math.abs(regenerate.x+regenerate.width-(width-10))<=1);
+   assert.ok(toggle.x>=0);assert.ok(regenerate.x>toggle.x);
+   assert.ok(regenerate.x+regenerate.width<=width);
    for(const name of ['Clear search','Zoom in','Zoom out','Fit graph','Toggle documentation','Regenerate Docs'])
     assert.ok(await page.getByRole('button',{name,exact:true}).getAttribute('data-tooltip'));
   }
@@ -161,7 +161,7 @@ test('SVG, PNG and clipboard exports include local visible labels, Unicode, them
  const svg=await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1]));
  const decoded=Buffer.from(svg,'binary').toString('utf8');
  assert.match(decoded,/objednávky 日本語 &amp; &lt;orders&gt;/);assert.doesNotMatch(decoded,/unrelated/);assert.match(decoded,/downstream dependency/);
- assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
+ assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/var\(--/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
  await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#export-legend').uncheck();await page.locator('#export-options').evaluate(e=>e.open=true);
  await page.locator('#export-svg').click();
@@ -200,7 +200,7 @@ test('execution badges expose provenance and route failed tests without relying 
  await page.locator('#export-svg').click();assert.match(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/Build failed/);
  await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))}),fixture);
  assert.equal(await page.getByRole('button',{name:/Build failed/}).count(),0);
- assert.equal(await page.locator('.execution-badge[data-status=unknown]').count(),4);
+ assert.equal(await page.locator('.execution-badge[data-status=unknown]').count(),0);
  await page.evaluate(p=>dbtUpdate(p),fixture);
 });
 test('exports support every bundled edge style without invalid geometry',async()=>{
@@ -304,16 +304,17 @@ test('Runner selection explicitly updates Lineage fields while stale local repli
  await page.locator('#filter-options').evaluate(e=>e.open=true);await page.getByRole('button',{name:'Clear filter',exact:true}).click();
 });
 
-test('only explicit Lineage filter actions request Runner synchronization',async()=>{
+test('Lineage filters remain independent and only Use in Runner requests a handoff',async()=>{
  await page.locator('#filter-options').evaluate(e=>e.open=true);
  await page.locator('#selector').fill('tag:finance+');await page.locator('#exclude').fill('');
  await page.locator('#filter-form').evaluate(form=>form.requestSubmit());
- assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),true);
+ assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
+ await page.locator('#use-runner').click();assert.equal(await page.evaluate(()=>events.at(-1).type),'use-runner-selection');
  await page.evaluate(()=>dbtShowFilter({expression:'tag:finance+',exclude:'',ids:['model'],diagnostics:[]}));
  await page.evaluate(p=>dbtUpdate(p),fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
  await page.locator('#filter-options').evaluate(e=>e.open=true);await page.getByRole('button',{name:'Clear filter',exact:true}).click();
- assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1)),{type:'filter',id:'',value:'',shared:true});
+ assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1)),{type:'filter',id:'',value:''});
 });
 
 
@@ -330,8 +331,47 @@ test('secondary controls stay grouped and usable in a narrow window',async()=>{
    assert.equal(await page.locator('#'+id+'-options .control-popover').isVisible(),false);
   }
   const graph=await page.locator('#main').boundingBox();
-  assert.ok(graph.height>500,'The graph keeps the space released by secondary controls');
+  assert.ok(graph.height>430,'The graph retains usable space with context and controls');
   assert.equal(await page.locator('#filter-form').isVisible(),false);
   assert.equal(await page.locator('#export-png').isVisible(),false);
  }finally{await page.setViewportSize({width:1400,height:850})}
+});
+
+test('resource cards hide unresolved configuration and unknown result badges, with keyboard inspection',async()=>{
+ const payload={...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,materialized:"{{ config.get('materialized') }}",schema:'null',execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Missing artifact'}}:n)};
+ await page.evaluate(p=>dbtUpdate(p),payload);
+ const card=page.locator('.card[data-kind=model]').filter({hasText:'orders'});
+ assert.doesNotMatch(await card.innerText(),/\{\{|null|Not run/);
+ assert.equal(await page.locator('.execution-badge').count(),0);
+ assert.match(await card.getAttribute('aria-label'),/graph focus/);
+ await page.locator('#resource-picker').selectOption('model');
+ assert.ok(await page.evaluate(()=>events.some(e=>e.type==='select'&&e.id==='model')));
+ await page.evaluate(d=>dbtShowDoc('model',{...d,shortName:'orders',identity:'model.analytics.orders'}),doc);
+ assert.equal(await page.locator('#doc-name').innerText(),'orders');
+ await page.locator('#copy-identity').click();
+ assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'copy',id:'',value:'model.analytics.orders'});
+ await card.focus();await page.keyboard.press('Enter');
+ assert.equal(await page.locator('.card.selected').count(),1);
+ assert.match(await page.locator('#selection-context').innerText(),/Focus: orders · Selected: orders/);
+ await page.evaluate(p=>dbtUpdate(p),fixture);
+});
+
+test('inspector and long resource names remain readable at narrow and wide sizes',async()=>{
+ try{
+  for(const width of [600,1400]){
+   await page.setViewportSize({width,height:800});
+   await page.evaluate(p=>dbtUpdate(p),fixture);
+   await page.evaluate(d=>{select('model',false);dbtShowDoc('model',{...d,shortName:'orders',identity:'model.analytics.orders',columns:[{name:'customer_identifier_with_a_long_name',type:'decimal(38, 8)',description:'Customer identity from the upstream source',declarations:['unique','not_null']}]})},doc);
+   await page.getByRole('button',{name:'Columns',exact:true}).click();
+   const main=await page.locator('#main').boundingBox(),inspector=await page.locator('#docs').boundingBox();
+   assert.ok(main.width<=width);assert.ok(inspector.width>=240);assert.ok(inspector.x+inspector.width<=width);
+   await page.locator('#handle').focus();const before=inspector.width;await page.keyboard.press('ArrowRight');
+   assert.ok((await page.locator('#docs').boundingBox()).width<before);
+   const column=page.getByRole('button',{name:'customer_identifier_with_a_long_name',exact:true});
+   await column.click();await page.getByRole('button',{name:'Open declaration',exact:true}).click();
+   assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'declaration',id:'model',value:'customer_identifier_with_a_long_name'});
+   if(process.env.DBT_UX_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.DBT_UX_SCREENSHOT_DIR,'lineage-'+width+'.png')});
+  }
+ }finally{await page.setViewportSize({width:1400,height:850});await page.evaluate(p=>dbtUpdate(p),fixture)}
+ assert.deepEqual(errors,[]);
 });

@@ -44,12 +44,11 @@ private[dbt] object DbtImpact {
     } catch { case NonFatal(_) => Left("Git read is unavailable.") }
     finally if (process != null && process.isAlive) process.destroyForcibly()
   }
-  def key(w: DbtWorkspace, s: DbtSymbol): String = w.owner(s).map(_.directory.getPath).getOrElse("") + "|" + s.uniqueId
   private def digest(text: String): String = java.util.HexFormat.of().formatHex(
     java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)))
   private def resources(w: DbtWorkspace): Vector[DbtSymbol] = w.symbols.filter(s => !s.metadata && (
     s.isCode || s.attributes.contains("block-start") || Set("exposure", "unit_test", "source_table")(s.kind) || s.isProperty && s.kind != "source_table" && s.kind != "source" &&
-      !w.symbols.exists(c => !c.isProperty && c.sameResource(s) && w.owner(c) == w.owner(s)))).sortBy(_.isProperty).distinctBy(key(w, _))
+      !w.symbols.exists(c => !c.isProperty && c.sameResource(s) && w.owner(c) == w.owner(s)))).sortBy(_.isProperty).distinctBy(DbtResourceIdentity.key(w, _))
 
   private def blockText(text: String, block: DbtSyntax.Block): String = {
     val endTag = block.tagName.map("end" + _)
@@ -72,7 +71,7 @@ private[dbt] object DbtImpact {
     val sourceText = if (s.attributes.contains("block-start")) DbtSyntax.inFile(s.file).find(_.range.containsOffset(s.range.getStartOffset))
       .map(blockText(s.file.getText, _)).getOrElse(s.file.getText) else if (s.isCode) s.file.getText else if (s.mapping.nonEmpty) propertyText(s) else s.file.getText
     val text = sourceText + properties + sourceContext + w.owner(s).map(_.config.getContainingFile.getText).getOrElse("")
-    DbtImpactResource(key(w, s), s.file.getVirtualFile.getPath, digest(text), (w.columns(s).map(_.name) ++ (if (s.isCode && s.file.getName.endsWith(".sql")) DbtNavigation.projectedColumns(s.file.getText).toVector.flatMap(_._1) else Vector.empty)).distinct)
+    DbtImpactResource(DbtResourceIdentity.key(w, s), s.file.getVirtualFile.getPath, digest(text), (w.columns(s).map(_.name) ++ (if (s.isCode && s.file.getName.endsWith(".sql")) DbtNavigation.projectedColumns(s.file.getText).toVector.flatMap(_._1) else Vector.empty)).distinct)
   }
   def compare(before: Vector[DbtImpactResource], after: Vector[DbtImpactResource]): Vector[DbtImpactChange] = {
     val old = before.map(s => s.id -> s).toMap; val now = after.map(s => s.id -> s).toMap
@@ -123,7 +122,7 @@ private[dbt] object DbtImpact {
       val baseline = baselineResources(w, contents, Some(ignores))
       val changes = compare(baseline, current(w))
       val affected = affectedResources(w, changes)
-      val models = affected.map(_._1).filter(s => DbtSymbol.RefKinds(s.kind) && s.isEnabled).toVector.distinctBy(key(w, _))
+      val models = affected.map(_._1).filter(s => DbtSymbol.RefKinds(s.kind) && s.isEnabled).toVector.distinctBy(DbtResourceIdentity.key(w, _))
       val selectors = models.map { s =>
         val folders = w.owner(s).flatMap(_.resourceFolders(s.file.getVirtualFile)).map(_._2).getOrElse(Vector.empty)
         "fqn:" + (Vector(s.namespace) ++ folders :+ s.name).mkString(".") + s.version.map(".v" + _).getOrElse("")
@@ -138,8 +137,8 @@ private[dbt] object DbtImpact {
   }
   private[ide] def affectedResources(w: DbtWorkspace, changes: Vector[DbtImpactChange]): Vector[(DbtSymbol, Vector[String])] = {
     val edges = DbtLineage.edges(w)
-    val downstream = edges.groupBy(e => key(w, e.to))
-    val resourceById = w.symbols.sortBy(s => (s.metadata, s.isProperty)).groupBy(key(w, _)).view.mapValues(_.head).toMap
+    val downstream = edges.groupBy(e => DbtResourceIdentity.key(w, e.to))
+    val resourceById = w.symbols.sortBy(s => (s.metadata, s.isProperty)).groupBy(DbtResourceIdentity.key(w, _)).view.mapValues(_.head).toMap
     val frontier = mutable.Queue.empty[(String, Vector[String])]
     changes.foreach(c => frontier.enqueue(c.resource.id -> Vector(c.resource.id)))
     val removed = changes.filter(_.state == "removed")
@@ -155,8 +154,8 @@ private[dbt] object DbtImpact {
             sameExecution.contains(true) && (change.resource.id.endsWith(prefix + call.version.flatten.map(".v" + _).getOrElse("")) ||
               call.version.isEmpty && change.resource.id.contains(prefix + ".v"))
           }
-          if (matches.size == 1) frontier.enqueue(key(w, consumer) -> Vector(matches.head.resource.id,
-            "unresolved literal ref after deletion", key(w, consumer)))
+          if (matches.size == 1) frontier.enqueue(DbtResourceIdentity.key(w, consumer) -> Vector(matches.head.resource.id,
+            "unresolved literal ref after deletion", DbtResourceIdentity.key(w, consumer)))
         }
       }
     }
@@ -164,9 +163,9 @@ private[dbt] object DbtImpact {
     DbtColumnLineage.edges(w).foreach { edge =>
       val inputs = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && s.relationName == edge.input.owner &&
         s.namespace == edge.input.namespace && s.version == edge.input.version && w.owner(s) == w.owner(edge.input))
-        .map(key(w, _)).toSet
+        .map(DbtResourceIdentity.key(w, _)).toSet
       changes.find(c => inputs(c.resource.id) && c.columns.exists(_.equalsIgnoreCase(edge.input.name))).foreach { change =>
-        frontier.enqueue(key(w, edge.resource) -> Vector(change.resource.id,
+        frontier.enqueue(DbtResourceIdentity.key(w, edge.resource) -> Vector(change.resource.id,
           edge.input.owner + "." + edge.input.name, edge.resource.uniqueId + "." + edge.column + " via " + edge.expression))
       }
     }
@@ -177,7 +176,7 @@ private[dbt] object DbtImpact {
       val (id, trace) = frontier.dequeue()
       if (seen.add(id)) {
         resourceById.get(id).foreach(s => affected += s -> trace)
-        downstream.getOrElse(id, Vector.empty).foreach(e => frontier.enqueue(key(w, e.from) -> (trace :+ key(w, e.from))))
+        downstream.getOrElse(id, Vector.empty).foreach(e => frontier.enqueue(DbtResourceIdentity.key(w, e.from) -> (trace :+ DbtResourceIdentity.key(w, e.from))))
       }
     }
     affected.toVector
@@ -189,7 +188,7 @@ private[dbt] object DbtImpact {
       Left("Choose affected resources from a single execution project. Removed-only changes have no runnable selection.")
     else DbtRunSelection.all(w, roots.head.directory.getPath).toRight("Execution project is no longer available.")
       .flatMap(DbtCommand.create(w, _, "Build", fullRefresh = false))
-      .map(command => command.copy(arguments = command.arguments ++ Vector("--select") ++ result.selection.split("\\s+")))
+      .map(command => command.copy(request = command.request.copy(scope = DbtCommandScope.Selected(result.selection.split("\\s+").toVector))))
   }
 
   /** Baseline resources; `ignores` holds each root's baseline `.dbtignore` text, otherwise current rules apply. */

@@ -10,6 +10,7 @@ import java.time.Instant
 import scala.jdk.CollectionConverters._
 
 /** Real managed-process execution and Community native test-tree fixtures. No warehouse or dbt installation is used. */
+/** Contract: features/test-execution.md and execution-evidence.md: exact reruns, context and result provenance. */
 final class DbtTestExecutionTest extends DbtCodeInsightTestCase {
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def await(message: String)(condition: => Boolean): Unit =
@@ -24,9 +25,9 @@ final class DbtTestExecutionTest extends DbtCodeInsightTestCase {
   }
   private def workspace = DbtWorkspace.get(getProject)
   private def command(directory: Path, script: Path, mode: String = "run"): DbtCommand =
-    DbtCommand(Vector(script.toString, "test", "--target", "dev", mode), directory.toString,
+    DbtCommand(Vector(script.toString), DbtCommandRequest(DbtCommandAction.Test, extraArguments = Vector(mode)), directory.toString,
       Map("DBT_TARGET_PATH" -> directory.resolve("target").toString, "DBT_PROFILES_DIR" -> directory.resolve("profiles").toString),
-      "Test", "dev", notifySystem = false, directory.resolve("target").toString,
+      "dev", notifySystem = false, directory.resolve("target").toString,
       Vector(workspace.roots.head.directory.getPath, "dev", "configuration"))
   private def fake(directory: Path): Path = {
     val script = directory.resolve("fake dbt")
@@ -103,7 +104,7 @@ unit_tests:
   }
   def testRerunFailedKeepsExactPackageVersionIdentityTargetProfilesAndEnvironment(): Unit = {
     project(); val file = add("tests/check_orders.sql", "select 1")
-    val dir = temporary(); val original = command(dir, fake(dir)).copy(arguments = Vector("wrapper", "--debug", "test", "--select", "old+", "--exclude", "tag:ignored", "--target", "dev"))
+    val dir = temporary(); val original = command(dir, fake(dir)).copy(prefix = Vector("wrapper", "--debug"), request = DbtCommandRequest(DbtCommandAction.Test, DbtCommandScope.Selected(Vector("old+")), exclude = Vector("tag:ignored")))
     def test(id: String, fqn: String) = DbtTestDefinition(id, "duplicate", "Data tests", "model.pkg.orders.v2", workspace.roots.head.directory.getPath,
       file.getVirtualFile, 0, fqn, Vector("model.pkg.orders.v2"))
     val tests = Vector(test("test.pkg.check_orders.hash", "fqn:pkg.tests.check_orders,resource_type:test"),
@@ -112,17 +113,19 @@ unit_tests:
     assertEquals(original.environment, rerun.environment); assertEquals(original.artifactContext, rerun.artifactContext)
     assertTrue(rerun.arguments.contains(tests.head.selector)); assertFalse(rerun.arguments.contains(tests(1).selector))
     assertFalse(rerun.arguments.contains("old+")); assertFalse(rerun.arguments.contains("tag:ignored"))
-    assertEquals(Vector("--indirect-selection", "empty"), rerun.arguments.takeRight(2))
+    assertTrue(rerun.arguments.sliding(2).exists(_ == Vector("--indirect-selection", "empty")))
     assertEquals(Vector("--target", "dev"), rerun.arguments.sliding(2).find(_.head == "--target").get)
   }
-  def testRerunFailedKeepsShortOptionsAfterSelectorsAndStripsInlineSelectors(): Unit = {
+  def testRerunFailedReplacesNamedScopeAndExclusionsWithoutChangingOtherOptions(): Unit = {
     project(); val file = add("tests/check_orders.sql", "select 1")
-    val dir = temporary(); val original = command(dir, fake(dir)).copy(arguments = Vector("wrapper", "test", "--select", "old+", "tag:x", "-t", "prod",
-      "--exclude=tag:ignored", "--selector=nightly", "--indirect-selection=cautious", "--threads", "4"))
+    val dir = temporary(); val original = command(dir, fake(dir)).copy(prefix = Vector("wrapper"), target = "prod",
+      request = DbtCommandRequest(DbtCommandAction.Test, DbtCommandScope.Named("nightly"), exclude = Vector("tag:ignored"),
+        indirectSelection = Some("cautious"), extraArguments = Vector("--threads", "4")))
     val test = DbtTestDefinition("test.pkg.check_orders.hash", "check_orders", "Data tests", "", workspace.roots.head.directory.getPath,
       file.getVirtualFile, 0, "fqn:pkg.tests.check_orders,resource_type:test", Vector.empty)
     val rerun = DbtTestDiscovery.rerun(original, Vector(test), Vector(DbtExecutionResult(test.id, "failed", "rows"))).toOption.get
-    assertEquals(Vector("wrapper", "test", "-t", "prod", "--threads", "4", "--select", test.selector, "--indirect-selection", "empty"), rerun.arguments)
+    assertEquals(Vector("wrapper", "test", "--log-format", "json", "--select", test.selector, "--indirect-selection", "empty",
+      "--threads", "4", "--target", "prod", "--use-colors"), rerun.arguments)
   }
   def testNativeConsoleStreamsTestStateNavigatesDefinitionAndPreservesFailureOutput(): Unit = {
     project(); val file = add("tests/check_orders.sql", "select 1")
@@ -166,7 +169,7 @@ unit_tests:
       com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
       com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents()
     }
-    assertTrue(runner.start(command(dir, script, "fail").copy(arguments = command(dir, script, "fail").arguments :+ "hold")))
+    assertTrue(runner.start(command(dir, script, "fail").copy(request = DbtCommandRequest(DbtCommandAction.Test, extraArguments = Vector("fail", "hold")))))
     await("First native run starts") { node.isInProgress }
     val failingView = panel.testView
     Files.writeString(dir.resolve("release"), "done")
@@ -257,8 +260,8 @@ unit_tests:
   def testStoredRowsPreviewUsesCapturedWrapperBoundaryTargetProfilesAndBoundedLimit(): Unit = {
     project(); add("tests/check_orders.sql", "select 1")
     val dir = temporary(); val script = fake(dir)
-    val captured = command(dir, script).copy(arguments = Vector(script.toString, "test", "test", "--target", "test", "--select", "fqn:analytics.check_orders"),
-      target = "test", commandOffset = 2, root = workspace.roots.head.directory.getPath)
+    val captured = command(dir, script).copy(prefix = Vector(script.toString, "test"), request = DbtCommandRequest(DbtCommandAction.Test, DbtCommandScope.Selected(Vector("fqn:analytics.check_orders"))),
+      target = "test", root = workspace.roots.head.directory.getPath)
     assertTrue(DbtTestDiscovery.preview(captured, "", 10).isLeft)
     val relation = "\"audit\".\"failing rows\""
     val preview = DbtTestDiscovery.preview(captured, relation, 10000).toOption.get
@@ -313,6 +316,34 @@ unit_tests:
     await("New target command completes") { launched.size == 2 && !runner.isRunning }
     assertEquals("prod", launched.last.target)
     assertTrue(launched.last.arguments.sliding(2).exists(_ == Vector("--target", "prod")))
+  }
+
+  def testOpeningTestsDuringExecutionRestoresProgressAndStop(): Unit = {
+    project(); add("tests/check_orders.sql", "select 1")
+    val dir = temporary(); val script = fake(dir)
+    Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
+    val root = workspace.roots.head
+    root.runOptions.projectRoot = dir.toString
+    root.runOptions.executable = script.toString
+    root.runOptions.target = "dev"; root.runOptions.notifications = false
+    val base = DbtCommand.create(workspace, DbtRunSelection.all(workspace, root.directory.getPath).get, "Test", fullRefresh = false).toOption.get
+    val runner = getProject.getService(classOf[DbtRunner])
+    assertTrue(runner.start(base.copy(request = base.request.copy(extraArguments = Vector("hold")))))
+    try {
+      val panel = new DbtTestPanel(getProject); Disposer.register(getTestRootDisposable, panel); panel.refresh()
+      await("Opening the tab restores active execution evidence") {
+        panel.testView != null && panel.testView.getResultsViewer.getStatusLine.isVisible
+      }
+      def buttons(c: java.awt.Component): Vector[javax.swing.JButton] = c match {
+        case b: javax.swing.JButton => Vector(b)
+        case p: java.awt.Container => p.getComponents.toVector.flatMap(buttons)
+        case _ => Vector.empty
+      }
+      val stop = buttons(panel).find(_.getText == "Stop").get
+      assertTrue(stop.isEnabled)
+      stop.doClick()
+      await("Stop cancels the existing managed command")(!runner.isRunning)
+    } finally runner.stop()
   }
 
 }

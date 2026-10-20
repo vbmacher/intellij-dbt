@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.metadata
 
 import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtDependencySource}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigationReference
-import com.github.vbmacher.intellij.dbt.project.{DbtColumnData, DbtDeclarationSource, DbtResourceData, DbtRoot, DbtSymbol, DbtTestData, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtColumnData, DbtManifest, DbtManifestPolicy, DbtManifestReader, DbtDeclarationSource, DbtResourceData, DbtRoot, DbtSymbol, DbtTestData, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.json.psi._
 import com.intellij.openapi.progress.ProgressManager
@@ -63,12 +63,21 @@ private object DbtArtifacts {
   }.getOrElse(Vector.empty)
 
   /** A well-formed artifact of a supported schema, with its top-level object. */
-  private def artifact(root: DbtRoot, setting: String): Option[(JsonFile, JsonObject)] = root.setting(setting).flatMap(root.psiFile).collect {
+  private def artifact(root: DbtRoot, setting: String): Option[(JsonFile, JsonObject, Option[DbtManifest])] = root.setting(setting).flatMap(root.psiFile).collect {
     case json: JsonFile => json
-  }.filterNot(PsiTreeUtil.hasErrorElements).flatMap(f => Option(f.getTopLevelValue).collect { case o: JsonObject => f -> o }).filter { case (_, o) =>
-    val schema = property(o, "metadata").collect { case m: JsonObject => m }.flatMap(text(_, "dbt_schema_version"))
-    schema.exists(s => if (setting == "catalog") s == "https://schemas.getdbt.com/dbt/catalog/v1.json"
-      else s.matches("https://schemas\\.getdbt\\.com/dbt/manifest/v(9|10|11|12)\\.json"))
+  }.filterNot(PsiTreeUtil.hasErrorElements).flatMap(f => Option(f.getTopLevelValue).collect { case o: JsonObject => f -> o }).flatMap { case (file, top) =>
+    if (setting == "catalog") {
+      val schema = property(top, "metadata").collect { case m: JsonObject => m }.flatMap(text(_, "dbt_schema_version"))
+      Option.when(schema.contains("https://schemas.getdbt.com/dbt/catalog/v1.json"))((file, top, None))
+    } else DbtManifestReader.get(root.config.getProject).read(root, file.getVirtualFile.getPath, DbtManifestPolicy.Navigation)
+      .toOption.map(manifest => (file, top, Some(manifest)))
+  }
+
+  /** Bind shared manifest records back to PSI so navigation retains exact authored ranges. */
+  private def resources(top: JsonObject, manifest: Option[DbtManifest], sections: String*): Vector[JsonObject] = manifest match {
+    case Some(snapshot) => snapshot.in(sections: _*).flatMap(r => property(top, r.section).collect { case section: JsonObject => section }
+      .flatMap(section => property(section, r.id)).collect { case node: JsonObject => node })
+    case None => sections.toVector.flatMap(objects(top, _))
   }
 
   private def top(root: DbtRoot, setting: String): Option[JsonObject] = artifact(root, setting).map(_._2)
@@ -76,8 +85,9 @@ private object DbtArtifacts {
   def documentation(w: DbtWorkspace, s: DbtSymbol): Option[DbtResourceData] = w.owner(s).map { owner =>
     val root = w.packageOwner(owner).getOrElse(owner)
     Vector("manifest", "catalog").foldLeft(DbtResourceData()) { (data, setting) =>
-      val artifact = top(root, setting)
-      val entries = artifact.toVector.flatMap(o => Vector("nodes", "sources", "macros", "exposures").flatMap(objects(o, _)))
+      val selected = artifact(root, setting)
+      val artifactTop = selected.map(_._2)
+      val entries = selected.toVector.flatMap { case (_, top, manifest) => resources(top, manifest, "nodes", "sources", "macros", "exposures") }
       entries.find(e => text(e, "unique_id").contains(s.uniqueId)).fold(data) { entry =>
         val config = property(entry, "config").collect { case c: JsonObject => c }
         val catalogMetadata = property(entry, "metadata").collect { case c: JsonObject => c }
@@ -87,10 +97,10 @@ private object DbtArtifacts {
             case str: JsonStringLiteral => str.getValue
             case _ => v.getText
           }))) ++ property(entry, "fqn").map(v => "fqn" -> v.getText) ++
-          artifact.flatMap(property(_, "metadata")).collect { case m: JsonObject => m }.toVector.flatMap(m =>
+          artifactTop.flatMap(property(_, "metadata")).collect { case m: JsonObject => m }.toVector.flatMap(m =>
             Vector("generated_at", "adapter_type", "dbt_version").flatMap(k => text(m, k).map(k -> _)))
         val deps = property(entry, "depends_on").collect { case d: JsonObject => strings(d, "nodes") }.getOrElse(Vector.empty)
-        val tests = artifact.toVector.flatMap(objects(_, "nodes")).filter(e => text(e, "resource_type").contains("test") &&
+        val tests = selected.toVector.flatMap { case (_, top, manifest) => resources(top, manifest, "nodes") }.filter(e => text(e, "resource_type").contains("test") &&
           property(e, "depends_on").collect { case d: JsonObject => strings(d, "nodes").contains(s.uniqueId) }.contains(true))
           .map { t =>
             val generic = property(t, "test_metadata").collect { case m: JsonObject => m }
@@ -112,12 +122,11 @@ private object DbtArtifacts {
 
   def symbols(workspace: DbtWorkspace): Vector[DbtSymbol] = workspace.roots.flatMap { root =>
     Vector("manifest", "state-manifest", "catalog").flatMap { setting =>
-      artifact(root, setting).toVector.flatMap { case (file, top) =>
+      artifact(root, setting).toVector.flatMap { case (file, top, manifest) =>
         val metadata = property(top, "metadata").collect { case m: JsonObject => m }
         val generated = metadata.flatMap(text(_, "generated_at")).flatMap(s => Try(Instant.parse(s).toEpochMilli).toOption)
         val stale = workspace.outdated(root, generated)
-        val entries = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks")
-          .flatMap(objects(top, _))
+        val entries = resources(top, manifest, "nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries", "functions", "checks")
         entries.flatMap { entry =>
           ProgressManager.checkCanceled()
           val id = text(entry, "unique_id").getOrElse("")

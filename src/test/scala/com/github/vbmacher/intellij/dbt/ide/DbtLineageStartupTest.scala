@@ -162,13 +162,15 @@ final class DbtLineageStartupTest extends DbtCodeInsightTestCase {
     val (panel, select, model) = setupRestoringEditor()
     select(model); panel.refresh(follow = true)
     await("Model context loaded")(status(panel).contains("Lineage focus: analytics.orders"))
-    panel.handleMessage("""{"type":"filter","id":"orders","value":"","shared":true}""")
+    panel.handleMessage("""{"type":"use-runner-selection","id":"orders","value":""}""")
     val options = DbtProjectSettings.get(getProject).getState.projects.values().iterator().next()
     assertEquals("orders", options.selection)
     panel.handleMessage("""{"type":"filter","id":"events","value":""}""")
     assertEquals("A background filter response cannot overwrite a newer Runner expression", "orders", options.selection)
     panel.handleMessage("""{"type":"filter","id":"","value":"","shared":true}""")
-    assertEquals("Explicit Clear filter also clears the Runner expression", "", options.selection)
+    assertEquals("Clearing the graph filter leaves Runner unchanged", "orders", options.selection)
+    panel.handleMessage("""{"type":"use-runner-selection","id":"","value":""}""")
+    assertEquals("Explicit handoff can clear Runner selectors", "", options.selection)
   }
 
 }

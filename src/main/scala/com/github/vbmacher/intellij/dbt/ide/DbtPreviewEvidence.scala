@@ -35,11 +35,11 @@ private[ide] object DbtPreviewEvidence {
     def invocation: String = string(info, "invocation_id").getOrElse("")
     def node: String = obj(data, "node_info").flatMap(string(_, "unique_id")).getOrElse("")
   }
-  private def argument(command: DbtCommand, name: String): String =
-    command.arguments.drop(command.commandOffset + 1).sliding(2).find(_.headOption.contains(name)).flatMap(_.lift(1)).getOrElse("")
-
   def capture(command: DbtCommand, output: String, failed: Boolean, canceled: Boolean): DbtPreviewEvidence = {
-    val submitted = Option(argument(command, "--inline")).filter(_.nonEmpty).getOrElse(command.sourceSql)
+    val submitted = command.request.scope match {
+      case DbtCommandScope.Inline(sql) => sql
+      case _ => command.sourceSql
+    }
     val events = ansi.replaceAllIn(output, "").linesIterator.flatMap(line => Try(JsonParser.parseString(line)).toOption)
       .filter(_.isJsonObject).flatMap { value =>
         val root = value.getAsJsonObject

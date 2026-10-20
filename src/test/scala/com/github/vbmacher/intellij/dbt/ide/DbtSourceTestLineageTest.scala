@@ -58,13 +58,13 @@ sys.exit(1)
     val graph = DbtGraphData.build(DbtWorkspace.get(getProject), None, 5, 5, exposures = true)
     val nodes = graph.payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject).toVector
     def execution(id: String) = nodes.find(_.get("id").getAsString == id).get.getAsJsonObject("execution")
-    val badge = execution(DbtGraphData.key(w, model))
+    val badge = execution(DbtResourceIdentity.key(w, model))
     assertEquals(1, badge.get("failingTests").getAsInt)
     assertEquals("unknown", badge.get("status").getAsString)
     assertTrue(badge.get("details").getAsString.contains("source-only-test-run"))
     val other = w.codeSymbols(otherFile).find(_.kind == "model").get
     assertEquals("A same-name test in an independent project must not attach this run to another model", 0,
-      execution(DbtGraphData.key(w, other)).get("failingTests").getAsInt)
+      execution(DbtResourceIdentity.key(w, other)).get("failingTests").getAsInt)
     assertTrue(nodes.filter(_.get("id").getAsString.contains("/independent|")).forall(n => n.getAsJsonObject("execution").get("failingTests").getAsInt == 0))
   }
 

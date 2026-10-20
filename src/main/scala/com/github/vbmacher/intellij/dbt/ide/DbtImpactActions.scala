@@ -63,8 +63,8 @@ final class DbtImpactAction extends AnAction {
     val list = new JList[String](result.affected.map { case (s, trace) => s.uniqueId + " via " + trace.mkString(" → ") }.toArray)
     val tabs = new JTabbedPane
     tabs.addTab("Affected resources (potential)", new JScrollPane(list))
-    val consumers = DbtConsumers.exposures(w).filter(c => result.affected.exists(a => DbtImpact.key(w, a._1) == c.resource)) ++
-      project.getService(classOf[DbtConsumers]).snapshot.consumers.filter(c => result.affected.exists(a => DbtImpact.key(w, a._1) == c.resource))
+    val consumers = DbtConsumers.exposures(w).filter(c => result.affected.exists(a => DbtResourceIdentity.key(w, a._1) == c.resource)) ++
+      project.getService(classOf[DbtConsumers]).snapshot.consumers.filter(c => result.affected.exists(a => DbtResourceIdentity.key(w, a._1) == c.resource))
     tabs.addTab("Consumers", new JScrollPane(new JList[String](consumers.map(c => c.name + " · " + c.kind + " · " + c.confidence + " · " + c.evidence).toArray)))
     val tasks = result.affected.flatMap(a => DbtAirflow.context(w, a._1)).distinctBy(_.id)
     val airflow = new JPanel(new BorderLayout(6, 6))
@@ -130,7 +130,7 @@ final class DbtConsumersAction extends AnAction {
       def update(): Unit = {
         val cache = service.snapshot
         val selectedColumn = Option(column.getSelectedItem).map(_.toString).filter(_ != "All columns")
-        values = exposures ++ cache.consumers.filter(c => focus.forall(s => c.resource == DbtImpact.key(w, s)) &&
+        values = exposures ++ cache.consumers.filter(c => focus.forall(s => c.resource == DbtResourceIdentity.key(w, s)) &&
           selectedColumn.forall(name => c.column.isEmpty || c.column.contains(name)))
         list.setListData(values.map(c => c.name + " · " + c.kind + " · Owner: " + c.owner + " · " + c.confidence +
           (if (selectedColumn.nonEmpty && c.column.isEmpty) " · model-level; column use unknown" else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence).toArray)
@@ -143,7 +143,7 @@ final class DbtConsumersAction extends AnAction {
       val buttons = new JPanel(new FlowLayout(FlowLayout.LEFT))
       buttons.add(DbtImpactUi.button("Open consumer") { Option(list.getSelectedIndex).filter(i => i >= 0 && i < values.size).flatMap(i => values(i).url).foreach(BrowserUtil.browse) })
       buttons.add(DbtImpactUi.button("Go to exposure definition") { Option(list.getSelectedIndex).filter(i => i >= 0 && i < values.size).foreach { i =>
-        w.symbols.find(s => DbtImpact.key(w, s) == values(i).resource && s.kind == "exposure").foreach(_.element.navigate(true))
+        w.symbols.find(s => DbtResourceIdentity.key(w, s) == values(i).resource && s.kind == "exposure").foreach(_.element.navigate(true))
       } })
       val refresh = DbtImpactUi.button("Refresh Metabase metadata") {
         DbtImpactUi.background(project, "Refresh Metabase consumers") { service.refresh(DbtImpactUi.read { DbtWorkspace.get(project) }) }(_ => update())

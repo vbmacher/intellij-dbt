@@ -54,16 +54,25 @@ Match the operating system and architecture, and match the SDK's `jcefBuild` val
 
 ### Optional development tools
 
-For Python integration, install Python Community Edition in the development SDK and run `sbt testPython`. To select another SDK:
+To download the Python Community plugin matching the development SDK and run the Python integration suite:
+
+```bash
+sbt 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' testPython
+```
+
+To use another SDK with Python Community Edition already available:
 
 ```bash
 sbt 'set pythonTestSdk := file("/path/to/sdk")' testPython
 ```
 
-For the following command, make Playwright and Chromium available:
+To run the browser suite with its pinned Playwright version and Chromium:
 
 ```bash
-node --test src/test/js/lineage.test.cjs
+cd src/test/js
+npm ci
+npx playwright install chromium
+npm test
 ```
 
 Set `DBT_PLAYWRIGHT_MODULE` to the installed Playwright module path when it cannot be resolved normally. Set `DBT_CHROMIUM` to a Chromium executable when Playwright has no browser available.

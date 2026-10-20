@@ -102,11 +102,7 @@ private[ide] object DbtCteInspection {
     selected <- DbtRunSelection.available(w).find(_.path == resource.file.getVirtualFile.getPath).toRight("Choose a source model.")
     base <- DbtCommand.create(w, selected, "Preview", fullRefresh = false)
   } yield {
-    val index = base.arguments.indexOf("--select", base.commandOffset + 1)
-    val end = if (index < 0) base.arguments.size else
-      base.arguments.indexWhere(_.startsWith("--"), index + 1) match { case -1 => base.arguments.size; case n => n }
-    base.copy(arguments = base.arguments.take(if (index < 0) base.arguments.size else index) ++
-      Vector("--inline", sql, "--log-format", "json", "--log-level", "debug") ++ base.arguments.drop(end),
+    base.copy(request = base.request.copy(scope = DbtCommandScope.Inline(sql), debugSql = true),
       previewSource = Some(DbtPreviewSource(resource.file.getVirtualFile.getPath, resource.file.getText, sql, spans,
         s"sql_operation.${root.name}.inline_query", resource.file.getVirtualFile.getUrl)))
   }
@@ -325,9 +321,7 @@ private[ide] final class DbtCtePanel(project: Project, path: String, initial: Ve
           query <- DbtCteInspection.plan(snapshot.source, analysis, cte, count)
           command <- DbtCteInspection.command(w, model, query.sql, query.spans)
         } yield {
-          val limit = command.arguments.indexOf("--limit", command.commandOffset + 1)
-          val query = if (limit >= 0 && limitOverride.nonEmpty) command.copy(arguments =
-            command.arguments.updated(limit + 1, limitOverride.get.max(1).min(1000).toString)) else command
+          val query = limitOverride.fold(command)(limit => command.copy(request = command.request.copy(limit = limit.max(1).min(1000))))
           DbtCtePrepared(snapshot, available, index, query)
         }
       }

@@ -13,6 +13,7 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
   private def root = workspace.roots.find(_.name == "analytics").get
   override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
   private def json(text: String): JsonObject = JsonParser.parseString(text).getAsJsonObject
+  private def parse(text: String): Either[String, DbtManifest] = DbtManifestReader.get(getProject).parse(text, DbtManifestPolicy.Baseline)
   private def manifest(nodes: String, extra: String = ""): String =
     """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":""" + nodes + extra + "}"
   private def baseline(text: String): Unit = {
@@ -29,8 +30,8 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
       manifest("{\"model.analytics.x\":{\"columns\":{\"id\":42}}}"),
       manifest("{\"model.analytics.x\":{\"depends_on\":{\"nodes\":[42]}}}"),
       manifest("{\"model.analytics.x\":{\"unique_id\":\"model.analytics.y\"}}")
-    ).foreach(input => assertTrue("Must reject malformed/incompatible shape: " + input, DbtState.parse(input).isLeft))
-    (9 to 12).foreach(v => assertTrue(DbtState.parse(manifest("{}").replace("v12.json", s"v$v.json")).isRight))
+    ).foreach(input => assertTrue("Must reject malformed/incompatible shape: " + input, parse(input).isLeft))
+    (9 to 12).foreach(v => assertTrue(parse(manifest("{}").replace("v12.json", s"v$v.json")).isRight))
   }
 
   def testBaselineDirectoryCannotAliasOutputThroughSymlinksOrManifestLinks(): Unit = {
@@ -86,7 +87,7 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
     val original = workspace
     val source = new DbtWorkspace(getProject, original.roots, original.files, original.symbols.map(s =>
       if (s.isCode) s.copy(attributes = s.attributes - "description", mapping = None) else s))
-    val data = DbtState.parse(manifest("""{"model.analytics.orders":{"raw_code":"select 1","description":"Correct description","config":{},"columns":{}}}""")).toOption.get
+    val data = parse(manifest("""{"model.analytics.orders":{"raw_code":"select 1","description":"Correct description","config":{},"columns":{}}}""")).toOption.get
     assertTrue(DbtState.compareManifest(source, root, data).isEmpty)
   }
 

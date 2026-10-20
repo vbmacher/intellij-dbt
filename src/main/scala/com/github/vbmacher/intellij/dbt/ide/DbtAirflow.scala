@@ -22,7 +22,7 @@ private[dbt] object DbtAirflow {
   private val Tasks = Key.create[Vector[DbtAirflowTask]]("dbt.airflow.tasks")
   private final case class ContextIndex(selected: Map[String, Vector[DbtAirflowTask]], unresolved: Map[String, Vector[DbtAirflowTask]])
   private val Contexts = Key.create[ContextIndex]("dbt.airflow.contexts")
-  private def resourceKey(w: DbtWorkspace, resource: DbtSymbol): String = DbtImpact.key(w, resource) + "|" + resource.id
+  private def resourceKey(w: DbtWorkspace, resource: DbtSymbol): String = DbtResourceIdentity.key(w, resource) + "|" + resource.id
 
   def tasks(w: DbtWorkspace): Vector[DbtAirflowTask] = Option(w.getUserData(Tasks)).getOrElse {
     val result = w.roots.flatMap { root =>

@@ -77,6 +77,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtManifestReader" serviceImplementation="com.github.vbmacher.intellij.dbt.metadata.DbtJsonManifestReader"/>
         <completion.contributor language="any" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtCompletionContributor"/>
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
         <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>

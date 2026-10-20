@@ -113,12 +113,12 @@ final class DbtConsumers(project: Project) {
 private[dbt] object DbtConsumers {
   def exposures(w: DbtWorkspace, resource: Option[DbtSymbol] = None): Vector[DbtConsumer] = {
     val candidates = resource.toVector.flatMap(s => s +: DbtLineage.traverse(DbtLineage.edges(w), s, downstream = true, 100))
-      .map(DbtImpact.key(w, _)).toSet
-    w.symbols.filter(s => s.kind == "exposure" && (resource.isEmpty || candidates(DbtImpact.key(w, s)))).sortBy(s => (s.metadata, s.isStale)).distinctBy(DbtImpact.key(w, _)).map { s =>
+      .map(DbtResourceIdentity.key(w, _)).toSet
+    w.symbols.filter(s => s.kind == "exposure" && (resource.isEmpty || candidates(DbtResourceIdentity.key(w, s)))).sortBy(s => (s.metadata, s.isStale)).distinctBy(DbtResourceIdentity.key(w, _)).map { s =>
       val m = s.mapping
       val owner = m.flatMap(DbtYaml.map(_, "owner")).flatMap(DbtYaml.string(_, "name")).getOrElse("")
       DbtConsumer(s.name, "dbt exposure", owner, m.flatMap(DbtYaml.string(_, "url")).flatMap(DbtAirflow.safeUrl),
-        DbtImpact.key(w, s), None, (if (s.isStale) "declared (stale local artifact)" else if (s.metadata) "declared (local artifact)" else "declared"), s.file.getVirtualFile.getPath + ":" + s.range.getStartOffset)
+        DbtResourceIdentity.key(w, s), None, (if (s.isStale) "declared (stale local artifact)" else if (s.metadata) "declared (local artifact)" else "declared"), s.file.getVirtualFile.getPath + ":" + s.range.getStartOffset)
     }
   }
   def string(json: JsonObject, key: String): String = Option(json.get(key)).filter(e => e.isJsonPrimitive && !e.isJsonNull).map(_.getAsString).getOrElse("")
@@ -155,7 +155,7 @@ private[dbt] object DbtConsumers {
           val exact = !resource.isStale && matches.nonEmpty && matches.forall(t => string(t, "db_name").nonEmpty) && collisions <= 1 && resource.version.isEmpty
           val confidence = if (exact) "direct physical metadata" else "inferred; stale metadata, target/package/version or SQL ownership unproven"
           (if (columns.isEmpty) Vector(None) else columns.map(Some(_))).map(column => DbtConsumer(string(card, "name"),
-            "Metabase question", "", Some(base.stripSuffix("/") + "/question/" + string(card, "id")), DbtImpact.key(w, resource),
+            "Metabase question", "", Some(base.stripSuffix("/") + "/question/" + string(card, "id")), DbtResourceIdentity.key(w, resource),
             column, confidence, string(card, "id") + ":" + relation.getOrElse("unknown") + column.map("." + _).getOrElse("")))
         }
       }

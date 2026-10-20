@@ -5,6 +5,7 @@ import com.github.vbmacher.intellij.dbt.project._
 import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
+/** Contract: features/selection-review.md and state-comparison.md: exact scope, partial selections and execution gates. */
 final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
   private def workspace = DbtWorkspace.get(getProject)
   private def root = workspace.roots.find(_.name == "analytics").get
@@ -67,7 +68,7 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertEquals(Set("model.analytics.orders.v2", "model.pkg.orders"), resolved.resources.map(_.uniqueId).toSet)
     Vector("Run", "Build", "Test", "Compile").foreach { action =>
       val command = DbtCommand.selection(w, root, action, fullRefresh = false).toOption.get
-      val selection = command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(value => !value.startsWith("--"))
+      val selection = command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")).takeWhile(value => !value.startsWith("--"))
       assertEquals(resolved.resources.map(DbtSelection.selector(w, _)).toSet, selection.toSet)
       assertEquals(Vector("--target", "qa"), command.arguments.dropWhile(_ != "--target").take(2))
       assertTrue(command.environment("DBT_PROFILES_DIR").endsWith("/profiles with spaces"))
@@ -97,7 +98,7 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     val options = root.runOptions
     options.stateDirectory = "baseline"; options.selection = "fqn:analytics.orders,state:modified"
     val command = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
-    assertEquals(Vector("fqn:analytics.orders,state:modified"), command.arguments.dropWhile(_ != "--select").drop(1))
+    assertEquals(Vector("fqn:analytics.orders,state:modified"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")))
     assertTrue(command.arguments.sliding(2).exists(v => v.head == "--state" && v.last.endsWith("/baseline")))
     val preview = DbtState.preview(w, root, options.selection).toOption.get
     assertEquals(Vector("model.analytics.orders"), preview.selected.map(_.uniqueId))
@@ -200,7 +201,7 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     val selected = DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getParent.getPath).get
     root.runOptions.exclude = "slow"
     val command = DbtCommand.selection(w, root, "Build", fullRefresh = false, Some(selected)).toOption.get
-    assertEquals(Vector("fqn:analytics.finance.orders"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(!_.startsWith("--")))
+    assertEquals(Vector("fqn:analytics.finance.orders"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")).takeWhile(!_.startsWith("--")))
     assertFalse(command.arguments.exists(_.contains("unrelated")))
   }
 
@@ -212,7 +213,7 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue(DbtCommand.selection(workspace, root, "Build", fullRefresh = false).isLeft)
     val ids = Vector("model.analytics.orders")
     val command = DbtCommand.selection(workspace, root, "Build", fullRefresh = false, None, Some(ids)).toOption.get
-    assertEquals(Vector("fqn:analytics.orders"), command.arguments.dropWhile(_ != "--select").drop(1))
+    assertEquals(Vector("fqn:analytics.orders"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")))
     assertTrue(DbtCommand.selection(workspace, root, "Build", fullRefresh = false, None, Some(Vector("model.other.orders"))).isLeft)
     assertEquals(Right(ids), DbtSelectionReview.cliResources("log line\n{\"unique_id\":\"model.analytics.orders\"}\n"))
     assertTrue(DbtSelectionReview.cliResources("{\"info\":{\"msg\":\"log\"}}\n").isLeft)

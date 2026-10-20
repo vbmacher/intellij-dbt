@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt.lineage
 
+import com.github.vbmacher.intellij.dbt.project.DbtResourceIdentity
 import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.progress.ProgressManager
@@ -24,7 +25,7 @@ private[dbt] object DbtSelection {
     "function", "check", "resource_type", "selector")
   def resolve(w: DbtWorkspace, root: DbtRoot, expression: String, exclude: String = ""): DbtSelection = {
     val problems = scala.collection.mutable.ArrayBuffer.empty[String]
-    def identity(s: DbtSymbol): String = w.owner(s).map(_.directory.getPath).getOrElse("") + "|" + s.uniqueId
+    def identity(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
     def union(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.flatten.distinctBy(identity)
     def intersect(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.headOption.getOrElse(Vector.empty)
       .filter(s => xs.drop(1).forall(_.exists(t => identity(t) == identity(s))))

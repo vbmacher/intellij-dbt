@@ -70,7 +70,7 @@ private[dbt] object DbtAgentProtocol {
     def response(status: String, message: String = ""): JsonObject = obj("status" -> status, "message" -> message, "schema_version" -> Version)
     val roots = w.roots.filter(r => r.directory.getPath == text("project") || r.name == text("project"))
     val candidates = w.symbols.filter(s => w.owner(s).exists(roots.contains) && s.uniqueId == text("resource_id"))
-      .sortBy(s => (s.metadata, s.isProperty)).distinctBy(s => (DbtImpact.key(w, s), s.owner))
+      .sortBy(s => (s.metadata, s.isProperty)).distinctBy(s => (DbtResourceIdentity.key(w, s), s.owner))
     def resourceResult(f: DbtSymbol => JsonObject): JsonObject = {
       if (roots.size != 1) response("ambiguous", "Choose an exact project directory from list_projects.")
       else if (candidates.size != 1) { val r = response(if (candidates.isEmpty) "missing" else "ambiguous", "Resource identity did not resolve uniquely."); r.add("candidates", array(candidates.map(resource(w, _)))); r }
@@ -94,7 +94,7 @@ private[dbt] object DbtAgentProtocol {
           val resolved = (for (f <- file.toVector; at <- offset.toVector; ref <- DbtNavigation.at(f, at);
             e <- ref.candidates.collect { case s: DbtSymbolElement => s.symbol }) yield e) ++
             (if (offset.nonEmpty) Vector.empty else w.declarations(DbtSymbol.RefKinds, text("reference"), roots.head))
-          val unique = resolved.distinctBy(s => (DbtImpact.key(w, s), s.owner))
+          val unique = resolved.distinctBy(s => (DbtResourceIdentity.key(w, s), s.owner))
           val r = response(if (unique.size == 1) "ok" else if (unique.isEmpty) "missing" else "ambiguous")
           r.add("resources", array(unique.take(100).map(resource(w, _)))); r
         }
@@ -106,15 +106,15 @@ private[dbt] object DbtAgentProtocol {
         r
       }
       case "get_lineage" => resourceResult { s =>
-        val edges = DbtLineage.edges(w).filter(e => if (text("direction") == "downstream") DbtImpact.key(w, e.to) == DbtImpact.key(w, s)
-          else DbtImpact.key(w, e.from) == DbtImpact.key(w, s))
+        val edges = DbtLineage.edges(w).filter(e => if (text("direction") == "downstream") DbtResourceIdentity.key(w, e.to) == DbtResourceIdentity.key(w, s)
+          else DbtResourceIdentity.key(w, e.from) == DbtResourceIdentity.key(w, s))
         val r = response("partial", "Static edges only; dynamic consumers are unresolved.")
         r.add("edges", array(edges.take(1000).map { e => val edge = new JsonObject; edge.add("from", resource(w, e.from)); edge.add("to", resource(w, e.to)); edge })); r
       }
       case "get_column_lineage" => resourceResult { s =>
         val edges = DbtColumnLineage.edges(w).filter(e => if (text("direction") == "downstream")
           e.input.owner == s.relationName && e.input.namespace == s.namespace && e.input.version == s.version && w.owner(e.input) == w.owner(s) && e.input.name == text("column")
-          else DbtImpact.key(w, e.resource) == DbtImpact.key(w, s) && e.column == text("column"))
+          else DbtResourceIdentity.key(w, e.resource) == DbtResourceIdentity.key(w, s) && e.column == text("column"))
         val r = response("partial", "Static column derivations and bounded paths; absent edges do not prove independence.")
         r.add("edges", array(edges.take(1000).map { e => val edge = obj("column" -> e.column, "expression" -> e.expression.take(4000), "input_column" -> e.input.name)
           edge.add("resource", resource(w, e.resource)); edge.add("input", resource(w, e.input)); edge.addProperty("complete", e.complete); edge.addProperty("direct", e.direct); edge }))
@@ -137,12 +137,12 @@ private[dbt] object DbtAgentProtocol {
   private def columnPaths(w: DbtWorkspace, start: DbtSymbol, column: String, downstream: Boolean): JsonObject = {
     val edges = DbtColumnLineage.edges(w)
     val relations = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind)).sortBy(s => (s.metadata, s.isProperty))
-      .distinctBy(DbtImpact.key(w, _))
+      .distinctBy(DbtResourceIdentity.key(w, _))
     val paths = new JsonArray
     var work = 0
     var truncated = false
     def node(s: DbtSymbol, name: String): JsonObject = { val result = resource(w, s); result.addProperty("column", name); result }
-    def identity(s: DbtSymbol, name: String): String = DbtImpact.key(w, s) + "|" + name.toLowerCase(java.util.Locale.ROOT)
+    def identity(s: DbtSymbol, name: String): String = DbtResourceIdentity.key(w, s) + "|" + name.toLowerCase(java.util.Locale.ROOT)
     def inputMatches(input: DbtSymbol, relation: DbtSymbol, name: String): Boolean =
       input.owner == relation.relationName && input.namespace == relation.namespace && input.version == relation.version &&
         w.owner(input) == w.owner(relation) && input.name.equalsIgnoreCase(name)
@@ -156,7 +156,7 @@ private[dbt] object DbtAgentProtocol {
       else if (nodes.size >= 20) { truncated = true; finish(nodes, complete = false) }
       else {
         val next = edges.filter(e => if (downstream) inputMatches(e.input, current, name)
-          else DbtImpact.key(w, e.resource) == DbtImpact.key(w, current) && e.column.equalsIgnoreCase(name))
+          else DbtResourceIdentity.key(w, e.resource) == DbtResourceIdentity.key(w, current) && e.column.equalsIgnoreCase(name))
         if (next.isEmpty) finish(nodes, complete && current.kind == "source_table" && !current.isStale)
         else next.take(100).foreach { edge =>
           val targets = if (downstream) Vector(edge.resource -> edge.column) else

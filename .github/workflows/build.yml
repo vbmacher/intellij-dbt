@@ -27,3 +27,32 @@ jobs:
 
       - name: Test, package and verify public API usage
         run: sbt --batch test testPackaged packageArtifactZip runPluginVerifier
+
+  lineage-browser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/test/js
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/test/js/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+
+  python-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+      - name: Test with the Python Community plugin matching the SDK
+        run: sbt --batch 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' testPython

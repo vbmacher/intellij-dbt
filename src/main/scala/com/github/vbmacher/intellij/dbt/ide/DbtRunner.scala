@@ -25,12 +25,18 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 import scala.util.control.NonFatal
 
-private[ide] final case class DbtCommand(arguments: Vector[String], directory: String, environment: Map[String, String],
-  action: String, target: String, notifySystem: Boolean, artifactDirectory: String, artifactContext: Vector[String], commandOffset: Int = 1, root: String = "", sourceSql: String = "",
-  previewSource: Option[DbtPreviewSource] = None)
+/** The executable prefix is captured separately from the dbt request, including wrapper arguments. */
+private[ide] final case class DbtCommand(prefix: Vector[String], request: DbtCommandRequest, directory: String,
+  environment: Map[String, String], target: String, notifySystem: Boolean, artifactDirectory: String,
+  artifactContext: Vector[String], colors: Boolean = true, root: String = "", sourceSql: String = "",
+  previewSource: Option[DbtPreviewSource] = None) {
+  def action: String = request.action.label
+  lazy val arguments: Vector[String] = prefix ++ request.arguments ++
+    (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (colors) "--use-colors" else "--no-use-colors")
+}
 
 private[ide] object DbtCommand {
-  val Actions: Vector[String] = Vector("Run", "Build", "Test", "Compile", "Preview", "Generate Docs", "Source Freshness")
+  val Actions: Vector[String] = DbtCommandAction.toolbar.map(_.label)
   def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean,
     requested: Option[DbtRunSelection] = None, cliIds: Option[Vector[String]] = None): Either[String, DbtCommand] = {
     val options = root.runOptions
@@ -60,12 +66,11 @@ private[ide] object DbtCommand {
       base <- create(w, all, action, fullRefresh && incremental)
       excluded <- DbtSelectionReview.cliTerms(w, root, options.exclude)
     } yield {
-      val selections = if (action == "Generate Docs" || expression.isEmpty && cliIds.isEmpty) Vector.empty
-      else if (stateSelection && cliIds.isEmpty) Vector("--select") ++ expression.split("\\s+").filter(_.nonEmpty)
-      else Vector("--select") ++ resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).distinct
+      val scope = if (expression.isEmpty && cliIds.isEmpty) DbtCommandScope.All
+      else if (stateSelection && cliIds.isEmpty) DbtCommandScope.Selected(expression.split("\\s+").filter(_.nonEmpty).toVector)
+      else DbtCommandScope.Selected(resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _)).distinct)
       // Preserve explicit exclusions as well: dbt may otherwise select their tests indirectly.
-      val excludes = if (excluded.isEmpty) Vector.empty else Vector("--exclude") ++ excluded
-      base.copy(arguments = base.arguments ++ selections ++ excludes)
+      base.copy(request = base.request.copy(scope = scope, exclude = excluded))
     }
   }
   /** Explicit CLI resolution shares the normal managed process and execution context. */
@@ -74,26 +79,27 @@ private[ide] object DbtCommand {
     val exclude = root.runOptions.exclude.trim
     for {
       all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-      base <- create(w, all, "Generate Docs", fullRefresh = false)
-      baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Vector("--state", p.toString))
-        else Right(Vector.empty[String])
+      base <- prepare(w, all, DbtCommandAction.ResolveSelection, fullRefresh = false)
+      baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Some(p.toString))
+        else Right(None)
       exclusions <- DbtSelectionReview.cliTerms(w, root, exclude)
       selected <- {
         val named = "^selector:([^+,\\s]+)$".r
         expression match {
-          case "" => Right(Vector.empty[String])
-          case named(name) => Right(Vector("--selector", name))
+          case "" => Right(DbtCommandScope.All)
+          case named(name) => Right(DbtCommandScope.Named(name))
           case other => DbtSelectionReview.cliTerms(w, root, other).flatMap(terms =>
-            Either.cond(terms.nonEmpty, Vector("--select") ++ terms, "Selection matches no locally known resources."))
+            Either.cond(terms.nonEmpty, DbtCommandScope.Selected(terms), "Selection matches no locally known resources."))
         }
       }
     } yield {
-      val excluded = if (exclusions.isEmpty) Vector.empty else Vector("--exclude") ++ exclusions
-      base.copy(action = "Resolve Selection", arguments = base.arguments.take(base.commandOffset) ++
-        Vector("ls", "--quiet", "--output", "json") ++ selected ++ excluded ++ baseline ++ base.arguments.drop(base.commandOffset + 2))
+      base.copy(request = base.request.copy(scope = selected, exclude = exclusions, state = baseline))
     }
   }
-  def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] = {
+  def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean): Either[String, DbtCommand] =
+    DbtCommandAction.fromLabel(action).toRight("Unknown dbt command.").flatMap(prepare(w, requested, _, fullRefresh))
+
+  private def prepare(w: DbtWorkspace, requested: DbtRunSelection, action: DbtCommandAction, fullRefresh: Boolean): Either[String, DbtCommand] = {
     val selected = if (requested.path.isEmpty && requested.directory)
       DbtRunSelection.all(w, requested.root).filter(_.root == requested.root)
     else DbtRunSelection.available(w).find(s => s.path == requested.path && s.root == requested.root && s.directory == requested.directory)
@@ -107,35 +113,34 @@ private[ide] object DbtCommand {
         val target = DbtExecutionContext.activeTarget(root).getOrElse("")
         val all = selection.directory && (selection.path.isEmpty || selection.path == root.directory.getPath)
         val selectors = if (all) Vector.empty else DbtRunSelection.selectors(w, selection)
-        val stateFlags = if (Set("Generate Docs", "Source Freshness")(action)) Right(Vector.empty[String]) else for {
+        val state = if (!action.usesState) Right(None) else for {
           _ <- Either.cond(!options.defer || root.engine == "core", (), "Core deferral flags are unavailable for the configured engine.")
           _ <- Either.cond(!options.favorState || options.defer && root.engine == "core" && root.supports(4), (), "Favor state requires deferral and dbt Core 1.4+.")
           directory <- if (options.stateDirectory.nonEmpty || options.defer || options.favorState)
-            DbtState.manifest(root).flatMap(_ => DbtState.baseline(root)).map(Some(_)) else Right(None)
-        } yield directory.toVector.flatMap(path => Vector("--state", path.toString)) ++
-          (if (options.defer) Vector("--defer") else Vector.empty) ++ (if (options.favorState) Vector("--favor-state") else Vector.empty)
-        if (!Actions.contains(action)) Left("Unknown dbt command.")
-        else if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
+            DbtState.manifest(root).flatMap(_ => DbtState.baseline(root)).map(p => Some(p.toString)) else Right(None)
+        } yield directory
+        if (options.projectRoot.nonEmpty && !Files.isRegularFile(directory.resolve("dbt_project.yml")))
           Left("Project root must contain dbt_project.yml. Check dbt Workspace settings.")
-        else if (action == "Source Freshness" && !all) Left("Choose the whole dbt project in the Runner to check source freshness.")
-        else if (action == "Preview" && selection.directory) Left("Choose a single model to preview.")
-        else if (action != "Generate Docs" && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
+        else if (action == DbtCommandAction.SourceFreshness && !all) Left("Choose the whole dbt project in the Runner to check source freshness.")
+        else if (action == DbtCommandAction.Preview && selection.directory) Left("Choose a single model to preview.")
+        else if (action != DbtCommandAction.GenerateDocs && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {
           val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
-          val command = if (action == "Generate Docs") Vector("docs", "generate") else if (action == "Source Freshness") Vector("source", "freshness") else Vector(if (action == "Preview") "show" else action.toLowerCase)
-          val structured = if (Set("Run", "Build", "Test", "Source Freshness")(action)) Vector("--log-format", "json") else Vector.empty
-          val select = if (action == "Generate Docs" || all) Vector.empty else Vector("--select") ++ selectors
           val incremental = DbtRunSelection.selectedModels(w, selection).exists(s =>
             DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
-          val refresh = if (fullRefresh && incremental && Set("Run", "Build")(action)) Vector("--full-refresh") else Vector.empty
-          val preview = if (action == "Preview") Vector("--limit", options.previewLimit.max(1).min(1000).toString, "--output", "json") else Vector.empty
           val profiles = DbtExecutionContext.profiles(root).directory.toString
           val artifact = root.artifactDirectory
-          stateFlags.map(flags => DbtCommand(prefix ++ command ++ structured ++ select ++ refresh ++ preview ++ flags ++
-            (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (options.colors) "--use-colors" else "--no-use-colors"),
-            directory.toString, DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
-            action, target, options.notifications, artifact.toString, DbtArtifactContext.identity(root), prefix.length, root.directory.getPath,
-            if (action == "Preview") DbtRunSelection.selectedModels(w, selection).headOption.map(_.file.getText).getOrElse("") else ""))
+          state.map { baseline =>
+            val request = DbtCommandRequest(action,
+              if (action == DbtCommandAction.GenerateDocs || all) DbtCommandScope.All else DbtCommandScope.Selected(selectors),
+              fullRefresh = fullRefresh && incremental && Set(DbtCommandAction.Run, DbtCommandAction.Build)(action),
+              limit = options.previewLimit.max(1).min(1000), state = baseline,
+              defer = action.usesState && options.defer, favorState = action.usesState && options.favorState)
+            DbtCommand(prefix.toVector, request, directory.toString,
+              DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
+              target, options.notifications, artifact.toString, DbtArtifactContext.identity(root), options.colors, root.directory.getPath,
+              if (action == DbtCommandAction.Preview) DbtRunSelection.selectedModels(w, selection).headOption.map(_.file.getText).getOrElse("") else "")
+          }
         }
       }
     } yield command
@@ -201,9 +206,8 @@ final class DbtRunner(project: Project) extends Disposable {
               val previewEvidence = Option.when(command.action == "Preview")(
                 DbtPreviewEvidence.capture(command, capturedOutput, failed = !success, canceled = wasCancelled))
               val preview = if (success && command.action == "Preview") Some(DbtPreview.format(capturedOutput)) else None
-              def argument(name: String): String = command.arguments.drop(command.commandOffset + 1).sliding(2).find(_.head == name).map(_(1)).getOrElse("")
               val result = if (success && command.action == "Preview") DbtQueryResult.parse(capturedOutput,
-                command.target, argument("--limit").toIntOption.getOrElse(10), (System.nanoTime() - started) / 1000000L,
+                command.target, command.request.limit.max(1).min(1000), (System.nanoTime() - started) / 1000000L,
                 previewEvidence.map(_.displaySql).getOrElse(command.sourceSql)).toOption else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {

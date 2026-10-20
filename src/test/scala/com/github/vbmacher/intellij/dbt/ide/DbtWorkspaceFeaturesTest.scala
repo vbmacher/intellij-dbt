@@ -126,7 +126,7 @@ sources:
   def testGraphDepthExpansionAndCyclesDoNotDuplicateResources(): Unit = {
     project()
     (0 to 8).foreach(n => add(s"models/m$n.sql", if (n == 0) "select 1" else s"select * from {{ ref('m${n - 1}') }}"))
-    val focus = DbtGraphData.key(workspace, resource("m4"))
+    val focus = DbtResourceIdentity.key(workspace, resource("m4"))
     val shallow = DbtGraphData.build(workspace, Some(focus), 1, 1, exposures = true).payload
     assertEquals(3, shallow.getAsJsonArray("nodes").size())
     assertEquals(2, shallow.getAsJsonArray("boundary").size())
