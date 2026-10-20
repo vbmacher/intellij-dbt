@@ -3,11 +3,12 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.google.gson.{JsonArray, JsonElement, JsonObject, JsonParser}
+import com.google.gson.{JsonArray, JsonElement, JsonNull, JsonObject, JsonParser}
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.charset.StandardCharsets
@@ -15,6 +16,7 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.concurrent.{Executors, ExecutorService, ScheduledExecutorService, ThreadPoolExecutor, ArrayBlockingQueue, TimeUnit}
 import com.intellij.openapi.progress.{EmptyProgressIndicator, ProgressIndicator, ProgressManager}
 import scala.jdk.CollectionConverters._
+import javax.swing.JScrollPane
 import scala.util.control.NonFatal
 
 private[dbt] object DbtAgentProtocol {
@@ -41,10 +43,25 @@ private[dbt] object DbtAgentProtocol {
     "get_column_lineage" -> Vector("direction"), "resolve_selection" -> Vector("exclude"),
     "suggest_validation_selection" -> Vector("compare"))
   def allowedArguments(tool: String): Vector[String] = Tools.find(_._1 == tool).toVector.flatMap(_._3) ++ OptionalArguments.getOrElse(tool, Vector.empty)
-  def obj(values: (String, String)*): JsonObject = { val o = new JsonObject; values.foreach { case (k, v) => o.addProperty(k, v) }; o }
+  /** A JSON object of string, boolean, number or JSON values in the given order; `null` becomes JSON null. */
+  def obj(values: (String, Any)*): JsonObject = {
+    val o = new JsonObject
+    values.foreach {
+      case (k, v: JsonElement) => o.add(k, v)
+      case (k, v: String) => o.addProperty(k, v)
+      case (k, v: java.lang.Boolean) => o.addProperty(k, v)
+      case (k, v: Number) => o.addProperty(k, v)
+      case (k, null) => o.add(k, JsonNull.INSTANCE)
+      case (k, v) => throw new IllegalArgumentException("Unsupported JSON value for " + k + ": " + v.getClass)
+    }
+    o
+  }
   def strings(values: Iterable[String]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
   def array(values: Iterable[JsonElement]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
-  def error(code: Int, message: String): JsonObject = { val o = obj("message" -> message); o.addProperty("code", code); o }
+  def stringField(o: JsonObject, key: String): Option[String] =
+    Option(o.get(key)).filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString)
+  def objectField(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+  def error(code: Int, message: String): JsonObject = obj("message" -> message, "code" -> code)
   /** A JSON-RPC error response; `id` is omitted when the request id could not be read. */
   def errorResponse(id: Option[JsonElement], code: Int, message: String, data: Option[JsonElement] = None): JsonObject = {
     val response = obj("jsonrpc" -> "2.0"); id.foreach(response.add("id", _))
@@ -53,26 +70,20 @@ private[dbt] object DbtAgentProtocol {
   def serverInfo: JsonObject = obj("name" -> "dbt-workspace", "version" -> Version)
   /** The common `mcpServers` JSON block that MCP clients accept for remote HTTP servers. */
   def clientConfiguration(url: String, token: String): String = {
-    val headers = obj("Authorization" -> ("Bearer " + token))
-    val server = obj("type" -> "http", "url" -> url); server.add("headers", headers)
-    val servers = new JsonObject; servers.add("dbt-workspace", server)
-    val root = new JsonObject; root.add("mcpServers", servers)
-    new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(root)
+    val server = obj("type" -> "http", "url" -> url, "headers" -> obj("Authorization" -> ("Bearer " + token)))
+    new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(obj("mcpServers" -> obj("dbt-workspace" -> server)))
   }
   def schemas: JsonArray = array(Tools.map { case (name, description, required) =>
-    val schema = obj("type" -> "object")
     val properties = new JsonObject
     allowedArguments(name).filterNot(_ == "offset").foreach { name =>
-      val value = obj("type" -> "string"); value.addProperty("maxLength", 16384)
+      val value = obj("type" -> "string", "maxLength" -> 16384)
       if (name == "direction") value.add("enum", strings(Vector("upstream", "downstream")))
       properties.add(name, value)
     }
-    if (allowedArguments(name).contains("offset")) { val offset = obj("type" -> "integer"); offset.addProperty("minimum", 0); offset.addProperty("maximum", Int.MaxValue); properties.add("offset", offset) }
-    schema.add("properties", properties); schema.add("required", strings(required)); schema.addProperty("additionalProperties", false)
-    val tool = obj("name" -> name, "description" -> description)
-    tool.add("inputSchema", schema)
-    tool.add("annotations", { val a = new JsonObject; a.addProperty("readOnlyHint", true); a.addProperty("destructiveHint", false); a })
-    tool
+    if (allowedArguments(name).contains("offset")) properties.add("offset", obj("type" -> "integer", "minimum" -> 0, "maximum" -> Int.MaxValue))
+    obj("name" -> name, "description" -> description,
+      "inputSchema" -> obj("type" -> "object", "properties" -> properties, "required" -> strings(required), "additionalProperties" -> false),
+      "annotations" -> obj("readOnlyHint" -> true, "destructiveHint" -> false))
   })
   def resource(w: DbtWorkspace, s: DbtSymbol): JsonObject = {
     val result = obj("resource_id" -> s.uniqueId, "project" -> w.owner(s).map(_.directory.getPath).getOrElse(""),
@@ -87,9 +98,10 @@ private[dbt] object DbtAgentProtocol {
     val line = s.file.getText.take(s.range.getStartOffset).count(_ == '\n') + 1
     result.addProperty("line", line); result.addProperty("stale", s.isStale); result
   }
+  private def argument(args: JsonObject, key: String): String = Option(args.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
+  private def response(status: String, message: String = ""): JsonObject = obj("status" -> status, "message" -> message, "schema_version" -> Version)
   def call(w: DbtWorkspace, tool: String, args: JsonObject): JsonObject = {
-    def text(key: String): String = Option(args.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
-    def response(status: String, message: String = ""): JsonObject = obj("status" -> status, "message" -> message, "schema_version" -> Version)
+    def text(key: String): String = argument(args, key)
     val roots = w.roots.filter(r => r.directory.getPath == text("project") || r.name == text("project"))
     val candidates = w.symbols.filter(s => w.owner(s).exists(roots.contains) && s.uniqueId == text("resource_id"))
       .sortBy(s => (s.metadata, s.isProperty)).distinctBy(s => (DbtResourceIdentity.key(w, s), s.owner))
@@ -131,18 +143,17 @@ private[dbt] object DbtAgentProtocol {
         val edges = DbtLineage.edges(w).filter(e => if (text("direction") == "downstream") DbtResourceIdentity.key(w, e.to) == DbtResourceIdentity.key(w, s)
           else DbtResourceIdentity.key(w, e.from) == DbtResourceIdentity.key(w, s))
         val r = response("partial", "Static edges only; dynamic consumers are unresolved.")
-        r.add("edges", array(edges.take(1000).map { e => val edge = new JsonObject; edge.add("from", resource(w, e.from)); edge.add("to", resource(w, e.to)); edge })); r
+        r.add("edges", array(edges.take(1000).map(e => obj("from" -> resource(w, e.from), "to" -> resource(w, e.to))))); r
       }
       case "get_column_lineage" => resourceResult { s =>
         val edges = DbtColumnLineage.edges(w).filter(e => if (text("direction") == "downstream")
           e.input.owner == s.relationName && e.input.namespace == s.namespace && e.input.version == s.version && w.owner(e.input) == w.owner(s) && e.input.name == text("column")
           else DbtResourceIdentity.key(w, e.resource) == DbtResourceIdentity.key(w, s) && e.column == text("column"))
         val r = response("partial", "Static column derivations and bounded paths; absent edges do not prove independence.")
-        r.add("edges", array(edges.take(1000).map { e => val edge = obj("column" -> e.column, "expression" -> e.expression.take(4000), "input_column" -> e.input.name)
-          edge.add("resource", resource(w, e.resource)); edge.add("input", resource(w, e.input)); edge.addProperty("complete", e.complete); edge.addProperty("direct", e.direct); edge }))
+        r.add("edges", array(edges.take(1000).map(e => obj("column" -> e.column, "expression" -> e.expression.take(4000), "input_column" -> e.input.name,
+          "resource" -> resource(w, e.resource), "input" -> resource(w, e.input), "complete" -> e.complete, "direct" -> e.direct))))
         val paths = columnPaths(w, s, text("column"), text("direction") == "downstream")
         r.add("paths", paths.get("paths")); r.add("paths_truncated", paths.get("truncated")); r
-
       }
       case "resolve_selection" =>
         if (roots.size != 1) response("ambiguous", "Choose an exact project.")
@@ -169,7 +180,7 @@ private[dbt] object DbtAgentProtocol {
       input.owner == relation.relationName && input.namespace == relation.namespace && input.version == relation.version &&
         w.owner(input) == w.owner(relation) && input.name.equalsIgnoreCase(name)
     def finish(nodes: Vector[JsonObject], complete: Boolean): Unit = if (paths.size() < 50) {
-      val result = new JsonObject; result.add("columns", array(nodes)); result.addProperty("complete", complete); paths.add(result)
+      paths.add(obj("columns" -> array(nodes), "complete" -> complete))
     } else truncated = true
     def visit(current: DbtSymbol, name: String, nodes: Vector[JsonObject], seen: Set[String], complete: Boolean): Unit = {
       ProgressManager.checkCanceled()
@@ -195,18 +206,17 @@ private[dbt] object DbtAgentProtocol {
       }
     }
     visit(start, column, Vector(node(start, column)), Set(identity(start, column)), complete = true)
-    val result = new JsonObject; result.add("paths", paths); result.addProperty("truncated", truncated); result
+    obj("paths" -> paths, "truncated" -> truncated)
   }
 
   private[ide] def impact(project: Project, args: JsonObject): JsonObject = {
-    def text(key: String): String = Option(args.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
-    def response(status: String, message: String): JsonObject = obj("status" -> status, "message" -> message, "schema_version" -> Version)
+    val compare = argument(args, "compare")
     if (project.isDisposed) response("disposed", "Project is closed.")
-    else if (text("compare").nonEmpty && text("compare") != "working_tree") response("unsupported", "Only working_tree comparison is supported.")
+    else if (compare.nonEmpty && compare != "working_tree") response("unsupported", "Only working_tree comparison is supported.")
     else {
-      val initial = ReadAction.computeBlocking[DbtWorkspace, RuntimeException](() => DbtWorkspace.get(project))
-      DbtImpact.analyze(initial, text("baseline")).fold(error => response("error", error), result =>
-        ReadAction.computeBlocking[JsonObject, RuntimeException](() => {
+      val initial = DbtUi.read { DbtWorkspace.get(project) }
+      DbtImpact.analyze(initial, argument(args, "baseline")).fold(error => response("error", error), result =>
+        DbtUi.read {
           if (project.isDisposed) response("disposed", "Project is closed.")
           else {
             val w = DbtWorkspace.get(project)
@@ -215,7 +225,7 @@ private[dbt] object DbtAgentProtocol {
             r.add("affected", array(result.affected.take(500).map { case (s, trace) => val item = resource(w, s); item.add("trace", strings(trace.take(50))); item }))
             r.add("problems", strings(result.problems)); r
           }
-        }))
+        })
     }
   }
 }
@@ -321,7 +331,7 @@ final class DbtAgent(project: Project) extends Disposable {
         }
       case Some(message) if message.isJsonObject =>
         val request = message.getAsJsonObject
-        val meta = DbtAgent.objectField(DbtAgent.objectField(request, "params").getOrElse(new JsonObject), "_meta")
+        val meta = objectField(objectField(request, "params").getOrElse(new JsonObject), "_meta")
         val headerVersion = header("MCP-Protocol-Version").map(DbtAgent.decodeHeader)
         if (meta.exists(_.has(DbtAgent.ProtocolVersionKey)) || headerVersion.exists(ModernVersions.contains)) modern(header, request)
         else legacy(request, headerVersion.getOrElse(DefaultLegacyVersion))
@@ -339,12 +349,8 @@ final class DbtAgent(project: Project) extends Disposable {
     val meta = objectField(params, "_meta")
     val headerVersion = header("MCP-Protocol-Version").map(decodeHeader)
     val requested = meta.flatMap(stringField(_, ProtocolVersionKey)).orElse(headerVersion).getOrElse("")
-    def unsupported = {
-      val data = new JsonObject; data.add("supported", strings(SupportedVersions)); data.addProperty("requested", requested)
-      Reply(400, Some(errorResponse(id, -32022, "Unsupported protocol version.", Some(data))))
-    }
     if (method.isEmpty) clientMessage(request)
-    else if (!ModernVersions.contains(requested)) unsupported
+    else if (!ModernVersions.contains(requested)) unsupportedVersion(id, requested)
     else if (id.isDefined && !meta.exists(m => stringField(m, ProtocolVersionKey).isDefined && objectField(m, ClientCapabilitiesKey).isDefined))
       Reply(400, Some(errorResponse(id, -32602, "Request params._meta must contain " + ProtocolVersionKey + " and " + ClientCapabilitiesKey + ".")))
     else if (!headerVersion.contains(requested) || !header("Mcp-Method").map(decodeHeader).contains(method.get) ||
@@ -357,13 +363,9 @@ final class DbtAgent(project: Project) extends Disposable {
       def cacheable(result: JsonObject): JsonObject = { result.addProperty("ttlMs", 300000); result.addProperty("cacheScope", "private"); result }
       method.get match {
         case "server/discover" =>
-          val result = new JsonObject
-          result.add("supportedVersions", strings(SupportedVersions))
-          result.add("capabilities", toolCapabilities)
-          val resultMeta = new JsonObject; resultMeta.add(ServerInfoKey, serverInfo); result.add("_meta", resultMeta)
-          result.addProperty("instructions", Instructions)
-          complete(cacheable(result))
-        case "tools/list" => val result = new JsonObject; result.add("tools", schemas); complete(cacheable(result))
+          complete(cacheable(obj("supportedVersions" -> strings(SupportedVersions), "capabilities" -> toolCapabilities,
+            "_meta" -> obj(ServerInfoKey -> serverInfo), "instructions" -> Instructions)))
+        case "tools/list" => complete(cacheable(obj("tools" -> schemas)))
         case "tools/call" => toolsCall(params).fold(error => Reply(200, Some(errorResponse(id, error._1, error._2))), complete)
         case _ => Reply(404, Some(errorResponse(id, -32601, "Unknown method.")))
       }
@@ -376,10 +378,7 @@ final class DbtAgent(project: Project) extends Disposable {
     val id = Option(request.get("id"))
     val method = stringField(request, "method")
     if (method.isEmpty) clientMessage(request)
-    else if (!LegacyVersions.contains(version)) {
-      val data = new JsonObject; data.add("supported", strings(SupportedVersions)); data.addProperty("requested", version)
-      Reply(400, Some(errorResponse(id, -32022, "Unsupported protocol version.", Some(data))))
-    }
+    else if (!LegacyVersions.contains(version)) unsupportedVersion(id, version)
     else if (id.isEmpty) Reply(202, None)
     else if (disposed || project.isDisposed) Reply(200, Some(errorResponse(id, -32603, "Project is disposed.")))
     else {
@@ -388,11 +387,9 @@ final class DbtAgent(project: Project) extends Disposable {
       method.get match {
         case "initialize" =>
           val requested = stringField(params, "protocolVersion").filter(LegacyVersions.contains).getOrElse(LegacyVersions.head)
-          val result = obj("protocolVersion" -> requested, "instructions" -> Instructions)
-          result.add("capabilities", toolCapabilities); result.add("serverInfo", serverInfo)
-          ok(result)
+          ok(obj("protocolVersion" -> requested, "instructions" -> Instructions, "capabilities" -> toolCapabilities, "serverInfo" -> serverInfo))
         case "ping" => ok(new JsonObject)
-        case "tools/list" => val result = new JsonObject; result.add("tools", schemas); ok(result)
+        case "tools/list" => ok(obj("tools" -> schemas))
         case "tools/call" => toolsCall(params).fold(error => Reply(200, Some(errorResponse(id, error._1, error._2))), ok)
         case _ => Reply(200, Some(errorResponse(id, -32601, "Unknown method.")))
       }
@@ -419,7 +416,7 @@ final class DbtAgent(project: Project) extends Disposable {
           Right(toolResult(None, "Arguments do not match the tool input schema or exceed request limits.", isError = true))
         else {
           val output = if (name == "suggest_validation_selection") DbtAgentProtocol.impact(project, args)
-          else ReadAction.computeBlocking[JsonObject, RuntimeException](() => DbtAgentProtocol.call(DbtWorkspace.get(project), name, args))
+          else DbtUi.read { DbtAgentProtocol.call(DbtWorkspace.get(project), name, args) }
           val failed = stringField(output, "status").exists(Set("error", "unsupported", "disposed"))
           val result = toolResult(Some(output), output.toString, failed)
           if (result.toString.length > ResponseLimit - 4096)
@@ -447,21 +444,18 @@ final class DbtAgent(project: Project) extends Disposable {
 }
 
 private[ide] object DbtAgent {
+  import DbtAgentProtocol._
   /** An HTTP status and JSON body; no body means 202 Accepted. */
   final case class Reply(status: Int, body: Option[JsonElement])
   val ProtocolVersionKey = "io.modelcontextprotocol/protocolVersion"
   val ClientCapabilitiesKey = "io.modelcontextprotocol/clientCapabilities"
   val ServerInfoKey = "io.modelcontextprotocol/serverInfo"
-  def stringField(o: JsonObject, key: String): Option[String] =
-    Option(o.get(key)).filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString)
-  def objectField(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
-  def success(id: JsonElement, result: JsonObject): JsonObject = {
-    val response = DbtAgentProtocol.obj("jsonrpc" -> "2.0"); response.add("id", id); response.add("result", result); response
-  }
-  def toolCapabilities: JsonObject = { val c = new JsonObject; c.add("tools", new JsonObject); c }
+  def success(id: JsonElement, result: JsonObject): JsonObject = obj("jsonrpc" -> "2.0", "id" -> id, "result" -> result)
+  def unsupportedVersion(id: Option[JsonElement], requested: String): Reply = Reply(400, Some(errorResponse(id, -32022,
+    "Unsupported protocol version.", Some(obj("supported" -> strings(SupportedVersions), "requested" -> requested)))))
+  def toolCapabilities: JsonObject = obj("tools" -> new JsonObject)
   def toolResult(structured: Option[JsonObject], text: String, isError: Boolean): JsonObject = {
-    val result = new JsonObject
-    result.add("content", DbtAgentProtocol.array(Vector(DbtAgentProtocol.obj("type" -> "text", "text" -> text))))
+    val result = obj("content" -> array(Vector(obj("type" -> "text", "text" -> text))))
     structured.foreach(result.add("structuredContent", _))
     if (isError) result.addProperty("isError", true)
     result
@@ -472,5 +466,24 @@ private[ide] object DbtAgent {
     if (v.startsWith("=?base64?") && v.endsWith("?=") && v.length >= 11)
       scala.util.Try(new String(java.util.Base64.getDecoder.decode(v.substring(9, v.length - 2)), StandardCharsets.UTF_8)).getOrElse(v)
     else v
+  }
+}
+
+final class DbtAgentAction extends AnAction {
+  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
+    val service = project.getService(classOf[DbtAgent])
+    val details = DbtUi.textArea()
+    def refresh(): Unit = details.setText(service.endpoint.map { case (url, token) =>
+      "Read-only MCP server is running for this IDE project.\nURL: " + url + "\nAuthorization: Bearer " + token +
+        "\nTransport: Streamable HTTP · MCP versions " + DbtAgentProtocol.SupportedVersions.mkString(", ") +
+        "\nToken is temporary; stop/restart rotates it. Do not publish it."
+    }.getOrElse("Local MCP server is stopped. Enable the local MCP server in Settings > dbt Workspace > Integrations, then Start.\nNo AI subscription or warehouse connection is required.\nOnly read tools are exposed. See docs/integrations.md for MCP client setup."))
+    refresh()
+    DbtUi.dialog(project, "dbt Local MCP Server", new JScrollPane(details), south = DbtUi.buttons(
+      DbtUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project); refresh() },
+      DbtUi.button("Start") { service.start().left.foreach(error => Messages.showInfoMessage(project, error, "dbt Local MCP Server")); refresh() },
+      DbtUi.button("Stop") { service.stop(); refresh() },
+      DbtUi.button("Copy endpoint and authorization") { service.endpoint.foreach { case (url, token) => DbtUi.copy(url + "\nAuthorization: Bearer " + token) } },
+      DbtUi.button("Copy MCP client configuration") { service.endpoint.foreach { case (url, token) => DbtUi.copy(DbtAgentProtocol.clientConfiguration(url, token)) } }))
   }
 }

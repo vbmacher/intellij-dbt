@@ -1,11 +1,16 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.{obj, objectField, stringField}
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.{JsonArray, JsonElement, JsonObject}
+import com.intellij.diff.{DiffContentFactory, DiffManager}
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.progress.ProgressManager
-import java.nio.file.{Files, LinkOption, Path, Paths}
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import java.nio.file.{Files, LinkOption, Path}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -19,9 +24,6 @@ private[ide] object DbtState {
   private val ConfigKeys = Set("materialized", "enabled", "alias", "database", "schema", "tags", "access", "group", "unique_key",
     "on_schema_change", "incremental_strategy", "partition_by", "cluster_by", "contract", "persist_docs", "grants", "quoting", "full_refresh", "meta", "pre_hook", "post_hook")
   private val ColumnKeys = Set("description", "data_type", "quote", "constraints", "meta", "tags")
-  private def obj(json: JsonObject, key: String): Option[JsonObject] = Option(json.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
-  private def str(json: JsonObject, key: String): Option[String] = Option(json.get(key)).filter(e =>
-    e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
   private def entries(manifest: DbtManifest): Map[String, JsonObject] = manifest.resources.map(r => r.id -> r.data).toMap
 
   /** Resolve real existing ancestors too, so a not-yet-created output directory cannot hide a symlink alias. */
@@ -119,25 +121,20 @@ private[ide] object DbtState {
   /** The diff labels distinguish recorded baseline values from authored, unresolved source values. */
   def comparison(w: DbtWorkspace, root: DbtRoot, id: String): Either[String, (String, String)] = manifest(root).map { baseline =>
     val before = entries(baseline).get(id).map { entry =>
-      val result = new JsonObject
-      result.addProperty("raw_code", str(entry, "raw_code").orElse(str(entry, "raw_sql")).getOrElse(""))
-      result.addProperty("description", str(entry, "description").getOrElse(""))
-      result.add("config", obj(entry, "unrendered_config").orElse(obj(entry, "config")).getOrElse(new JsonObject))
-      result.add("columns", obj(entry, "columns").getOrElse(new JsonObject))
-      result
+      obj("raw_code" -> stringField(entry, "raw_code").orElse(stringField(entry, "raw_sql")).getOrElse(""),
+        "description" -> stringField(entry, "description").getOrElse(""),
+        "config" -> objectField(entry, "unrendered_config").orElse(objectField(entry, "config")).getOrElse(new JsonObject),
+        "columns" -> objectField(entry, "columns").getOrElse(new JsonObject))
     }
     val after = current(w, root).get(id).filter(_.size == 1).flatMap(_.headOption).map { symbol =>
-      val result = new JsonObject
-      result.addProperty("raw_code", if (symbol.isCode) symbol.file.getText else "")
-      result.addProperty("description", sourceDescription(w, symbol))
       val config = new JsonObject
       sourceConfig(w, symbol).toVector.sortBy(_._1).foreach { case (key, value) => config.add(key, value) }
-      result.add("config", config)
       val columns = new JsonObject
       w.columns(symbol).filterNot(_.metadata).foreach { column =>
         column.mapping.foreach(m => columns.add(column.name, yaml(m)))
       }
-      result.add("columns", columns); result
+      obj("raw_code" -> (if (symbol.isCode) symbol.file.getText else ""), "description" -> sourceDescription(w, symbol),
+        "config" -> config, "columns" -> columns)
     }
     val gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create()
     before.map(gson.toJson(_)).getOrElse("") -> after.map(gson.toJson(_)).getOrElse("")
@@ -152,18 +149,18 @@ private[ide] object DbtState {
       (old.get(id), now.get(id)) match {
         case (None, Some(_)) => Some(DbtStateChange(id, "added", "No baseline declaration", ""))
         case (Some(previous), None) =>
-          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") || str(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
-          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed", if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration", str(previous, "relation_name").getOrElse("")))
+          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") || stringField(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
+          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed", if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration", stringField(previous, "relation_name").getOrElse("")))
         case (Some(previous), Some(Vector(symbol))) =>
           val changed = scala.collection.mutable.ArrayBuffer.empty[String]
           val unknown = scala.collection.mutable.ArrayBuffer.empty[String]
           if (symbol.isCode) {
-            val oldCode = str(previous, "raw_code").orElse(str(previous, "raw_sql")).filter(_.nonEmpty)
+            val oldCode = stringField(previous, "raw_code").orElse(stringField(previous, "raw_sql")).filter(_.nonEmpty)
             if (oldCode.isEmpty) unknown += "Baseline source code unavailable"
             else if (oldCode.exists(_.trim != symbol.file.getText.trim)) changed += "Source SQL/code changed"
           }
           val config = sourceConfig(w, symbol)
-          obj(previous, "unrendered_config").orElse(obj(previous, "config")) match {
+          objectField(previous, "unrendered_config").orElse(objectField(previous, "config")) match {
             case None => unknown += "Baseline resolved config unavailable"
             case Some(oldConfig) =>
               (ConfigKeys.map(configKey) ++ config.keySet).toVector.sorted.foreach { key =>
@@ -174,7 +171,7 @@ private[ide] object DbtState {
                   case Some(source) if normalized(source).contains("{{") || normalized(source).contains("{%") => unknown += s"Dynamic config: $key"
                   case Some(source) => before match {
                     case None => changed += s"Config added: $key"
-                    case Some(value) if Set("pre-hook", "post-hook")(key) && obj(previous, "unrendered_config").isEmpty && !empty(value) =>
+                    case Some(value) if Set("pre-hook", "post-hook")(key) && objectField(previous, "unrendered_config").isEmpty && !empty(value) =>
                       unknown += s"Hook normalization requires dbt: $key"
                     case Some(value) =>
                       val result = if (key == "tags" && !source.isJsonNull && !value.isJsonNull) Difference(changed = tags(value) != tags(source)) else difference(value, source)
@@ -189,14 +186,14 @@ private[ide] object DbtState {
           }
           val description = sourceDescription(w, symbol)
           if (description.contains("{{")) unknown += "Dynamic description"
-          else if (str(previous, "description").exists(_ != description)) changed += "Description changed"
-          obj(previous, "columns") match {
+          else if (stringField(previous, "description").exists(_ != description)) changed += "Description changed"
+          objectField(previous, "columns") match {
             case None => unknown += "Baseline column declarations unavailable"
             case Some(columns) =>
               val declared = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).distinctBy(_.name)
               val names = declared.map(_.name).toSet
               if (columns.keySet().asScala.toSet != names) changed += "Column declarations changed"
-              declared.foreach { column => obj(columns, column.name).foreach { oldColumn =>
+              declared.foreach { column => objectField(columns, column.name).foreach { oldColumn =>
                 ColumnKeys.toVector.sorted.foreach { key =>
                   val before = Option(oldColumn.get(key)).filterNot(_.isJsonNull)
                   val after = column.mapping.flatMap(DbtYaml.value(_, key)).map(yaml).orElse(column.attributes.get(key).map(new com.google.gson.JsonPrimitive(_)))
@@ -215,7 +212,7 @@ private[ide] object DbtState {
               }}
           }
           val reasons = changed.toVector ++ unknown.toVector.distinct.map("Unresolved: " + _)
-          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown", reasons.mkString("; "), str(previous, "relation_name").getOrElse(""))) else None
+          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown", reasons.mkString("; "), stringField(previous, "relation_name").getOrElse(""))) else None
         case _ => Some(DbtStateChange(id, "unknown", "Ambiguous current owning project/resource identity", ""))
       }
     }
@@ -268,7 +265,7 @@ private[ide] object DbtState {
     val upstream = selected.flatMap(s => DbtLineage.traverse(edges, s, downstream = false, 100)).distinctBy(key).filterNot(s => selectedIds(key(s)))
     val dependencies = upstream.filter(s => DbtSymbol.RelationKinds(s.kind)).take(1000).map { symbol =>
       val previous = old.get(symbol.uniqueId)
-      val relation = previous.flatMap(str(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")) .getOrElse("")
+      val relation = previous.flatMap(stringField(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")) .getOrElse("")
       val ephemeral = symbol.attributes.get("materialized").contains("ephemeral")
       val resolution = if (symbol.kind == "source_table") "source" else if (ephemeral || !root.runOptions.defer) "local"
         else if (relation.isEmpty || symbol.isStale || symbol.metadata || symbol.attributes.get("materialized").exists(_.contains("{{"))) "unknown" else if (root.runOptions.favorState) "deferred" else "candidate"
@@ -284,5 +281,40 @@ private[ide] object DbtState {
     }
     if (upstream.size > 1000) problems += "Dependency preview is limited to 1000 resources and 100 graph steps."
     DbtStatePreview(path.toString, selected, dependencies, problems.toVector.distinct)
+  }
+}
+
+private[ide] object DbtStateComparison {
+  def show(configuration: DbtRunConfiguration): Unit = {
+    val project = configuration.getProject
+    DbtUi.readLater(project) {
+      val w = DbtWorkspace.get(project)
+      for {
+        root <- configuration.configuredRoot(w)
+        changes <- DbtState.compare(w, root)
+      } yield configuration.sourceKey(w) -> changes
+    } {
+      case Left(error) => Messages.showErrorDialog(project, error, "dbt baseline comparison")
+      case Right((_, changes)) if changes.isEmpty => Messages.showInfoMessage(project, "No locally detectable changes.", "dbt baseline comparison")
+      case Right((key, changes)) =>
+        val choices = changes.map(c => (c.status + ": " + c.id + " · " + c.reason) -> c.id).toMap
+        JBPopupFactory.getInstance.createPopupChooserBuilder(choices.keys.toVector.sorted.asJava)
+          .setTitle("Compare baseline with current source").setItemChosenCallback((label: String) => {
+            DbtUi.readLater(project) {
+              val w = DbtWorkspace.get(project)
+              for {
+                _ <- Either.cond(configuration.sourceKey(w) == key, (), "Source or settings changed. Compare baseline again.")
+                root <- configuration.configuredRoot(w)
+                text <- DbtState.comparison(w, root, choices(label))
+              } yield text
+            } {
+              case Left(error) => Messages.showErrorDialog(project, error, "dbt baseline comparison")
+              case Right((before, after)) =>
+                val factory = DiffContentFactory.getInstance()
+                DiffManager.getInstance.showDiff(project, new SimpleDiffRequest(label, factory.create(before), factory.create(after),
+                  "Baseline manifest (recorded)", "Current source (unresolved defaults)"))
+            }
+          }).createPopup().showCenteredInCurrentWindow(project)
+    }
   }
 }

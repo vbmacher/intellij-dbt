@@ -1,13 +1,18 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.{array, obj, strings}
+import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{Gson, JsonObject, JsonParser}
 import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction}
+import com.intellij.openapi.application.{ApplicationManager, ModalityState}
 import com.intellij.openapi.editor.colors.EditorColorsManager
-import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
+import com.intellij.openapi.fileChooser.{FileChooserFactory, FileSaverDescriptor}
+import com.intellij.openapi.fileEditor.{FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
+import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.{Disposer, IconLoader}
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -21,17 +26,19 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser, JBCefBrowserBase, JBCefJSQuery}
 import com.intellij.util.Alarm
-import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.IconUtil
 import java.awt.BorderLayout
-import java.io.ByteArrayOutputStream
+import java.awt.datatransfer.{DataFlavor, Transferable, UnsupportedFlavorException}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.Base64
-import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JPanel
 import javax.imageio.ImageIO
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 import scala.util.control.NonFatal
 
 final class DbtToolWindowFactory extends ToolWindowFactory {
@@ -109,23 +116,20 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val file = FileEditorManager.getInstance(project).getSelectedFiles.headOption
     val oldFocus = focus
     val state = settings.getState
-    ReadAction.nonBlocking(new Callable[(DbtGraphSnapshot, Option[String])] {
-      override def call(): (DbtGraphSnapshot, Option[String]) = {
-        val w = DbtWorkspace.get(project)
-        val editorModel = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).toVector
-          .flatMap(w.codeSymbols).find(_.kind == "model")
-        val nextFocus = if (follow && state.pinnedFocus.isEmpty || oldFocus.isEmpty)
-          editorModel.map(DbtResourceIdentity.key(w, _)).orElse(oldFocus) else oldFocus
-        val graph = DbtGraphData.build(w, nextFocus,
-          state.upstream + (if (nextFocus == oldFocus) upstreamExtra else 0),
-          state.downstream + (if (nextFocus == oldFocus) downstreamExtra else 0))
-        val root = nextFocus.flatMap(graph.targets.get).flatMap(e => w.owner(e.symbol)).map(w.executionRoot)
-          .orElse(if (w.roots.map(w.executionRoot).distinct.size == 1) w.roots.headOption.map(w.executionRoot) else None)
-        graph -> root.map(_.directory.getPath)
-      }
-    }).inSmartMode(project).expireWith(this).coalesceBy(graphWork).finishOnUiThread(ModalityState.any(), result => {
+    DbtUi.readLater(this, ModalityState.any(), Some(project), Some(graphWork)) {
+      val w = DbtWorkspace.get(project)
+      val editorModel = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).toVector
+        .flatMap(w.codeSymbols).find(_.kind == "model")
+      val nextFocus = if (follow && state.pinnedFocus.isEmpty || oldFocus.isEmpty)
+        editorModel.map(DbtResourceIdentity.key(w, _)).orElse(oldFocus) else oldFocus
+      val graph = DbtGraphData.build(w, nextFocus,
+        state.upstream + (if (nextFocus == oldFocus) upstreamExtra else 0),
+        state.downstream + (if (nextFocus == oldFocus) downstreamExtra else 0))
+      val root = nextFocus.flatMap(graph.targets.get).flatMap(e => w.owner(e.symbol)).map(w.executionRoot)
+        .orElse(if (w.roots.map(w.executionRoot).distinct.size == 1) w.roots.headOption.map(w.executionRoot) else None)
+      graph -> root.map(_.directory.getPath)
+    } { case (snapshot, root) =>
       if (!disposed && request == generation.get()) {
-        val (snapshot, root) = result
         lastSnapshot = Some(snapshot)
         executionRoot = root
         val payload = snapshot.payload
@@ -137,34 +141,25 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         payload.addProperty("pinned", state.pinnedFocus.nonEmpty)
         payload.addProperty("canGenerateDocs", root.nonEmpty)
         payload.addProperty("status", if (runner.isRunning) "dbt command running…" else "Select a resource for native Documentation; double-click to open its definition.")
-        val theme = new JsonObject
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
         val scheme = EditorColorsManager.getInstance().getGlobalScheme
-        theme.addProperty("bg", color(scheme.getDefaultBackground)); theme.addProperty("fg", color(scheme.getDefaultForeground))
-        theme.addProperty("panel", color(javax.swing.UIManager.getColor("Panel.background")))
-        payload.add("theme", theme); browser.foreach(_.update(payload))
+        payload.add("theme", obj("bg" -> color(scheme.getDefaultBackground), "fg" -> color(scheme.getDefaultForeground),
+          "panel" -> color(javax.swing.UIManager.getColor("Panel.background"))))
+        browser.foreach(_.update(payload))
       }
-    }).submit(AppExecutorUtil.getAppExecutorService)
-    ()
+    }
   }
   private[ide] def showSelectionInLineage(expression: String, excluded: String,
     fromConfiguration: Boolean = false): Unit = {
     val rootPath = executionRoot
-    ReadAction.nonBlocking(new Callable[JsonObject] {
-      override def call(): JsonObject = {
-        val w = DbtWorkspace.get(project)
-        val result = new JsonObject
-        result.addProperty("expression", expression); result.addProperty("exclude", excluded)
-        result.addProperty("fromConfiguration", fromConfiguration)
-        val owner = w.roots.find(r => rootPath.contains(r.directory.getPath)).orElse(if (w.roots.size == 1) w.roots.headOption else None)
-        val selection = owner.map(r => com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, r, expression, excluded))
-        result.add("ids", new Gson().toJsonTree(selection.toVector.flatMap(_.resources).map(DbtResourceIdentity.key(w, _)).asJava))
-        result.add("diagnostics", new Gson().toJsonTree(selection.toVector.flatMap(_.problems).asJava))
-        result
-      }
-    }).expireWith(this).finishOnUiThread(ModalityState.any(), data => browser.foreach(_.showFilter(data)))
-      .submit(AppExecutorUtil.getAppExecutorService)
-    ()
+    DbtUi.readLater(this, ModalityState.any()) {
+      val w = DbtWorkspace.get(project)
+      val owner = w.roots.find(r => rootPath.contains(r.directory.getPath)).orElse(if (w.roots.size == 1) w.roots.headOption else None)
+      val selection = owner.map(r => DbtSelection.resolve(w, r, expression, excluded))
+      obj("expression" -> expression, "exclude" -> excluded, "fromConfiguration" -> fromConfiguration,
+        "ids" -> strings(selection.toVector.flatMap(_.resources).map(DbtResourceIdentity.key(w, _))),
+        "diagnostics" -> strings(selection.toVector.flatMap(_.problems)))
+    }(data => browser.foreach(_.showFilter(data)))
   }
   private[ide] def handleMessage(raw: String): Unit = {
     if (disposed) return
@@ -175,19 +170,16 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "ready" => refresh(follow = true)
       case "select" | "focus" | "edit" | "column" =>
         val kind = field("type")
-        ReadAction.nonBlocking(new Callable[Option[DbtSymbolElement]] {
-          override def call(): Option[DbtSymbolElement] = {
-            val w = DbtWorkspace.get(project)
-            DbtGraphData.build(w, None, 1, 1).targets.get(id)
+        DbtUi.readLater(this, smartIn = Some(project))(DbtGraphData.build(DbtWorkspace.get(project), None, 1, 1).targets.get(id)) {
+          _.foreach { element =>
+            if (kind == "focus") {
+              focus = Some(id); if (settings.getState.pinnedFocus.nonEmpty) settings.getState.pinnedFocus = id
+              upstreamExtra = 0; downstreamExtra = 0; element.navigate(true); refresh(follow = false)
+            } else if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), element.symbol)
+            else DbtDocumentation.show(project, element.symbol)
           }
-        }).expireWith(this).inSmartMode(project).finishOnUiThread(ModalityState.defaultModalityState(), target => target.foreach { element =>
-          if (kind == "focus") {
-            focus = Some(id); if (settings.getState.pinnedFocus.nonEmpty) settings.getState.pinnedFocus = id
-            upstreamExtra = 0; downstreamExtra = 0; element.navigate(true); refresh(follow = false)
-          } else if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), element.symbol)
-          else DbtDocumentation.show(project, element.symbol)
-        }).submit(AppExecutorUtil.getAppExecutorService)
-      case "expand" => if (id == "upstream") { upstreamExtra += 5; refresh(follow = false) } else { downstreamExtra += 5; refresh(follow = false) }
+        }
+      case "expand" => if (id == "upstream") upstreamExtra += 5 else downstreamExtra += 5; refresh(follow = false)
       case "regenerate" => executionRoot.foreach(path => DbtRunConfiguration.edit(project, path, "Generate Docs"))
       case "pin" => settings.getState.pinnedFocus = if (field("value") == "true") focus.getOrElse(id) else ""; refresh(follow = false)
       case "use-configuration-selection" => executionRoot.foreach(path => DbtRunConfiguration.edit(project, path, "Build", id.take(4000), field("value").take(4000)))
@@ -263,5 +255,133 @@ private[ide] object DbtLineageSelection {
   def show(project: Project, root: String, expression: String, excluded: String): Unit = {
     val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
     if (window != null) window.activate(() => project.getMessageBus.syncPublisher(Topic).showSelection(root, expression, excluded))
+  }
+}
+
+private[ide] final case class DbtGraphSnapshot(payload: JsonObject, targets: Map[String, DbtSymbolElement])
+private[ide] object DbtGraphData {
+  private val gson = new Gson
+
+  def build(w: DbtWorkspace, focus: Option[String], upstream: Int, downstream: Int): DbtGraphSnapshot = {
+    val resources = w.symbols.filter(s => DbtResourceData.GraphKinds(s.kind) && s.isEnabled)
+      .groupBy(DbtResourceIdentity.key(w, _)).values.toVector.flatMap { candidates =>
+        val source = candidates.filterNot(_.metadata)
+        val preferred = if (source.nonEmpty) source else candidates
+        val code = preferred.filter(_.isCode)
+        if (code.nonEmpty) code else preferred.filterNot(s => s.isProperty && preferred.exists(t => t != s && !t.isProperty))
+      }
+    // Resource ids include the declaration location when there are genuinely ambiguous declarations.
+    val groups = resources.groupBy(DbtResourceIdentity.key(w, _))
+    def id(s: DbtSymbol): String = {
+      val k = DbtResourceIdentity.key(w, s)
+      if (groups.getOrElse(k, Vector.empty).size > 1) k + "|" + s.id else k
+    }
+    val byId = resources.map(s => id(s) -> s).toMap
+    def canonical(s: DbtSymbol): Vector[String] = groups.getOrElse(DbtResourceIdentity.key(w, s), Vector.empty).map(id)
+    val edges = DbtLineage.edges(w).filter(e => DbtResourceData.GraphKinds(e.from.kind) && DbtResourceData.GraphKinds(e.to.kind))
+      .flatMap(e => for (from <- canonical(e.to); to <- canonical(e.from) if from != to) yield (from, to, e.ambiguous)).distinct
+    val start = focus.filter(byId.contains).orElse(focus.flatMap(k => resources.find(s => DbtResourceIdentity.key(w, s) == k).map(id)))
+    def walk(down: Boolean, depth: Int): Set[String] = {
+      val adjacency = edges.groupMap(e => if (down) e._1 else e._2)(e => if (down) e._2 else e._1)
+      val seen = mutable.Set.empty[String] ++ start
+      var frontier = start.toVector
+      var level = 0
+      while (frontier.nonEmpty && level < depth) {
+        ProgressManager.checkCanceled()
+        frontier = frontier.flatMap(s => adjacency.getOrElse(s, Vector.empty)).filter(seen.add)
+        level += 1
+      }
+      seen.toSet
+    }
+    val visible = if (start.isEmpty) byId.keySet else walk(down = false, upstream) ++ walk(down = true, downstream)
+    val evidence = w.project.getService(classOf[DbtExecutionEvidence])
+    val testDefinitions = DbtTestDiscovery.discover(w)
+    val executionRuns = w.roots.map(w.executionRoot).distinct.map(r => r.directory.getPath -> evidence.runs(r)).toMap
+    val nodes = resources.filter(s => visible(id(s))).sortBy(s => (s.namespace, s.name, s.version)).map { s =>
+      ProgressManager.checkCanceled()
+      val data = DbtResourceData.get(w, s)
+      val executionRoot = w.owner(s).map(w.executionRoot).map(_.directory.getPath)
+      val runs = executionRoot.flatMap(executionRuns.get).getOrElse(Vector.empty)
+      obj("id" -> id(s), "name" -> (s.name + s.version.map(" v" + _).getOrElse("")),
+        "kind" -> s.kind, "schema" -> data.attributes.getOrElse("schema", ""),
+        "package" -> s.namespace, "materialized" -> data.attributes.getOrElse("materialized", ""),
+        "description" -> data.description, "focus" -> start.contains(id(s)),
+        "folder" -> w.owner(s).flatMap(_.relative(s.file.getVirtualFile)).getOrElse("").split('/').dropRight(1).mkString("/"),
+        "tags" -> strings(data.tags), "manifest" -> data.attributes.contains("artifact-project"),
+        "candidate" -> (groups(DbtResourceIdentity.key(w, s)).size > 1),
+        "execution" -> evidence.overlay(s, runs, testDefinitions.filter(t => executionRoot.contains(t.root))))
+    }
+    val links = edges.filter(e => visible(e._1) && visible(e._2)).groupBy(e => (e._1, e._2)).toVector.sortBy(_._1).map {
+      case ((from, to), candidates) => obj("source" -> from, "target" -> to, "candidate" -> candidates.exists(_._3))
+    }
+    val boundary = Vector(false, true).flatMap { down =>
+      val remaining = if (start.isEmpty) Set.empty[String] else walk(down, Int.MaxValue) -- visible
+      Option.when(remaining.nonEmpty)(obj("direction" -> (if (down) "downstream" else "upstream"), "count" -> remaining.size,
+        "anchors" -> strings(edges.collect {
+          case (from, to, _) if visible(from) && remaining(to) => from
+          case (from, to, _) if remaining(from) && visible(to) => to
+        }.distinct)))
+    }
+    val payload = obj("nodes" -> array(nodes), "edges" -> array(links), "boundary" -> array(boundary), "focus" -> start.getOrElse(""),
+      "empty" -> (if (resources.isEmpty) "No dbt resources found. Open a dbt project or check its paths and artifact settings." else ""))
+    DbtGraphSnapshot(payload, byId.view.mapValues(_.element).toMap)
+  }
+
+  def documentation(w: DbtWorkspace, s: DbtSymbol): JsonObject = {
+    val data = DbtResourceData.get(w, s)
+    val columns = data.columns.map { c =>
+      val origins = DbtColumnLineage.upstream(w, s, c.name).map { edge =>
+        obj("resource" -> (edge.input.namespace + "." + edge.input.owner), "column" -> edge.input.name, "direct" -> edge.direct,
+          "kind" -> edge.kind, "complete" -> edge.complete, "expression" -> edge.expression,
+          "path" -> edge.input.file.getVirtualFile.getPath, "offset" -> edge.input.range.getStartOffset)
+      }
+      obj("name" -> c.name, "type" -> c.dataType, "description" -> c.description, "declarations" -> strings(c.declarations),
+        "origins" -> array(origins))
+    }
+    val (upstream, downstream) = DbtDocumentation.dependencies(w, s)
+    obj("name" -> DbtDocumentation.displayName(s), "kind" -> s.kind, "description" -> data.description,
+      "shortName" -> (s.name + s.version.map(" v" + _).getOrElse("")), "identity" -> s.uniqueId,
+      "source" -> s.file.getVirtualFile.getPath, "logical" -> s.relationName,
+      "editable" -> (!s.metadata && s.file.isWritable && w.owner(s).exists(w.packageOwner(_).isEmpty)),
+      "rawSql" -> data.rawSql.orNull, "compiledSql" -> data.compiledSql.orNull,
+      "tags" -> strings(data.tags), "attributes" -> gson.toJsonTree(data.attributes.asJava), "columns" -> array(columns),
+      "tests" -> array(data.tests.map(t => obj("name" -> t.name, "column" -> t.column))),
+      "airflow" -> DbtAirflow.details(w, s), "upstream" -> strings(upstream), "downstream" -> strings(downstream))
+  }
+}
+
+private[ide] object DbtGraphExport {
+  private[ide] val PngFlavor = new DataFlavor("image/png;class=java.io.InputStream", "PNG image")
+
+  private[ide] def copyPng(bytes: Array[Byte], publish: Transferable => Unit): Unit =
+    Option(ImageIO.read(new ByteArrayInputStream(bytes))).foreach { image =>
+      val png = bytes.clone()
+      def content(withImage: Boolean): Transferable = new Transferable {
+        override def getTransferDataFlavors: Array[DataFlavor] =
+          if (withImage) Array(PngFlavor, DataFlavor.imageFlavor) else Array(PngFlavor)
+        override def isDataFlavorSupported(flavor: DataFlavor): Boolean =
+          flavor == PngFlavor || withImage && flavor == DataFlavor.imageFlavor
+        override def getTransferData(flavor: DataFlavor): AnyRef =
+          if (flavor == PngFlavor) new ByteArrayInputStream(png)
+          else if (withImage && flavor == DataFlavor.imageFlavor) image
+          else throw new UnsupportedFlavorException(flavor)
+      }
+      try publish(content(withImage = true))
+      catch {
+        // Some native image mappings fail while enumerating unrelated ImageIO writers.
+        // Publish the existing PNG bytes directly, without changing global providers or mappings.
+        case NonFatal(_) => publish(content(withImage = false))
+      }
+    }
+
+  def show(project: Project, format: String, value: String): Unit = {
+    val kind = if (format == "clipboard") "png" else format
+    val prefix = if (kind == "png") "data:image/png;base64," else "data:image/svg+xml;base64,"
+    if (!Set("png", "svg")(kind) || !value.startsWith(prefix) || value.length > 28000000) return
+    Try(Base64.getDecoder.decode(value.substring(prefix.length))).toOption.foreach { bytes =>
+      if (format == "clipboard") copyPng(bytes, CopyPasteManager.getInstance().setContents)
+      else Option(FileChooserFactory.getInstance().createSaveFileDialog(new FileSaverDescriptor("Export dbt lineage", "Save the visible graph", kind), project)
+        .save("lineage." + kind)).foreach(file => Files.write(file.getFile.toPath, bytes))
+    }
   }
 }
