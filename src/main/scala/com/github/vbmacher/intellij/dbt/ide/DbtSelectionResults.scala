@@ -42,20 +42,14 @@ private[ide] object DbtSelectionResults {
       case Left(error) => Messages.showErrorDialog(project, error, "dbt selection")
       case Right((resources, problems, command)) =>
         val view = show(project, "dbt local selection · " + configuration.target, resources.map(s => s.file -> s.range), problems)
-        view.addButtonToLowerPane(new javax.swing.AbstractAction("Show in Lineage") {
-          override def actionPerformed(event: java.awt.event.ActionEvent): Unit =
-            DbtLineageSelection.show(project, configuration.root,
+        view.addButtonToLowerPane(() => DbtLineageSelection.show(project, configuration.root,
               if (configuration.namedSelector.nonEmpty) "selector:" + configuration.namedSelector
               else if (configuration.selectors.nonEmpty) configuration.selectors.mkString(" ")
               else command.toOption.map(_.request.scope).collect { case DbtCommandScope.Selected(terms) => terms.mkString(" ") }.getOrElse(""),
-              configuration.exclude.mkString(" "))
-        }, false)
+              configuration.exclude.mkString(" ")), "Show in Lineage", false)
         command.foreach { value =>
-          val copy = new javax.swing.AbstractAction("Copy command") {
-            override def actionPerformed(event: java.awt.event.ActionEvent): Unit =
-              DbtImpactUi.copy(com.intellij.util.execution.ParametersListUtil.join(value.arguments.asJava))
-          }
-          view.addButtonToLowerPane(copy, true)
+          view.addButtonToLowerPane(() => DbtImpactUi.copy(com.intellij.util.execution.ParametersListUtil.join(value.arguments.asJava)),
+            "Copy command", true)
         }
     }).submit(AppExecutorUtil.getAppExecutorService)
     ()
