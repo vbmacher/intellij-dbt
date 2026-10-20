@@ -239,8 +239,9 @@ test('lineage actions stay flat and fields remain visible at narrow widths',asyn
     const button=page.getByRole('button',{name,exact:true});
     assert.equal(await button.isVisible(),true);
     const box=await button.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
-    assert.equal(await button.evaluate(e=>e.closest('[role=toolbar]')?.id),'toolbar');
+    assert.equal(await button.evaluate(e=>e.closest('details,[popover]')),null);
    }
+   for(const id of ['apply-filter','clear-filter','use-config'])assert.equal(await page.locator('#'+id).evaluate(e=>e.closest('form')?.id),'filter-form');
    const graph=await page.locator('#main').boundingBox();
    assert.ok(graph.height>430,'The graph retains usable space with visible controls');
   }
@@ -271,5 +272,72 @@ test('native documentation requests are explicit and refreshes do not reopen doc
  await page.evaluate(p=>dbtUpdate(p),fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),0);
  assert.equal(await page.locator('#docs,#handle,#tabs').count(),0);
+ assert.deepEqual(errors,[]);
+});
+
+test('large graphs stay readable and group controls never cover the canvas',async()=>{
+ const nodes=Array.from({length:300},(_,i)=>({id:'large:'+i,name:'customer_orders_'+i,kind:'model',package:'analytics',folder:'models/product_metrics/marts/region_'+(i%30)}));
+ const edges=nodes.flatMap((n,i)=>i%6?[{source:nodes[i-1].id,target:n.id}]:[]);
+ const payload={...fixture,focus:'',nodes,edges,boundary:[]};
+ try{
+  for(const width of [600,1600]){
+   await page.setViewportSize({width,height:500});
+   await page.evaluate(p=>dbtUpdate(p),payload);
+   assert.ok(await page.evaluate(()=>cy.zoom())>=.8);
+   await page.locator('#group-by').selectOption('folder');
+   const groups=await page.locator('#groups').boundingBox(),graph=await page.locator('#graph-pane').boundingBox();
+   assert.ok(groups.x+groups.width<=graph.x,'Groups occupy their own panel');
+   assert.ok(graph.height>=260,'A short tool window retains a usable canvas');
+   assert.ok(await page.locator('#groups').evaluate(e=>e.scrollHeight>e.clientHeight),'Long group lists scroll');
+   assert.ok(await page.evaluate(()=>cy.zoom())>=.8);
+   const firstCard=await page.locator('.card').first().boundingBox();
+   assert.ok(firstCard.width>=200&&firstCard.x>=graph.x&&firstCard.y>=graph.y);
+
+   const lastGroup=page.locator('#groups button').last();
+   await lastGroup.click();
+   assert.ok(await page.locator('#groups').evaluate(e=>e.scrollTop)>0,'Collapsing preserves the group list position');
+   assert.ok(await page.evaluate(()=>cy.zoom())>=.8);
+   await page.locator('#group-by').selectOption('');
+  }
+
+  await page.locator('#fit').click();
+  const overview=await page.evaluate(()=>{const b=cy.elements().renderedBoundingBox();return{zoom:cy.zoom(),b,w:cy.width(),h:cy.height()}});
+  assert.ok(overview.zoom<.8,'Explicit Fit graph provides an overview');
+  assert.ok(overview.b.x1>=0&&overview.b.y1>=0&&overview.b.x2<=overview.w&&overview.b.y2<=overview.h,'The overview fits the full graph');
+  assert.equal(await page.locator('#reset-zoom').innerText(),Math.round(overview.zoom*100)+'%');
+
+  await page.locator('#resource-picker').selectOption('large:299');
+  const inspected=await nodePosition('large:299'),pane=await page.locator('#graph-pane').boundingBox();
+  assert.equal(await page.evaluate(()=>cy.zoom()),1);
+  assert.ok(Math.abs(inspected.x-pane.x-pane.width/2)<1&&Math.abs(inspected.y-pane.y-pane.height/2)<1);
+  await page.locator('#zoom-out').click();await page.locator('#reset-zoom').click();
+  assert.equal(await page.evaluate(()=>cy.zoom()),1);
+  assert.equal(await page.locator('#reset-zoom').innerText(),'100%');
+
+  await page.locator('#search').fill('customer_orders');
+  assert.ok(await page.evaluate(()=>cy.zoom())>=.8,'Broad searches retain readable labels');
+  await page.locator('#selector').fill('customer_orders');
+  await page.evaluate(ids=>dbtShowFilter({expression:'customer_orders',exclude:'',ids,diagnostics:[]}),nodes.map(n=>n.id));
+  assert.ok(await page.evaluate(()=>cy.zoom())>=.8,'Selector changes retain readable labels');
+  await page.evaluate(p=>dbtUpdate({...p,focus:'large:150',nodes:p.nodes.map(n=>({...n,focus:n.id==='large:150'}))}),payload);
+  const focused=await nodePosition('large:150');
+  assert.ok(Math.abs(focused.x-pane.x-pane.width/2)<1&&Math.abs(focused.y-pane.y-pane.height/2)<1,'New editor focus is centered');
+  assert.deepEqual(errors,[]);
+ }finally{
+  await page.locator('#clear-search').click();await page.locator('#clear-filter').click();
+  await page.locator('#group-by').selectOption('');
+  await page.setViewportSize({width:1400,height:850});await page.evaluate(p=>dbtUpdate(p),fixture);
+ }
+});
+
+test('native icon refresh preserves visible action labels and clearing selection updates context',async()=>{
+ const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=';
+ await page.evaluate(({fixture,image})=>dbtUpdate({...fixture,icons:Object.fromEntries(['fit','apply-filter','clear-filter','use-config','export-png','export-svg','zoom-in'].map(id=>[id,image]))}),{fixture,image});
+ for(const [id,text]of [['fit','Fit graph'],['apply-filter','Apply'],['clear-filter','Clear'],['use-config','Run configuration…'],['export-png','PNG'],['export-svg','SVG']])assert.equal(await page.locator('#'+id).innerText(),text);
+ assert.equal(await page.locator('#zoom-in img').count(),1);
+ await page.locator('#resource-picker').selectOption('model');
+ await page.mouse.click(10,820);
+ assert.equal(await page.locator('#resource-picker').inputValue(),'');
+ assert.doesNotMatch(await page.locator('#selection-context').innerText(),/Selected:/);
  assert.deepEqual(errors,[]);
 });

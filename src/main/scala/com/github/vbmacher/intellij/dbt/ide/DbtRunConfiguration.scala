@@ -318,6 +318,7 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
   private val refresh = new JCheckBox("Full Refresh (Run / Build)")
   private var configuration: DbtRunConfiguration = _
   private var resolved = Option.empty[(Vector[String], Vector[String])]
+  private var disposed = false
   root.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir().withTitle("Choose owning dbt project"))
   scope.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFileOrDir().withTitle("Choose dbt model or directory"))
   executable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle("Choose dbt executable or wrapper"))
@@ -365,9 +366,11 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       resolving.action = "Resolve Selection"
       resolving.setName("dbt ls · " + DbtUi.name(source.root))
       resolving.selectionResolved = Some(ids => {
-        val current = draft()
-        val now = ReadAction.computeBlocking[Vector[String], RuntimeException](() => current.sourceKey(DbtWorkspace.get(project)))
-        if (!com.intellij.openapi.util.Disposer.isDisposed(DbtRunEditor.this) && key == now) resolved = Some(key -> ids)
+        if (!disposed) {
+          val current = draft()
+          val now = ReadAction.computeBlocking[Vector[String], RuntimeException](() => current.sourceKey(DbtWorkspace.get(project)))
+          if (key == now) resolved = Some(key -> ids)
+        }
       })
       DbtRunConfiguration.resolveSelection(project, resolving)
     })
@@ -407,5 +410,8 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
     value.namedSelector = named.getText.trim; value.action = action.getSelectedItem.toString
     value.fullRefresh = refresh.isSelected; value.captured = None; value.cliSelection = resolved
   }
-  override def disposeEditor(): Unit = { Vector(root, scope, executable, profiles).foreach(_.dispose()); super.disposeEditor() }
+  override def disposeEditor(): Unit = {
+    disposed = true
+    Vector(root, scope, executable, profiles).foreach(_.dispose()); super.disposeEditor()
+  }
 }

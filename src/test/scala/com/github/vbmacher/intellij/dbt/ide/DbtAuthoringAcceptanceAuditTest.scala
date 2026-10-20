@@ -225,7 +225,7 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtCodeInsightTestCase {
           try ProgressManager.getInstance.runProcess(new Runnable {
             override def run(): Unit = {
               indicator.cancel()
-              com.intellij.openapi.application.ReadAction.run(() => action())
+              com.intellij.openapi.application.ReadAction.runBlocking(() => action())
             }
           }, indicator) catch { case _: ProcessCanceledException => canceled.set(true) }
         }

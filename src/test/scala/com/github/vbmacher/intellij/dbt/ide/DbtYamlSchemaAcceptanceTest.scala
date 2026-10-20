@@ -13,10 +13,10 @@ final class DbtYamlSchemaAcceptanceTest extends DbtCodeInsightTestCase {
     val service = com.jetbrains.jsonSchema.ide.JsonSchemaService.Impl.get(getProject)
     val file = myFixture.getFile
     val schema = Option(service.getSchemaObject(file))
-    val modelSchema = schema.flatMap(s => Option(s.getPropertyByName("models")))
-    val items = modelSchema.flatMap(s => Option(s.getItemsSchema).orElse(Option(s.getAnyOf).toVector.flatMap(_.asScala).flatMap(s => Option(s.getItemsSchema)).headOption))
-    val resource = items.flatMap(s => Option(s.resolveRefSchema(service)))
-    val resolved = resource.map(_.getPropertyNames.asScala.toVector)
+    val resources = schema.toVector.flatMap(s => new com.jetbrains.jsonSchema.impl.JsonSchemaResolver(getProject, s,
+      com.intellij.json.pointer.JsonPointerPosition.parsePointer("/models/0"),
+      null: com.jetbrains.jsonSchema.extension.adapters.JsonValueAdapter).resolve().asScala)
+    val resolved = resources.flatMap(_.getPropertyNames.asScala).distinct
     s"resourceProperties=$resolved; service=${service.getClass.getName}; applicable=${service.isApplicableToFile(file.getVirtualFile)}; providers=${providers(file)}; schemas=${service.getSchemaFilesForFile(file.getVirtualFile)}; schemaLoaded=${service.getSchemaObject(file) != null}; source=${file.getText}"
   }
   private def suggestions(): Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet

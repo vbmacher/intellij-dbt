@@ -15,11 +15,14 @@ appearance and [installation requirements](installation.md) for browser support.
 
 - Click a card to select it, open native Documentation and dim unrelated resources.
   The **Focus** label marks graph focus; a checkmark and border mark selection.
-  **Inspect** provides keyboard access to visible resources. Enter selects a focused
-  card; Shift+Enter changes graph focus and opens its definition.
+  **Inspect** centers a visible resource at a readable size and opens its details.
+  Enter selects a focused card; Shift+Enter changes graph focus and opens its definition.
 - Double-click a card to focus it and open its definition.
 - Drag cards to move them or empty space to pan. Use the mouse wheel, **Zoom in**,
-  **Zoom out** and **Fit graph** to adjust the view.
+  **Zoom out** and **Fit graph** to adjust the view. Automatic views keep cards
+  at 80–100% zoom; larger graphs extend beyond the canvas. **Fit graph** shows the
+  full overview. Click the zoom percentage to return to 100% around the selected
+  or focused resource.
 - Search by resource or package name. **Clear search** returns to the selection.
 - Click **+ N more** to reveal five more dependency levels in that direction.
 - **Pin focus** stops editor changes from moving graph focus. Double-clicking a
@@ -29,23 +32,24 @@ appearance and [installation requirements](installation.md) for browser support.
 
 ### Filter, group and share
 
-Enter **Selection** and **Exclude**, then click **Apply filter**. Expressions work
+Enter **Selection** and **Exclude**, then click **Apply**. Expressions work
 as in [selection review](execution.md#selection-and-state). Direct neighbors that do
 not match remain as dashed **Filtered boundary** cards; other omitted resources
-are counted as hidden. **Clear filter** restores the graph.
+are counted as hidden. **Clear** restores the graph.
 
-**Use in Run Configuration** opens a native dbt configuration with the graph's
+**Run configuration…** opens a native dbt configuration with the graph's
 Selection and Exclude values. Review and save it there. Filtering or clearing the
 graph does not modify existing Run configurations. **Regenerate Docs** opens a
 Generate Docs configuration for the graph's execution project; it does not launch
 that command.
 
 Use **Group by** to choose **Schema**, **Folder** or **Tag (first alphabetically)**.
-Click a group button to collapse or expand it. A resource with several tags appears
-under its alphabetically first tag.
+The scrollable **Groups** panel appears beside the graph. Click a group button
+to collapse or expand it; the view moves to that group. A resource with several
+tags appears under its alphabetically first tag.
 
 Click or drag in the **Minimap** to navigate; arrow keys pan when it has focus.
-Clear **Minimap** to hide it. **Export PNG**, **Export SVG** and **Copy image** capture
+Clear **Minimap** to hide it. **PNG**, **SVG** and **Copy image** capture
 the graph as filtered and collapsed; **Include legend** adds a legend. If a graph is
 too large for PNG, collapse groups, narrow its filter or use SVG.
 
