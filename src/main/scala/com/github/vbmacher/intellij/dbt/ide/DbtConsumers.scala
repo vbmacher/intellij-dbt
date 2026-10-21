@@ -26,15 +26,22 @@ final class DbtConsumersState {
   @BeanProperty var airflowPaths: java.util.List[String] = new java.util.ArrayList[String]()
   @BeanProperty var airflowUrl: String = ""
 }
+
 @Service(Array(Service.Level.PROJECT))
 @State(name = "DbtIntegrations", storages = Array(new Storage(StoragePathMacros.WORKSPACE_FILE)))
 final class DbtConsumersSettings extends PersistentStateComponent[DbtConsumersState] {
   private var state = new DbtConsumersState
+
   override def getState: DbtConsumersState = state
-  override def loadState(value: DbtConsumersState): Unit = { state = value }
+
+  override def loadState(value: DbtConsumersState): Unit = {
+    state = value
+  }
 }
+
 private[dbt] final case class DbtConsumer(name: String, kind: String, owner: String, url: Option[String],
   resource: String, column: Option[String], confidence: String, evidence: String)
+
 private[dbt] final case class DbtConsumersCache(consumers: Vector[DbtConsumer], refreshedAt: Long, status: String) {
   def stale: Boolean = refreshedAt == 0 || System.currentTimeMillis() - refreshedAt > 15 * 60 * 1000
 }
@@ -43,21 +50,33 @@ private[dbt] final case class DbtConsumersCache(consumers: Vector[DbtConsumer], 
 @Service(Array(Service.Level.PROJECT))
 final class DbtConsumers(project: Project) {
   @volatile private var cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations.")
+
   def snapshot: DbtConsumersCache = cache
+
   private def credential: CredentialAttributes = new CredentialAttributes("dbt Workspace Metabase " + project.getLocationHash)
+
   private[ide] def apiKey: String = Option(PasswordSafe.getInstance().getPassword(credential)).getOrElse("")
+
   def hasSecret: Boolean = apiKey.nonEmpty
+
   def setSecret(secret: String): Unit = PasswordSafe.getInstance().set(credential, if (secret.isEmpty) null else new Credentials("api-key", secret))
-  def clear(): Unit = { cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Refresh Metabase metadata explicitly.") }
+
+  def clear(): Unit = {
+    cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Refresh Metabase metadata explicitly.")
+  }
+
   def refresh(w: DbtWorkspace): DbtConsumersCache = refresh(w, Duration.ofSeconds(10))
+
   private[ide] def refresh(w: DbtWorkspace, requestTimeout: Duration): DbtConsumersCache = try {
     val url = project.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl
     val key = Some(apiKey).filter(_.nonEmpty)
     if (DbtAirflow.safeUrl(url).isEmpty || key.isEmpty) {
-      cache = cache.copy(status = "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations."); cache
+      cache = cache.copy(status = "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations.");
+      cache
     } else {
       val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build()
       val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60)
+
       def get(path: String): Either[String, JsonElement] = try {
         com.intellij.openapi.progress.ProgressManager.checkCanceled()
         if (System.nanoTime() > deadline) return Left("Metabase refresh exceeded the 60 second limit.")
@@ -69,7 +88,10 @@ final class DbtConsumers(project: Project) {
         val body = java.util.concurrent.CompletableFuture.supplyAsync(() => stream.readNBytes(4000001))
         val bytes = try {
           body.get(math.max(1L, requestDeadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS)
-        } finally { body.cancel(true); stream.close() }
+        } finally {
+          body.cancel(true);
+          stream.close()
+        }
         if (response.statusCode() == 401 || response.statusCode() == 403) Left("Permission denied. Check the Metabase API key and metadata permissions.")
         else if (response.statusCode() != 200) Left("Metabase metadata request failed (HTTP " + response.statusCode() + ").")
         else if (bytes.length > 4000000) Left("Metabase response exceeds the 4 MB metadata limit.")
@@ -78,6 +100,7 @@ final class DbtConsumers(project: Project) {
         case canceled: com.intellij.openapi.progress.ProcessCanceledException => throw canceled
         case NonFatal(_) => Left("Metabase is unavailable or returned invalid metadata.")
       }
+
       val refreshed = for {
         cards <- get("/api/card")
         databases <- get("/api/database")
@@ -85,15 +108,19 @@ final class DbtConsumers(project: Project) {
           val list = if (databases.isJsonArray) databases.getAsJsonArray.asScala.toVector
           else Option(databases.getAsJsonObject.getAsJsonArray("data")).toVector.flatMap(_.asScala)
           if (list.size > 20) Left("Metabase exceeds the 20 database metadata limit.")
-          else list.foldLeft[Either[String, Vector[JsonObject]]](Right(Vector.empty)) { (acc, db) => for {
-            previous <- acc
-            metadata <- get("/api/database/" + db.getAsJsonObject.get("id").getAsInt + "/metadata")
-          } yield previous ++ Option(metadata.getAsJsonObject.getAsJsonArray("tables")).toVector.flatMap(_.asScala).map(_.getAsJsonObject) }
+          else list.foldLeft[Either[String, Vector[JsonObject]]](Right(Vector.empty)) { (acc, db) =>
+            for {
+              previous <- acc
+              metadata <- get("/api/database/" + db.getAsJsonObject.get("id").getAsInt + "/metadata")
+            } yield previous ++ Option(metadata.getAsJsonObject.getAsJsonArray("tables")).toVector.flatMap(_.asScala).map(_.getAsJsonObject)
+          }
         }
         _ <- Either.cond(cards.isJsonArray && cards.getAsJsonArray.size() <= 1000, (), "Metabase question response is unsupported or exceeds 1000 questions.")
         dashboards <- get("/api/dashboard")
       } yield {
-        val questions = DbtUi.read { DbtConsumers.mapQuestions(DbtWorkspace.get(project), url, cards.getAsJsonArray.asScala.toVector.map(_.getAsJsonObject), tables) }
+        val questions = DbtUi.read {
+          DbtConsumers.mapQuestions(DbtWorkspace.get(project), url, cards.getAsJsonArray.asScala.toVector.map(_.getAsJsonObject), tables)
+        }
         val list = if (dashboards.isJsonArray) dashboards.getAsJsonArray.asScala.toVector else Vector.empty
         val dashboardConsumers = list.take(100).flatMap { d =>
           val dashboard = d.getAsJsonObject
@@ -108,13 +135,15 @@ final class DbtConsumers(project: Project) {
         DbtConsumersCache((questions ++ dashboardConsumers).distinct, System.currentTimeMillis(),
           if (list.size > 100) "Partial: first 100 dashboards only." else "Metadata refreshed. Dashboard details unavailable to this key are omitted.")
       }
-      cache = refreshed.fold(error => cache.copy(status = error), identity); cache
+      cache = refreshed.fold(error => cache.copy(status = error), identity);
+      cache
     }
   } catch {
     case canceled: com.intellij.openapi.progress.ProcessCanceledException => throw canceled
     case NonFatal(_) => cache = cache.copy(status = "Metabase returned unsupported or invalid metadata; previous cache retained."); cache
   }
 }
+
 private[dbt] object DbtConsumers {
   def exposures(w: DbtWorkspace, resource: Option[DbtSymbol] = None): Vector[DbtConsumer] = {
     val candidates = resource.toVector.flatMap(s => s +: DbtLineage.traverse(DbtLineage.edges(w), s, downstream = true, 100))
@@ -126,14 +155,18 @@ private[dbt] object DbtConsumers {
         DbtResourceIdentity.key(w, s), None, (if (s.isStale) "declared (stale local artifact)" else if (s.metadata) "declared (local artifact)" else "declared"), s.file.getVirtualFile.getPath + ":" + s.range.getStartOffset)
     }
   }
+
   private def normalize(s: String): String = s.replace("\"", "").replace("`", "").toLowerCase(java.util.Locale.ROOT)
+
   private[ide] def mapQuestions(w: DbtWorkspace, base: String, cards: Vector[JsonObject], tables: Vector[JsonObject]): Vector[DbtConsumer] = {
     val relations = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && !s.isProperty).map(s => s -> DbtResourceData.get(w, s))
+
     def physical(resource: DbtSymbol, data: DbtResourceData): Option[String] = {
       val attrs = data.attributes
       attrs.get("relation_name").orElse(for (db <- attrs.get("database"); schema <- attrs.get("schema"))
         yield db + "." + schema + "." + attrs.getOrElse("identifier", attrs.getOrElse("alias", resource.name)))
     }
+
     cards.flatMap { card =>
       val query = Option(card.getAsJsonObject("dataset_query"))
       val native = query.flatMap(q => Option(q.getAsJsonObject("native"))).map(n => string(n, "query")).getOrElse("")
@@ -165,12 +198,14 @@ private[dbt] object DbtConsumers {
       }
     }
   }
+
   private def mutableFieldIds(roots: Vector[JsonObject]): Set[String] = {
     def walk(e: JsonElement, depth: Int): Vector[String] = if (depth > 30) Vector.empty else if (e.isJsonArray) {
       val xs = e.getAsJsonArray.asScala.toVector
       (if (xs.headOption.exists(x => x.isJsonPrimitive && x.getAsString == "field")) xs.lift(1).filter(_.isJsonPrimitive).map(_.getAsString).toVector else Vector.empty) ++
         xs.flatMap(walk(_, depth + 1))
     } else if (e.isJsonObject) e.getAsJsonObject.entrySet().asScala.toVector.flatMap(x => walk(x.getValue, depth + 1)) else Vector.empty
+
     roots.flatMap(walk(_, 0)).toSet
   }
 }
@@ -178,14 +213,20 @@ private[dbt] object DbtConsumers {
 final class DbtConsumersAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit =
     DbtEditorAction.caret(event.getDataContext).foreach { case (project, source, offset) =>
-      DbtUi.background(project, "Read dbt consumers") { _ => DbtUi.read {
-        val w = DbtWorkspace.get(project); val focus = DbtResourceAction.at(w, source, offset)
-        val columns = focus.toVector.flatMap(s => DbtResourceData.get(w, s).columns.map(_.name)).distinct
-        (w, focus, DbtConsumers.exposures(w, focus), columns)
-      } } { case (w, focus, exposures, columns) =>
+      DbtUi.background(project, "Read dbt consumers") { _ =>
+        DbtUi.read {
+          val w = DbtWorkspace.get(project);
+          val focus = DbtResourceAction.at(w, source, offset)
+          val columns = focus.toVector.flatMap(s => DbtResourceData.get(w, s).columns.map(_.name)).distinct
+          (w, focus, DbtConsumers.exposures(w, focus), columns)
+        }
+      } { case (w, focus, exposures, columns) =>
         val service = project.getService(classOf[DbtConsumers])
-        val status = new JLabel; val list = new JList[String]; var values = Vector.empty[DbtConsumer]
+        val status = new JLabel;
+        val list = new JList[String];
+        var values = Vector.empty[DbtConsumer]
         val column = new JComboBox[String]((Vector("All columns") ++ columns).toArray)
+
         def update(): Unit = {
           val cache = service.snapshot
           val selectedColumn = Option(column.getSelectedItem).map(_.toString).filter(_ != "All columns")
@@ -193,27 +234,38 @@ final class DbtConsumersAction extends AnAction {
             selectedColumn.forall(name => c.column.isEmpty || c.column.contains(name)))
           list.setListData(values.map(c => c.name + " · " + c.kind + " · Owner: " + c.owner + " · " + c.confidence +
             (if (selectedColumn.nonEmpty && c.column.isEmpty) " · model-level; column use unknown"
-              else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence).toArray)
+            else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence).toArray)
           status.setText(cache.status + " Refreshed: " +
             (if (cache.refreshedAt == 0) "never" else new java.util.Date(cache.refreshedAt).toString) +
             (if (cache.stale) " (stale)" else "") + (if (values.isEmpty) " No consumers found." else ""))
         }
+
         column.addActionListener(_ => update())
-        val header = new JPanel(new BorderLayout); header.add(status, BorderLayout.NORTH); header.add(column, BorderLayout.SOUTH)
+        val header = new JPanel(new BorderLayout);
+        header.add(status, BorderLayout.NORTH);
+        header.add(column, BorderLayout.SOUTH)
         update()
         DbtUi.dialog(project, "dbt Consumers" + focus.map(s => ": " + s.uniqueId).getOrElse(""), new JScrollPane(list), north = header,
           south = DbtUi.buttons(
-            DbtUi.button("Open consumer") { DbtUi.selected(list, values).flatMap(_.url).foreach(BrowserUtil.browse) },
-            DbtUi.button("Go to exposure definition") { DbtUi.selected(list, values).foreach { consumer =>
-              w.symbols.find(s => DbtResourceIdentity.key(w, s) == consumer.resource && s.kind == "exposure")
-                .foreach(_.element.navigate(true))
-            } },
+            DbtUi.button("Open consumer") {
+              DbtUi.selected(list, values).flatMap(_.url).foreach(BrowserUtil.browse)
+            },
+            DbtUi.button("Go to exposure definition") {
+              DbtUi.selected(list, values).foreach { consumer =>
+                w.symbols.find(s => DbtResourceIdentity.key(w, s) == consumer.resource && s.kind == "exposure")
+                  .foreach(_.element.navigate(true))
+              }
+            },
             DbtUi.button("Refresh Metabase metadata") {
               DbtUi.background(project, "Refresh Metabase consumers") { _ =>
-                service.refresh(DbtUi.read { DbtWorkspace.get(project) })
+                service.refresh(DbtUi.read {
+                  DbtWorkspace.get(project)
+                })
               }(_ => update())
             },
-            DbtUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) }))
+            DbtUi.button("Configure…") {
+              DbtSettingsConfigurable.showIntegrations(project)
+            }))
       }
     }
 }

@@ -25,8 +25,11 @@ private[dbt] trait DbtReferenceProvider {
   def relationRanges(sql: String): Vector[TextRange] = Vector.empty
 
   def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[DbtSqlAnalysis] = None
+
   def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] = None
+
   def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = None
+
   def withPrefix(text: String, end: Int): Option[String] = None
 }
 
@@ -39,11 +42,13 @@ private[dbt] object DbtReferenceProvider {
 }
 
 /** Every resolver produces candidates; ambiguity is preserved for the IDE's declaration chooser. */
-final class DbtNavigationReference private[dbt] (file: PsiFile, range: TextRange, val candidates: Vector[PsiElement], val label: String,
+final class DbtNavigationReference private[dbt](file: PsiFile, range: TextRange, val candidates: Vector[PsiElement], val label: String,
   val evidence: Vector[String] = Vector.empty, val unresolvedMessage: Option[String] = None)
   extends PsiPolyVariantReferenceBase[PsiFile](file, range, true) {
   override def multiResolve(incompleteCode: Boolean): Array[ResolveResult] = candidates.distinct.map(new PsiElementResolveResult(_)).toArray
+
   override def getCanonicalText: String = label
+
   override def handleElementRename(newName: String): PsiElement = {
     val workspace = DbtWorkspace.get(file.getProject)
     val models = candidates.collect { case e: DbtSymbolElement if e.symbol.kind == "model" => e.symbol }
@@ -56,6 +61,7 @@ final class DbtNavigationReference private[dbt] (file: PsiFile, range: TextRange
     PsiDocumentManager.getInstance(file.getProject).commitDocument(document)
     file
   }
+
   override def isReferenceTo(element: PsiElement): Boolean = candidates.exists { candidate =>
     (candidate, element) match {
       case (a: DbtSymbolElement, _) if a.symbol.kind == "documentation" => false
@@ -74,9 +80,12 @@ final class DbtNavigationReference private[dbt] (file: PsiFile, range: TextRange
 /** The references of dbt files, cached until PSI or VFS changes. */
 private[dbt] object DbtNavigation {
   def withPrefix(text: String, end: Int): Option[String] = DbtReferenceProvider.first(_.withPrefix(text, end))
+
   def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = DbtReferenceProvider.first(_.projectedColumns(sql))
+
   def relationRanges(sql: String): Vector[TextRange] =
     DbtReferenceProvider.EP.getExtensionList.asScala.toVector.flatMap(_.relationRanges(sql)).distinct
+
   private val ProjectFiles = Set(DbtWorkspace.ProjectFileName, "profiles.yml", "packages.yml", "package-lock.yml", "dependencies.yml",
     "selectors.yml", "vars.yml")
   private val ReferenceCache = Key.create[CachedValue[Vector[DbtNavigationReference]]]("dbt.navigation.references")
@@ -117,12 +126,19 @@ private[dbt] object DbtNavigation {
 private[dbt] final case class DbtSqlColumn(name: String, range: TextRange, inputs: Vector[DbtSymbol],
   direct: Boolean, expression: String, complete: Boolean, dataType: Option[String] = None, outputAlias: Boolean = false,
   contextInputs: Vector[(DbtSymbol, String)] = Vector.empty)
+
 private[dbt] final case class DbtSqlProblem(range: TextRange, message: String)
+
 private[dbt] final case class DbtSqlSuppressionComment(range: TextRange, ids: String, file: Boolean)
+
 private[dbt] final case class DbtSqlSuppressionStatement(range: TextRange, first: Int)
+
 private[dbt] final case class DbtSqlSuppressionLayout(statements: Vector[DbtSqlSuppressionStatement], comments: Vector[DbtSqlSuppressionComment])
+
 private[dbt] final case class DbtSqlScope(range: TextRange, relations: Vector[(String, Vector[DbtSymbol])], complete: Boolean)
+
 private[dbt] final case class DbtCte(name: String, range: TextRange, body: TextRange, dependencies: Vector[String], sql: String)
+
 private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scopes: Vector[DbtSqlScope],
   ctes: Vector[DbtCte], wildcards: Vector[(TextRange, Vector[String])], issues: Vector[String],
   intermediates: Vector[DbtSqlColumn] = Vector.empty, problems: Vector[DbtSqlProblem] = Vector.empty,
@@ -134,10 +150,15 @@ private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scop
 private[dbt] object DbtSqlAnalysis {
   def suppressionLayout(file: PsiFile): DbtSqlSuppressionLayout =
     DbtReferenceProvider.first(_.sqlSuppressionLayout(file)).getOrElse(DbtSqlSuppressionLayout(Vector.empty, Vector.empty))
+
   def forCompletion(w: DbtWorkspace, file: PsiFile, offset: Int): Option[DbtSqlAnalysis] =
     DbtReferenceProvider.first(_.sqlAnalysis(file, w, Some(offset)))
+
   private val Cache = Key.create[ConcurrentHashMap[String, DbtSqlAnalysis]]("dbt.sql.analysis")
-  private val active = new ThreadLocal[Set[String]] { override def initialValue(): Set[String] = Set.empty }
+  private val active = new ThreadLocal[Set[String]] {
+    override def initialValue(): Set[String] = Set.empty
+  }
+
   def get(w: DbtWorkspace, file: PsiFile): Option[DbtSqlAnalysis] = {
     ProgressManager.checkCanceled()
     val path = Option(file.getVirtualFile).map(_.getPath).getOrElse("")
@@ -146,14 +167,17 @@ private[dbt] object DbtSqlAnalysis {
       val cache = w.synchronized {
         Option(w.getUserData(Cache)).getOrElse {
           val created = new ConcurrentHashMap[String, DbtSqlAnalysis]()
-          w.putUserData(Cache, created); created
+          w.putUserData(Cache, created);
+          created
         }
       }
       Option(cache.get(path)).orElse {
-        val previous = active.get(); active.set(previous + path)
+        val previous = active.get();
+        active.set(previous + path)
         try {
           val result = DbtReferenceProvider.first(_.sqlAnalysis(file, w))
-          result.foreach(cache.put(path, _)); result
+          result.foreach(cache.put(path, _));
+          result
         } finally active.set(previous)
       }
     }

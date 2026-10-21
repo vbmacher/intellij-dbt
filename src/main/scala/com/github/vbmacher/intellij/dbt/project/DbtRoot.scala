@@ -24,6 +24,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def yaml(path: String): Option[YAMLMapping] = psiFile(path).flatMap(DbtYaml.mapping)
 
   private var executionOptions: Option[DbtRunOptions] = None
+
   def runOptions: DbtRunOptions = executionOptions.getOrElse(DbtProjectSettings.get(config.getProject).options(directory.getPath))
 
   /** Execution overrides do not change this project's declaration/package identity. */

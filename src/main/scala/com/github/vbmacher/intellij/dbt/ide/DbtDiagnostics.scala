@@ -36,12 +36,15 @@ private[ide] object DbtUnresolvedAnnotator {
 }
 
 private[ide] final case class DbtDiagnostic(range: TextRange, message: String)
+
 private[ide] final case class DbtAnnotationInput(pointer: SmartPsiElementPointer[PsiFile], stamp: Long)
+
 private[ide] final case class DbtAnnotationResult(stamp: Long, diagnostics: Vector[DbtDiagnostic])
 
 /** Workspace resolution runs in the external annotator's cancellable background phase. */
 final class DbtUnresolvedAnnotator extends ExternalAnnotator[DbtAnnotationInput, DbtAnnotationResult] {
   override def getPairedBatchInspectionShortName: String = "DbtUnresolvedReference"
+
   override def collectInformation(file: PsiFile): DbtAnnotationInput =
     if (DbtUnresolvedAnnotator.Extensions(Option(file.getVirtualFile).flatMap(f => Option(f.getExtension)).getOrElse(""))) {
       file.getProject.getService(classOf[DbtHighlightingRefresh])
@@ -112,8 +115,10 @@ final class DbtUnresolvedReferenceInspection extends LocalInspectionTool {
 private[ide] final case class DbtCreation(kind: String, name: String, source: Option[String], root: DbtRoot,
   file: Option[PsiFile], before: String, after: String, path: String,
   origin: Option[(PsiFile, TextRange, String)] = None)
+
 private[ide] object DbtCreateResourceFix {
   private def properties(name: String): String = s"version: 2\nmodels:\n  - name: $name\n    columns:\n      - name: id\n"
+
   def proposal(file: PsiFile, offset: Int): Option[DbtCreation] = {
     val w = DbtWorkspace.get(file.getProject)
     for {
@@ -126,11 +131,12 @@ private[ide] object DbtCreateResourceFix {
           .filter(DbtSyntax.isIdentifier).map(name => DbtCreation("model", name, None, root, None, "", "select\n    1 as id\n", folder + "/" + name + ".sql"))
         case "source" | "builtins.source" if call.positional.size == 2 =>
           for (source <- call.literal(0).filter(DbtSyntax.isIdentifier); table <- call.literal(1).filter(DbtSyntax.isIdentifier);
-            result <- sourcePlan(w, root, folder, source, table)) yield result
+               result <- sourcePlan(w, root, folder, source, table)) yield result
         case _ => None
       }
     } yield result.copy(origin = Some((file, ref.getRangeInElement, file.getText)))
   }
+
   private def sourcePlan(w: DbtWorkspace, root: DbtRoot, folder: String, source: String, table: String): Option[DbtCreation] = {
     val parents = w.declarations(Set("source"), source, root).filter(s => !s.metadata && w.owner(s).contains(root))
     if (parents.size > 1 || parents.exists(s => !s.file.isWritable)) None
@@ -154,6 +160,7 @@ private[ide] object DbtCreateResourceFix {
           Some(DbtCreation("source", table, Some(source), root, None, "", s"version: 2\nsources:\n  - name: $source\n    tables:\n      - name: $table\n", path))
     }
   }
+
   def create(proposal: DbtCreation, relativePath: String, includeProperties: Boolean = false,
     logicalName: Option[String] = None): Either[String, Unit] = {
     val path = java.nio.file.Paths.get(relativePath).normalize()
@@ -168,7 +175,7 @@ private[ide] object DbtCreateResourceFix {
       })
     val propertiesPath = path.resolveSibling(name + ".yml").toString.replace('\\', '/')
     val wrongExtension = if (proposal.kind == "model") path.getFileName.toString != name + ".sql"
-      else !Set("yml", "yaml")(path.getFileName.toString.split("\\.").last)
+    else !Set("yml", "yaml")(path.getFileName.toString.split("\\.").last)
     if (!DbtSyntax.isIdentifier(name) || proposal.kind != "model" && name != proposal.name) Left("Choose a valid dbt model name.")
     else if (wrongExtension) Left("Use the model name followed by .sql, or a .yml/.yaml source file.")
     else if (!valid) Left("Choose a file inside a configured model path, outside generated and ignored files.")
@@ -191,7 +198,8 @@ private[ide] object DbtCreateResourceFix {
         override def run(): Unit = proposal.file match {
           case Some(file) =>
             val manager = PsiDocumentManager.getInstance(file.getProject)
-            manager.getDocument(file).setText(proposal.after); manager.commitAllDocuments()
+            manager.getDocument(file).setText(proposal.after);
+            manager.commitAllDocuments()
           case None =>
             val parent = Option(path.getParent).fold(proposal.root.directory)(p => VfsUtil.createDirectoryIfMissing(proposal.root.directory, p.toString))
             val created = parent.createChildData(this, path.getFileName.toString)
@@ -211,9 +219,13 @@ private[ide] object DbtCreateResourceFix {
 
 final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
   override def getText: String = "Create missing dbt resource"
+
   override def getFamilyName: String = "dbt resource creation"
+
   override def startInWriteAction(): Boolean = false
+
   override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean = DbtCreateResourceFix.proposal(file, offset).nonEmpty
+
   override def invoke(project: Project, editor: Editor, file: PsiFile): Unit = DbtCreateResourceFix.proposal(file, offset).foreach { proposal =>
     val dialog = new DialogWrapper(project) {
       val path = new JBTextField(proposal.path, 55)
@@ -223,15 +235,22 @@ final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
       val properties = new JCheckBox("Add model properties beside SQL")
       properties.setVisible(proposal.kind == "model")
       val content = new JPanel(new BorderLayout)
-      val preview = new JBTextArea(proposal.after, 12, 70); preview.setEditable(false)
+      val preview = new JBTextArea(proposal.after, 12, 70);
+      preview.setEditable(false)
       content.add(new JBLabel(s"Project: ${proposal.root.name} · ${proposal.kind} ${proposal.source.map(_ + ".").getOrElse("")}${proposal.name}"), BorderLayout.NORTH)
       val fields = new JPanel(new java.awt.GridLayout(3, 2))
-      fields.add(new JBLabel("Logical name:")); fields.add(name)
-      fields.add(new JBLabel("Destination:")); fields.add(path)
-      fields.add(properties); fields.add(new JBLabel(""))
-      content.add(fields, BorderLayout.CENTER); content.add(new com.intellij.ui.components.JBScrollPane(preview), BorderLayout.SOUTH)
+      fields.add(new JBLabel("Logical name:"));
+      fields.add(name)
+      fields.add(new JBLabel("Destination:"));
+      fields.add(path)
+      fields.add(properties);
+      fields.add(new JBLabel(""))
+      content.add(fields, BorderLayout.CENTER);
+      content.add(new com.intellij.ui.components.JBScrollPane(preview), BorderLayout.SOUTH)
+
       def updatePreview(): Unit = preview.setText(proposal.after +
         (if (properties.isSelected) s"\n--- ${name.getText}.yml ---\n" + DbtCreateResourceFix.properties(name.getText) else ""))
+
       name.getDocument.addDocumentListener(new com.intellij.ui.DocumentAdapter {
         override def textChanged(event: javax.swing.event.DocumentEvent): Unit = {
           path.setText(path.getText.substring(0, path.getText.lastIndexOf('/') + 1) + name.getText + ".sql")
@@ -239,8 +258,12 @@ final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
         }
       })
       properties.addActionListener(_ => updatePreview())
-      setTitle("Create dbt resource"); setOKButtonText("Create"); init()
+      setTitle("Create dbt resource");
+      setOKButtonText("Create");
+      init()
+
       override def createCenterPanel(): JComponent = content
+
       override def doOKAction(): Unit = DbtCreateResourceFix.create(proposal, path.getText.trim, properties.isSelected, Some(name.getText.trim)) match {
         case Right(_) => super.doOKAction()
         case Left(error) => setErrorText(error)
@@ -256,14 +279,17 @@ final class DbtYamlSchemaProvider extends JsonSchemaProviderFactory {
     (for (kind <- Vector("project", "packages", "selectors", "properties"); version <- Vector("precontracts", "legacy", "semantic", "queries", "units", "current", "functions", "v2"))
       yield new JsonSchemaFileProvider {
         override def getName: String = s"dbt $kind ($version)"
+
         override def getSchemaType: SchemaType = SchemaType.embeddedSchema
+
         override def getSchemaFile: VirtualFile = JsonSchemaProviderFactory.getResourceFile(classOf[DbtYamlSchemaProvider], if (kind == "properties") s"/schemas/dbt-$kind-$version.json" else s"/schemas/dbt-$kind.json")
+
         override def isAvailable(file: VirtualFile): Boolean = !project.isDisposed && file.isValid &&
           Set("yml", "yaml")(Option(file.getExtension).getOrElse("")) &&
           DbtWorkspace.rootForFile(project, file).filterNot(_.excluded(file)).exists { root =>
             val selectedVersion = if (root.engine == "v2") "v2" else if (root.supports(11)) "functions" else if (root.supports(10)) "current"
-              else if (root.supports(8)) "units" else if (root.supports(7)) "queries" else if (root.supports(6)) "semantic"
-              else if (root.supports(5)) "legacy" else "precontracts"
+            else if (root.supports(8)) "units" else if (root.supports(7)) "queries" else if (root.supports(6)) "semantic"
+            else if (root.supports(5)) "legacy" else "precontracts"
             val selectedKind = file.getName match {
               case "dbt_project.yml" => Some("project")
               case "packages.yml" | "dependencies.yml" => Some("packages")

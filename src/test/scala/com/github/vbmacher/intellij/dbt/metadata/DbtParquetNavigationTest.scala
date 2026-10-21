@@ -22,8 +22,10 @@ final class DbtParquetNavigationTest extends DbtTestCase {
   // Keep physical artifact fixtures out of the light project used by source-only suites.
   override protected def getProjectDescriptor(): com.intellij.testFramework.LightProjectDescriptor =
     DbtParquetNavigationTest.descriptor
+
   override protected def createTempDirTestFixture(): com.intellij.testFramework.fixtures.TempDirTestFixture =
     new com.intellij.testFramework.fixtures.impl.TempDirTestFixtureImpl()
+
   override protected def setUp(): Unit = {
     super.setUp()
     val directory = myFixture.getTempDirFixture.findOrCreateDir("")
@@ -32,11 +34,14 @@ final class DbtParquetNavigationTest extends DbtTestCase {
       model.addContentEntry(directory)
     })
   }
+
   private val future = "2099-01-01T00:00:00Z"
+
   private def infoSchemaProject(settings: String = "engine: v2\ninfo-schema-dir: target/info_schema/v1\n"): Unit = {
     add("dbt_project.yml", "name: analytics\ninfo_schema:\n  version: 1\n")
     add(".dbt-navigation.yml", settings)
   }
+
   private def parquet(table: String, columns: String, rows: Vector[Map[String, String]],
     codec: CompressionCodecName = CompressionCodecName.SNAPPY,
     directory: String = "target/info_schema/v1", version: WriterVersion = WriterVersion.PARQUET_1_0): VirtualFile = {
@@ -71,12 +76,16 @@ final class DbtParquetNavigationTest extends DbtTestCase {
       file
     } finally Files.deleteIfExists(temporary)
   }
+
   private val modelSchema = "optional binary unique_id (UTF8); optional binary name (UTF8); optional binary package_name (UTF8); " +
     "optional binary original_file_path (UTF8); optional boolean enabled; optional int32 version; optional int32 latest_version; optional binary ingested_at (UTF8);"
+
   private def model(name: String, extra: Map[String, String] = Map.empty): Map[String, String] =
     Map("unique_id" -> s"model.analytics.$name", "name" -> name, "package_name" -> "analytics", "ingested_at" -> future) ++ extra
+
   private def references(file: PsiFile, name: String): Vector[DbtNavigationReference] =
     DbtNavigation.at(file, file.getText.lastIndexOf(name) + 1)
+
   private def target(file: PsiFile, name: String): DbtSymbolElement = {
     val candidates = references(file, name).flatMap(_.candidates).distinct
     assertEquals(s"Targets for $name: $candidates; symbols: ${workspace.symbols.map(s => s.kind + ":" + s.name)}", 1, candidates.size)
@@ -164,10 +173,12 @@ final class DbtParquetNavigationTest extends DbtTestCase {
     parquet("models", modelSchema, Vector(model("remote")))
     assertEquals("false", target(usage, "remote").symbol.attributes("stale"))
     val doc = PsiDocumentManager.getInstance(getProject).getDocument(usage)
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = {
-      doc.insertString(0, "-- unsaved\n")
-      PsiDocumentManager.getInstance(getProject).commitDocument(doc)
-    }})
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = {
+        doc.insertString(0, "-- unsaved\n")
+        PsiDocumentManager.getInstance(getProject).commitDocument(doc)
+      }
+    })
     assertEquals("true", target(usage, "remote").symbol.attributes("stale"))
   }
 
@@ -177,14 +188,20 @@ final class DbtParquetNavigationTest extends DbtTestCase {
     val usage = add("models/use.sql", "{{ ref('remote') }}")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
     val settings = myFixture.findFileInTempDir(".dbt-navigation.yml")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit =
-      settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v2\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)) })
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit =
+        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v2\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    })
     parquet("models", modelSchema, Vector(model("remote")), directory = "target/info_schema/v2")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit =
-      settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)) })
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit =
+        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    })
     val artifact = myFixture.findFileInTempDir("target/info_schema/v1/dbt.models.parquet")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit = artifact.setBinaryContent(Array[Byte](1, 2, 3)) })
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit = artifact.setBinaryContent(Array[Byte](1, 2, 3))
+    })
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
     parquet("models", "optional binary unrelated (UTF8);", Vector(Map("unrelated" -> "remote")))
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
@@ -231,8 +248,10 @@ final class DbtParquetNavigationTest extends DbtTestCase {
     val usage = add("models/use.sql", "{{ ref('remote') }}")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
     val settings = myFixture.findFileInTempDir(".dbt-navigation.yml")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable { override def run(): Unit =
-      settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)) })
+    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
+      override def run(): Unit =
+        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    })
     parquet("models", modelSchema, Vector.fill(100001)(model("remote")))
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
   }

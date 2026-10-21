@@ -36,7 +36,8 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
     edit(local, "select 1")
     val enabled = targetsAt(use, "orders").map(_.getContainingFile)
-    assertTrue(enabled.contains(local)); assertFalse(enabled.contains(packaged))
+    assertTrue(enabled.contains(local));
+    assertFalse(enabled.contains(packaged))
   }
 
   def testRequireDbtVersionListDeterminesSupportedFeatures(): Unit = {
@@ -367,8 +368,14 @@ final class DbtAcceptanceTest extends DbtTestCase {
       override def run(): Unit = {
         val indicator = new com.intellij.openapi.progress.EmptyProgressIndicator
         try com.intellij.openapi.progress.ProgressManager.getInstance.runProcess(new Runnable {
-          override def run(): Unit = { indicator.cancel(); DbtLineage.traverse(edges, start, downstream = false, 100); () }
-        }, indicator) catch { case _: com.intellij.openapi.progress.ProcessCanceledException => canceled.set(true) }
+          override def run(): Unit = {
+            indicator.cancel();
+            DbtLineage.traverse(edges, start, downstream = false, 100);
+            ()
+          }
+        }, indicator) catch {
+          case _: com.intellij.openapi.progress.ProcessCanceledException => canceled.set(true)
+        }
       }
     }).get(10, java.util.concurrent.TimeUnit.SECONDS)
     assertTrue(canceled.get())

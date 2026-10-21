@@ -71,7 +71,7 @@ The test tree uses the IDE's standard test status icons.
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/tool-window-dark.svg"><img src="icons/tool-window.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
 | IDE Close icon | **Clear search** | Lineage toolbar, next to **Search resources**. |
 | IDE Zoom In / Zoom Out icons | **Zoom in** / **Zoom out** | Lineage toolbar. |
 | IDE Pin icon | **Pin focus** / **Unpin focus** | Lineage toolbar; shown pressed while focus is pinned. |

@@ -25,7 +25,8 @@ final class DbtHighlightingTest extends DbtTestCase {
     myFixture.getEditor.asInstanceOf[EditorEx].setHighlighter(highlighter)
   }
 
-  private val wmsComment = """{#
+  private val wmsComment =
+    """{#
 Resolve the storage root for a persisted WMS dataset.
 Parameters:
   step: required pipeline-step directory, e.g. 'final_packaging'.
@@ -38,7 +39,8 @@ The target must define s3_data_dir; Athena appends Hive partition folders.
   def testSqlAndJinjaUseEditorColorsWithoutChangingFileType(): Unit = {
     project()
     val original = FileTypeManager.getInstance.getFileTypeByExtension("sql")
-    val file = configure("models/report.sql", wmsComment + """
+    val file = configure("models/report.sql", wmsComment +
+      """
 {% set root = 'final_packaging' %}
 select 42 from {{ ref('orders') }} -- SQL comment
 <caret>""")
@@ -57,7 +59,8 @@ select 42 from {{ ref('orders') }} -- SQL comment
 
   def testJinjaInsideSqlStringsAndComments(): Unit = {
     project()
-    val file = configure("models/report.sql", """select '{{ var("single") }}', "{{ var('double') }}", `{{ var('quoted') }}`
+    val file = configure("models/report.sql",
+      """select '{{ var("single") }}', "{{ var('double') }}", `{{ var('quoted') }}`
 -- {{ ref('line_model') }}
 /* {{ ref('block_model') }} */<caret>""")
     for (name <- Vector("single", "double", "quoted", "line_model", "block_model"))
@@ -67,7 +70,8 @@ select 42 from {{ ref('orders') }} -- SQL comment
 
   def testTrimmedRawAndCommentsAndDbtTags(): Unit = {
     project()
-    val file = configure("macros/report.sql", """{#- trimmed comment -#}
+    val file = configure("macros/report.sql",
+      """{#- trimmed comment -#}
 {%- raw -%}{{ uninterpreted }}{%- endraw -%}
 {%+ raw +%}{{ plus_raw }}{%+ endraw +%}
 {% test custom(model) %}select {{- model -}}{% endtest %}
@@ -97,7 +101,8 @@ select 42 from {{ ref('orders') }} -- SQL comment
 
   def testYamlMappingKeysAndBlockScalarsKeepYamlColors(): Unit = {
     project()
-    val file = configure("macros/_macros.yml", """version: 2
+    val file = configure("macros/_macros.yml",
+      """version: 2
 
 macros:
   - name: bigquery_mirror_validate_target
@@ -192,10 +197,12 @@ macros:
     val first = configure("models/first.sql", "select * from {{ ref('or<caret>ders') }}")
     val second = add("models/second.sql", "select * from {{ ref('orders') }}")
     assertScope(first, "orders", "jinja")
+
     def locations: Set[(PsiFile, String)] = myFixture.testFindUsagesUsingAction().asScala.map { usage =>
       val info = usage.asInstanceOf[UsageInfo2UsageAdapter].getUsageInfo
       (info.getElement.getContainingFile, info.getRangeInElement.substring(info.getElement.getText))
     }.toSet
+
     val expected = Set((first, "orders"), (second, "orders"))
     assertEquals(expected, locations)
     open(orders, 0)

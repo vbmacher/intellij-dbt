@@ -15,7 +15,9 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 private[ide] final case class DbtStateChange(id: String, status: String, reason: String, relation: String)
+
 private[ide] final case class DbtStateDependency(id: String, resolution: String, relation: String, evidence: String, reason: String)
+
 private[ide] final case class DbtStatePreview(baseline: String, selected: Vector[DbtSymbol], dependencies: Vector[DbtStateDependency],
   problems: Vector[String])
 
@@ -24,6 +26,7 @@ private[ide] object DbtState {
   private val ConfigKeys = Set("materialized", "enabled", "alias", "database", "schema", "tags", "access", "group", "unique_key",
     "on_schema_change", "incremental_strategy", "partition_by", "cluster_by", "contract", "persist_docs", "grants", "quoting", "full_refresh", "meta", "pre_hook", "post_hook")
   private val ColumnKeys = Set("description", "data_type", "quote", "constraints", "meta", "tags")
+
   private def entries(manifest: DbtManifest): Map[String, JsonObject] = manifest.resources.map(r => r.id -> r.data).toMap
 
   /** Resolve real existing ancestors too, so a not-yet-created output directory cannot hide a symlink alias. */
@@ -32,6 +35,7 @@ private[ide] object DbtState {
       if (Files.exists(p, LinkOption.NOFOLLOW_LINKS)) p.toRealPath()
       else Option(p.getParent).map(parent => resolve(parent).resolve(p.getFileName)).getOrElse(p)
     }
+
     resolve(path.toAbsolutePath.normalize()).normalize()
   }.toEither.left.map(_ => "Cannot resolve baseline/output paths safely; check symlinks and permissions.")
 
@@ -55,12 +59,14 @@ private[ide] object DbtState {
         (), "Baseline directory must contain manifest.json.")
     } yield resolved
   }
+
   def manifest(root: DbtRoot): Either[String, DbtManifest] = baseline(root).flatMap { path =>
     DbtManifestReader.get(root.config.getProject).read(root, path.resolve("manifest.json").toString, DbtManifestPolicy.Baseline)
   }
+
   private def current(w: DbtWorkspace, root: DbtRoot): Map[String, Vector[DbtSymbol]] = w.symbols.filter(s => !s.metadata &&
-    (s.isCode || s.kind == "source_table" || s.kind == "exposure" || s.isProperty && Set("unit_test", "metric", "semantic_model", "saved_query")(s.kind)) &&
-    w.owner(s).exists(r => w.executionRoot(r).directory == w.executionRoot(root).directory)).groupBy(_.uniqueId)
+      (s.isCode || s.kind == "source_table" || s.kind == "exposure" || s.isProperty && Set("unit_test", "metric", "semantic_model", "saved_query")(s.kind)) &&
+      w.owner(s).exists(r => w.executionRoot(r).directory == w.executionRoot(root).directory)).groupBy(_.uniqueId)
     .view.mapValues { symbols =>
       symbols.groupBy(s => w.owner(s).map(_.directory.getPath)).values.toVector.flatMap { owned =>
         val code = owned.filter(_.isCode)
@@ -69,23 +75,29 @@ private[ide] object DbtState {
     }.toMap
 
   private def normalized(value: JsonElement): String = if (value.isJsonNull) "null" else if (value.isJsonPrimitive) new com.google.gson.JsonPrimitive(value.getAsString).toString
-    else if (value.isJsonArray) value.getAsJsonArray.asScala.map(normalized).mkString("[", ",", "]")
-    else value.getAsJsonObject.entrySet().asScala.toVector.sortBy(_.getKey).map(e => new com.google.gson.JsonPrimitive(e.getKey).toString + ":" + normalized(e.getValue)).mkString("{", ",", "}")
+  else if (value.isJsonArray) value.getAsJsonArray.asScala.map(normalized).mkString("[", ",", "]")
+  else value.getAsJsonObject.entrySet().asScala.toVector.sortBy(_.getKey).map(e => new com.google.gson.JsonPrimitive(e.getKey).toString + ":" + normalized(e.getValue)).mkString("{", ",", "}")
+
   private def empty(value: JsonElement): Boolean = value.isJsonNull || value.isJsonPrimitive && value.getAsString.isEmpty ||
     value.isJsonArray && value.getAsJsonArray.isEmpty || value.isJsonObject && value.getAsJsonObject.size() == 0
+
   private def tags(value: JsonElement): Vector[String] = (if (value.isJsonArray) value.getAsJsonArray.asScala.toVector.map(normalized)
-    else if (value.isJsonPrimitive) value.getAsString.split(",").toVector.map(s => new com.google.gson.JsonPrimitive(s.trim).toString) else Vector(normalized(value))).sorted
+  else if (value.isJsonPrimitive) value.getAsString.split(",").toVector.map(s => new com.google.gson.JsonPrimitive(s.trim).toString) else Vector(normalized(value))).sorted
+
   private def sourceDescription(w: DbtWorkspace, symbol: DbtSymbol): String =
     (Vector(symbol) ++ w.properties(symbol)).flatMap(_.mapping.flatMap(m => DbtYaml.string(m, "description").orElse(
-      DbtYaml.parentMapping(m).filter(p => DbtYaml.value(p, "versions").nonEmpty).flatMap(DbtYaml.string(_, "description"))))).headOption
+        DbtYaml.parentMapping(m).filter(p => DbtYaml.value(p, "versions").nonEmpty).flatMap(DbtYaml.string(_, "description"))))).headOption
       .orElse(symbol.attributes.get("description")).getOrElse("")
+
   private final case class Difference(changed: Boolean = false, unknown: Boolean = false) {
     def combine(other: Difference): Difference = Difference(changed || other.changed, unknown || other.unknown)
   }
+
   /** Missing resolved nested fields can be defaults; they never prove a source change. */
   private def difference(before: JsonElement, after: JsonElement): Difference = {
     if (before.isJsonObject && after.isJsonObject) {
-      val old = before.getAsJsonObject; val now = after.getAsJsonObject
+      val old = before.getAsJsonObject;
+      val now = after.getAsJsonObject
       (old.keySet().asScala ++ now.keySet().asScala).toSet.foldLeft(Difference()) { (result, key) =>
         val change = (Option(old.get(key)), Option(now.get(key))) match {
           case (Some(a), Some(b)) => difference(a, b)
@@ -99,7 +111,13 @@ private[ide] object DbtState {
       before.getAsJsonArray.asScala.zip(after.getAsJsonArray.asScala).foldLeft(Difference()) { case (result, (a, b)) => result.combine(difference(a, b)) }
     else Difference(changed = normalized(before) != normalized(after))
   }
-  private def configKey(key: String): String = key match { case "pre_hook" => "pre-hook"; case "post_hook" => "post-hook"; case other => other }
+
+  private def configKey(key: String): String = key match {
+    case "pre_hook" => "pre-hook";
+    case "post_hook" => "post-hook";
+    case other => other
+  }
+
   private def yaml(value: org.jetbrains.yaml.psi.YAMLValue): JsonElement = value match {
     case scalar: org.jetbrains.yaml.psi.YAMLScalar =>
       if (Set("null", "~")(scalar.getText.toLowerCase(java.util.Locale.ROOT))) com.google.gson.JsonNull.INSTANCE else new com.google.gson.JsonPrimitive(scalar.getTextValue)
@@ -109,6 +127,7 @@ private[ide] object DbtState {
       val result = new JsonArray; sequence.getItems.asScala.flatMap(i => Option(i.getValue)).foreach(v => result.add(yaml(v))); result
     case _ => com.google.gson.JsonNull.INSTANCE
   }
+
   private def sourceConfig(w: DbtWorkspace, symbol: DbtSymbol): Map[String, JsonElement] = {
     val scalar: Map[String, JsonElement] = symbol.attributes.filter(x => ConfigKeys(x._1)).map { case (key, value) => configKey(key) -> new com.google.gson.JsonPrimitive(value) }
     val mappings = (w.properties(symbol) :+ symbol).distinctBy(_.id).flatMap(_.mapping)
@@ -118,6 +137,7 @@ private[ide] object DbtState {
       }
     }
   }
+
   /** The diff labels distinguish recorded baseline values from authored, unresolved source values. */
   def comparison(w: DbtWorkspace, root: DbtRoot, id: String): Either[String, (String, String)] = manifest(root).map { baseline =>
     val before = entries(baseline).get(id).map { entry =>
@@ -141,6 +161,7 @@ private[ide] object DbtState {
   }
 
   def compare(w: DbtWorkspace, root: DbtRoot): Either[String, Vector[DbtStateChange]] = manifest(root).map(compareManifest(w, root, _))
+
   private[ide] def compareManifest(w: DbtWorkspace, root: DbtRoot, baseline: DbtManifest): Vector[DbtStateChange] = {
     val old = entries(baseline)
     val now = current(w, root)
@@ -197,23 +218,25 @@ private[ide] object DbtState {
               val declared = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).distinctBy(_.name)
               val names = declared.map(_.name).toSet
               if (columns.keySet().asScala.toSet != names) changed += "Column declarations changed"
-              declared.foreach { column => DbtJson.child(columns, column.name).foreach { oldColumn =>
-                ColumnKeys.toVector.sorted.foreach { key =>
-                  val before = Option(oldColumn.get(key)).filterNot(_.isJsonNull)
-                  val after = column.mapping.flatMap(DbtYaml.value(_, key)).map(yaml).orElse(column.attributes.get(key).map(new com.google.gson.JsonPrimitive(_)))
-                  if (after.exists(v => normalized(v).contains("{{"))) unknown += s"Dynamic column metadata: ${column.name}.$key"
-                  else {
-                    val result = (before, after) match {
-                      case (Some(a), Some(b)) => difference(a, b)
-                      case (Some(a), None) => Difference(changed = !empty(a))
-                      case (None, Some(b)) => Difference(changed = !empty(b))
-                      case _ => Difference()
+              declared.foreach { column =>
+                DbtJson.child(columns, column.name).foreach { oldColumn =>
+                  ColumnKeys.toVector.sorted.foreach { key =>
+                    val before = Option(oldColumn.get(key)).filterNot(_.isJsonNull)
+                    val after = column.mapping.flatMap(DbtYaml.value(_, key)).map(yaml).orElse(column.attributes.get(key).map(new com.google.gson.JsonPrimitive(_)))
+                    if (after.exists(v => normalized(v).contains("{{"))) unknown += s"Dynamic column metadata: ${column.name}.$key"
+                    else {
+                      val result = (before, after) match {
+                        case (Some(a), Some(b)) => difference(a, b)
+                        case (Some(a), None) => Difference(changed = !empty(a))
+                        case (None, Some(b)) => Difference(changed = !empty(b))
+                        case _ => Difference()
+                      }
+                      if (result.changed) changed += s"Column metadata changed: ${column.name}.$key"
+                      if (result.unknown) unknown += s"Resolved column defaults unknown: ${column.name}.$key"
                     }
-                    if (result.changed) changed += s"Column metadata changed: ${column.name}.$key"
-                    if (result.unknown) unknown += s"Resolved column defaults unknown: ${column.name}.$key"
                   }
                 }
-              }}
+              }
           }
           val reasons = changed.toVector ++ unknown.toVector.distinct.map("Unresolved: " + _)
           if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown",
@@ -228,7 +251,8 @@ private[ide] object DbtState {
     path <- baseline(root)
     data <- manifest(root)
   } yield {
-    val old = entries(data); val now = current(w, root)
+    val old = entries(data);
+    val now = current(w, root)
     val changes = compareManifest(w, root, data)
     val problems = scala.collection.mutable.ArrayBuffer.empty[String]
     val unknown = changes.count(_.status == "unknown")
@@ -237,11 +261,15 @@ private[ide] object DbtState {
     if (root.runOptions.favorState && (!root.runOptions.defer || root.engine != "core" || !root.supports(4)))
       problems += "Favor state requires deferral and configured dbt Core 1.4+; the command is not executable with these options."
     val edges = DbtLineage.edges(w)
+
     def key(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
+
     def term(raw: String): Vector[DbtSymbol] = {
       val core = DbtLineage.withoutOperators(raw)
       if (!core.startsWith("state:")) {
-        val resolved = DbtSelection.resolve(w, root, raw); problems ++= resolved.problems; resolved.resources
+        val resolved = DbtSelection.resolve(w, root, raw);
+        problems ++= resolved.problems;
+        resolved.resources
       } else {
         val status = core.stripPrefix("state:")
         val ids = status match {
@@ -260,10 +288,12 @@ private[ide] object DbtState {
             children.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = true, childDepth.min(100))))).distinctBy(key)
       }
     }
+
     def selection(text: String): Vector[DbtSymbol] = text.trim.split("\\s+").toVector.filter(_.nonEmpty).flatMap { token =>
       val groups = token.split(",").toVector.map(term)
       groups.headOption.getOrElse(Vector.empty).filter(s => groups.drop(1).forall(_.exists(t => key(t) == key(s))))
     }.distinctBy(key)
+
     val chosen = selection(if (expression.trim.isEmpty) "*" else expression)
     val removed = if (exclude.trim.isEmpty) Set.empty[String] else selection(exclude).map(key).toSet
     val selected = chosen.filterNot(s => removed(key(s)))
@@ -271,10 +301,10 @@ private[ide] object DbtState {
     val upstream = selected.flatMap(s => DbtLineage.traverse(edges, s, downstream = false, 100)).distinctBy(key).filterNot(s => selectedIds(key(s)))
     val dependencies = upstream.filter(s => DbtSymbol.RelationKinds(s.kind)).take(1000).map { symbol =>
       val previous = old.get(symbol.uniqueId)
-      val relation = previous.flatMap(DbtJson.text(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")) .getOrElse("")
+      val relation = previous.flatMap(DbtJson.text(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")).getOrElse("")
       val ephemeral = symbol.attributes.get("materialized").contains("ephemeral")
       val resolution = if (symbol.kind == "source_table") "source" else if (ephemeral || !root.runOptions.defer) "local"
-        else if (relation.isEmpty || symbol.isStale || symbol.metadata || symbol.attributes.get("materialized").exists(_.contains("{{"))) "unknown" else if (root.runOptions.favorState) "deferred" else "candidate"
+      else if (relation.isEmpty || symbol.isStale || symbol.metadata || symbol.attributes.get("materialized").exists(_.contains("{{"))) "unknown" else if (root.runOptions.favorState) "deferred" else "candidate"
       val reason = resolution match {
         case "source" => "source() references do not defer; use current source configuration."
         case "local" => if (ephemeral) "Ephemeral dependency is compiled locally." else "Deferral is disabled."

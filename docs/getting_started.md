@@ -40,7 +40,6 @@ files without running dbt. For requirements, see [Installation](installation.md)
 
 ## Integrations
 
-- [Git change impact](integrations.md#review-the-impact-of-git-changes): affected resources and a suggested validation selection.
 - [Downstream consumers](integrations.md#find-downstream-consumers): declared exposures and Metabase questions and dashboards.
 - [Airflow context](integrations.md#inspect-airflow-context): local DAG detection and dbt associations.
 - [Local MCP server](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server): read-only project access for an AI assistant.

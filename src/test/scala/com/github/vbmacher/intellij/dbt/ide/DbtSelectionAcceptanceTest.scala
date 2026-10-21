@@ -34,7 +34,8 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
   }
 
   def testGraphDepthIntersectionsNamedSelectorsAndCyclesRemainReviewable(): Unit = {
-    chainProject("""selectors:
+    chainProject(
+      """selectors:
 - name: window
   definition: {method: fqn, value: c, parents: true, parents_depth: 1, children: true, children_depth: 1}
 - name: cycle_a
@@ -48,7 +49,8 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     assertEquals(Set("b", "c"), DbtSelection.resolve(w, root, "tag:finance,1+c+1").resources.map(_.name).toSet)
     assertEquals(Set("c"), DbtSelection.resolve(w, root, "tag:finance,1+c+1", "b").resources.map(_.name).toSet)
     val cycle = DbtSelection.resolve(w, root, "selector:cycle_a")
-    assertTrue(cycle.resources.isEmpty); assertTrue(cycle.problems.exists(_.contains("cycle")))
+    assertTrue(cycle.resources.isEmpty);
+    assertTrue(cycle.problems.exists(_.contains("cycle")))
     assertFalse(DbtSelection.resolve(w, root, "c,,d").complete)
     val atSelection = DbtSelection.resolve(w, root, "@c")
     assertTrue(atSelection.complete)
@@ -74,7 +76,8 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     val w = workspace
     val options = root.runOptions
     options.selection = "fqn:analytics.orders.v2 package:pkg"
-    options.target = "qa"; options.profilesDirectory = "profiles with spaces"
+    options.target = "qa";
+    options.profilesDirectory = "profiles with spaces"
     val resolved = DbtSelection.resolve(w, root, options.selection)
     assertTrue(resolved.problems.mkString("; "), resolved.complete)
     assertEquals(Set("model.analytics.orders.v2", "model.pkg.orders"), resolved.resources.map(_.uniqueId).toSet)
@@ -108,7 +111,8 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     add("baseline/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.orders":{"raw_code":"select 1 as amount","config":{},"columns":{}}}}""")
     val w = workspace
     val options = root.runOptions
-    options.stateDirectory = "baseline"; options.selection = "fqn:analytics.orders,state:modified"
+    options.stateDirectory = "baseline";
+    options.selection = "fqn:analytics.orders,state:modified"
     val command = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
     assertEquals(Vector("fqn:analytics.orders,state:modified"), command.arguments.dropWhile(_ != "--select").drop(1).takeWhile(arg => !arg.startsWith("-")))
     assertTrue(command.arguments.sliding(2).exists(v => v.head == "--state" && v.last.endsWith("/baseline")))
@@ -124,7 +128,8 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     val w = workspace
     root.runOptions.selection = "unsupported:runtime"
     root.runOptions.stateDirectory = "missing-baseline"
-    root.runOptions.defer = true; root.runOptions.favorState = true
+    root.runOptions.defer = true;
+    root.runOptions.favorState = true
     Vector("Generate Docs", "Source Freshness").foreach { action =>
       val command = DbtCommand.selection(w, root, action, fullRefresh = false).toOption.get
       assertFalse(command.arguments.contains("--select"))
@@ -140,7 +145,9 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     add(".dbt-navigation.yml", "engine: core\ndbt-version: '1.3'\n")
     add("baseline/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{}}""")
     val w = workspace
-    root.runOptions.stateDirectory = "baseline"; root.runOptions.defer = true; root.runOptions.favorState = true
+    root.runOptions.stateDirectory = "baseline";
+    root.runOptions.defer = true;
+    root.runOptions.favorState = true
     val selected = DbtRunSelection.available(w).find(_.path == code.getVirtualFile.getPath).get
     val error = DbtCommand.create(w, selected, "Build", fullRefresh = false).left.toOption.get
     assertTrue(error.contains("1.4"))
@@ -154,9 +161,14 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     val w = workspace
     val other = w.roots.find(_.name == "other").get
     val options = root.runOptions
-    options.selection = "orders"; options.exclude = "tag:slow"; options.stateDirectory = "/artifacts/prod"
-    options.defer = true; options.favorState = true; options.target = "dev"
-    other.runOptions.selection = "tag:other"; other.runOptions.target = "qa"
+    options.selection = "orders";
+    options.exclude = "tag:slow";
+    options.stateDirectory = "/artifacts/prod"
+    options.defer = true;
+    options.favorState = true;
+    options.target = "dev"
+    other.runOptions.selection = "tag:other";
+    other.runOptions.target = "qa"
     val settings = DbtProjectSettings.get(getProject)
     val saved = new DbtSettingsState
     saved.projects = new java.util.TreeMap[String, DbtRunOptions](settings.getState.projects.asScala.map { case (path, value) => path -> value.copy() }.asJava)
@@ -165,12 +177,15 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
     assertEquals("orders", root.runOptions.selection)
     assertEquals("tag:slow", root.runOptions.exclude)
     assertEquals("/artifacts/prod", root.runOptions.stateDirectory)
-    assertTrue(root.runOptions.defer); assertTrue(root.runOptions.favorState)
+    assertTrue(root.runOptions.defer);
+    assertTrue(root.runOptions.favorState)
     assertEquals("tag:other", other.runOptions.selection)
     assertEquals("qa", other.runOptions.target)
     assertEquals("", other.runOptions.stateDirectory)
-    assertFalse(other.runOptions.defer); assertFalse(other.runOptions.favorState)
+    assertFalse(other.runOptions.defer);
+    assertFalse(other.runOptions.favorState)
   }
+
   def testSelectorCompletionPreservesIntersectionsDepthsAndOwningIdentities(): Unit = {
     project()
     add("models/orders.sql", "select 1")
@@ -254,14 +269,16 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
   def testCliSelectionKeepsExactGenericAndUnitTestIdentitiesAndSourceLocations(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id")
-    val yaml = add("models/schema.yml", """models:
+    val yaml = add("models/schema.yml",
+      """models:
 - name: orders
   columns: [{name: id, data_tests: [unique]}]
 unit_tests:
 - name: input_is_valid
   model: orders
 """)
-    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
+    add("target/manifest.json",
+      """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
       "test.analytics.unique_orders_id.abc":{"unique_id":"test.analytics.unique_orders_id.abc","resource_type":"test","name":"unique_orders_id","package_name":"analytics","original_file_path":"models/schema.yml","column_name":"id","fqn":["analytics","unique_orders_id"],"test_metadata":{"name":"unique"},"config":{},"depends_on":{"nodes":["model.analytics.orders"]}}},"unit_tests":{}}
 """)
     val w = workspace
@@ -277,7 +294,8 @@ unit_tests:
 
   def testNamedExclusionsRetainPackageVersionAndIndependentRootIdentity(): Unit = {
     sameNamedOrders()
-    add("selectors.yml", """selectors:
+    add("selectors.yml",
+      """selectors:
 - name: omit
   definition:
     union: [fqn:analytics.orders.v2, package:pkg]
@@ -291,7 +309,8 @@ unit_tests:
   }
 
   def testNamedGraphDepthsIntersectionsAndUnionsBecomeExactCliTerms(): Unit = {
-    chainProject("""selectors:
+    chainProject(
+      """selectors:
 - {name: center, definition: c}
 - {name: window, definition: '1+c+1'}
 """)
@@ -307,7 +326,8 @@ unit_tests:
   def testCyclicMissingAndMixedRuntimeNamedExclusionsAreRejected(): Unit = {
     project()
     add("models/orders.sql", "select 1")
-    add("selectors.yml", """selectors:
+    add("selectors.yml",
+      """selectors:
 - {name: ordinary, definition: orders}
 - {name: runtime, definition: 'state:modified'}
 - {name: cycle_a, definition: 'selector:cycle_b'}

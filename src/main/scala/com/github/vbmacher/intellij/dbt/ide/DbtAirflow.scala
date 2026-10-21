@@ -32,11 +32,13 @@ private[dbt] final case class DbtAirflowTask(dag: String, task: String, project:
   line: Int = 1, schedule: String = "", kind: String = "dbt", indirect: String = "") {
   def id: String = evidence + ":" + offset + "|" + dag + "|" + task + "|" + project
 }
+
 private[ide] final case class DbtAirflowDestination(path: String, offset: Int, url: Option[String] = None)
 
 /** Automatic static discovery of local DAG code; no Python or Airflow execution. */
 private[dbt] object DbtAirflow {
   private val Tasks = Key.create[(DbtAirflowScan, Vector[String], Vector[DbtAirflowTask])]("dbt.airflow.tasks")
+
   private def resourceKey(w: DbtWorkspace, resource: DbtSymbol): String = DbtResourceIdentity.key(w, resource) + "|" + resource.id
 
   def problems(w: DbtWorkspace): Vector[String] = w.project.getService(classOf[DbtAirflowDiscovery]).scan().problems
@@ -48,12 +50,15 @@ private[dbt] object DbtAirflow {
     Option(w.getUserData(Tasks)).filter(c => (c._1 eq scan) && c._2 == configuration).map(_._3).getOrElse {
       val executionRoots = w.roots.filter(r => w.executionRoot(r) == r)
       val base = safeUrl(settings.airflowUrl)
+
       def rootFor(file: String): Option[DbtRoot] = {
         if (executionRoots.size == 1) executionRoots.headOption
         else executionRoots.filter(r => file.startsWith(r.directory.getPath + "/")).sortBy(_.directory.getPath.length).lastOption
       }
+
       def link(dag: String, task: String): Option[String] = base.map(_.stripSuffix("/") + "/dags/" + encode(dag) + "/grid" +
         (if (task == dag) "" else "?task_id=" + encode(task)))
+
       val raw = scan.pipelines.flatMap { case (file, pipeline) =>
         ProgressManager.checkCanceled()
         val root = rootFor(file)
@@ -70,7 +75,7 @@ private[dbt] object DbtAirflow {
         }
         val ingestion = if (pipeline.ingests.isEmpty) Vector.empty else {
           val relations = root.toVector.flatMap(r => w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) &&
-            w.owner(s).exists(w.executionRoot(_) == r))).sortBy(s => (s.isProperty, s.metadata))
+              w.owner(s).exists(w.executionRoot(_) == r))).sortBy(s => (s.isProperty, s.metadata))
             .distinctBy(s => DbtResourceIdentity.key(w, s)).map { symbol =>
               val attributes = DbtResourceData.get(w, symbol).attributes
               (symbol, attributes.get("schema"), attributes.getOrElse("identifier", attributes.getOrElse("alias", symbol.name)))
@@ -122,12 +127,13 @@ private[dbt] object DbtAirflow {
       val item = obj("id" -> task.id, "dag" -> task.dag, "task" -> task.task,
         "project" -> task.project, "projectRoot" -> task.projectRoot.getOrElse(""), "selected" -> matches,
         "status" -> (if (!matches) "Unresolved selection — association unknown" else if (task.problems.nonEmpty) "Partial detected selection"
-          else if (task.kind == "ingestion") "Detected ingestion destination" else "Detected selection"),
+        else if (task.kind == "ingestion") "Detected ingestion destination" else "Detected selection"),
         "schedule" -> task.schedule, "kind" -> task.kind, "indirect" -> task.indirect,
         "selection" -> task.selection.take(4000), "exclude" -> task.exclude.take(4000),
         "path" -> task.evidence, "offset" -> task.offset, "line" -> task.line)
       task.url.foreach(item.addProperty("url", _))
-      item.add("ingestion", strings(task.ingestion.take(100))); item.add("problems", strings(task.problems.map(_.take(2000))))
+      item.add("ingestion", strings(task.ingestion.take(100)));
+      item.add("problems", strings(task.problems.map(_.take(2000))))
       item
     }
     obj("tasks" -> array(tasks), "truncated" -> (all.size > 50), "selectedCount" -> all.count(selected(w, resource, _)),
@@ -136,14 +142,17 @@ private[dbt] object DbtAirflow {
 
   def navigation(w: DbtWorkspace, resource: DbtSymbol, mappingId: String, target: String): Either[String, DbtAirflowDestination] =
     context(w, resource).find(_.id == mappingId).toRight("Airflow DAG selection changed or no longer applies to this resource. Refresh its details.")
-      .flatMap { task => target match {
-        case "definition" => Right(DbtAirflowDestination(task.evidence, task.offset))
-        case "browser" => task.url.toRight("No Airflow URL is configured. Set it in Settings > dbt Workspace > Integrations.")
-          .map(url => DbtAirflowDestination(task.evidence, task.offset, Some(url)))
-        case _ => Left("Unknown Airflow navigation action.")
-      }}
+      .flatMap { task =>
+        target match {
+          case "definition" => Right(DbtAirflowDestination(task.evidence, task.offset))
+          case "browser" => task.url.toRight("No Airflow URL is configured. Set it in Settings > dbt Workspace > Integrations.")
+            .map(url => DbtAirflowDestination(task.evidence, task.offset, Some(url)))
+          case _ => Left("Unknown Airflow navigation action.")
+        }
+      }
 
   private def encode(text: String): String = URLEncoder.encode(text, StandardCharsets.UTF_8).replace("+", "%20")
+
   def safeUrl(text: String): Option[String] = scala.util.Try(new URI(text)).toOption.filter(u =>
     Set("http", "https")(Option(u.getScheme).getOrElse("")) && u.getHost != null && u.getUserInfo == null).map(_.toASCIIString)
 }
@@ -157,7 +166,9 @@ final class DbtAirflowDiscovery(project: Project) extends Disposable {
   private var watched = Vector.empty[String]
   private var requests = Vector.empty[LocalFileSystem.WatchRequest]
   private var cache = DbtAirflowScan(Vector.empty, Vector.empty)
+
   private case class FileEntry(stamp: (java.nio.file.attribute.FileTime, Long, Option[Long]), pipelines: Vector[DbtAirflowParser.Pipeline])
+
   private val parsed = mutable.Map.empty[Path, FileEntry]
 
   private[ide] def directories: Vector[String] = {
@@ -195,6 +206,7 @@ final class DbtAirflowDiscovery(project: Project) extends Disposable {
           ProgressManager.checkCanceled()
           if (Option(dir.getFileName).exists(name => skip(name.toString))) FileVisitResult.SKIP_SUBTREE else FileVisitResult.CONTINUE
         }
+
         override def visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult = {
           ProgressManager.checkCanceled()
           if (file.toString.endsWith(".py") && attrs.isRegularFile && seen.add(file.toAbsolutePath.normalize())) {
@@ -217,8 +229,10 @@ final class DbtAirflowDiscovery(project: Project) extends Disposable {
           }
           FileVisitResult.CONTINUE
         }
+
         override def visitFileFailed(file: Path, error: java.io.IOException): FileVisitResult = {
-          problems += s"Cannot read Airflow DAG path: $file"; FileVisitResult.CONTINUE
+          problems += s"Cannot read Airflow DAG path: $file";
+          FileVisitResult.CONTINUE
         }
       }) catch {
         case canceled: ProcessCanceledException => throw canceled
@@ -238,20 +252,30 @@ final class DbtAirflowDiscovery(project: Project) extends Disposable {
 }
 
 /** Static discovery adapted from tchandrap/dbt-airflow-lineage (MIT; see third-party/dbt-airflow-lineage).
-  * Reads literals only: DAG modules, imports and user functions are never executed.
-  */
+ * Reads literals only: DAG modules, imports and user functions are never executed.
+ */
 private[ide] object DbtAirflowParser {
   final case class Site(select: String, exclude: String, named: String, dynamic: Boolean,
     task: String, indirect: String, offset: Int, line: Int)
+
   final case class Ingest(dataset: Option[String], table: String, offset: Int, line: Int, via: String)
+
   final case class Pipeline(name: String, schedule: String, sites: Vector[Site], ingests: Vector[Ingest])
+
   private case class Tok(kind: String, value: String, offset: Int, line: Int, formatted: Boolean = false, items: Vector[Tok] = Vector.empty)
+
   private case class KV(key: String, value: Vector[Tok], offset: Int, line: Int)
+
   private sealed trait Value
+
   private case class Text(value: String) extends Value
+
   private case class Values(value: Vector[Value]) extends Value
+
   private case object Unset extends Value
+
   private case object Dynamic extends Value
+
   private type Env = Map[String, Vector[Tok]]
   private val SelectKeys = Set("dbt_selector", "dbt_select", "selector", "select", "selectors", "dbt_selectors")
   private val ExcludeKeys = Set("dbt_exclude", "exclude", "excludes", "dbt_excludes")
@@ -265,20 +289,33 @@ private[ide] object DbtAirflowParser {
   private val FullRef = """`?(?:\{[^}]+\}|[\w-]+)\.([A-Za-z_]\w*)\.([A-Za-z_]\w*)`?""".r
 
   private def tokenize(source: String): Vector[Tok] = {
-    var at = 0; var line = 1
+    var at = 0;
+    var line = 1
     val prefix = """([rRbBuUfF]{0,2})(\"\"\"|'''|\"|')""".r
+
     def read(close: Char, depth: Int): Vector[Tok] = {
       val out = mutable.ArrayBuffer.empty[Tok]
       while (at < source.length) {
         ProgressManager.checkCanceled()
         val c = source(at)
-        if (c == close && close != 0) { at += 1; return out.toVector }
-        if (c == '\n') { line += 1; at += 1 }
+        if (c == close && close != 0) {
+          at += 1;
+          return out.toVector
+        }
+        if (c == '\n') {
+          line += 1;
+          at += 1
+        }
         else if (c.isWhitespace || c == '\\') at += 1
-        else if (c == '#') { while (at < source.length && source(at) != '\n') at += 1 }
+        else if (c == '#') {
+          while (at < source.length && source(at) != '\n') at += 1
+        }
         else prefix.findPrefixMatchOf(source.substring(at, (at + 6).min(source.length))) match {
           case Some(m) =>
-            val start = at; val startLine = line; val quote = m.group(2); val raw = m.group(1).toLowerCase.contains('r')
+            val start = at;
+            val startLine = line;
+            val quote = m.group(2);
+            val raw = m.group(1).toLowerCase.contains('r')
             val value = new StringBuilder
             at += m.end
             while (at < source.length && !source.startsWith(quote, at)) {
@@ -287,7 +324,11 @@ private[ide] object DbtAirflowParser {
                 value.append(if (next == 'n') '\n' else if (next == 't') '\t' else next)
                 if (next == '\n') line += 1
                 at += 2
-              } else { if (source(at) == '\n') line += 1; value.append(source(at)); at += 1 }
+              } else {
+                if (source(at) == '\n') line += 1;
+                value.append(source(at));
+                at += 1
+              }
             }
             if (at < source.length) at += quote.length
             out += Tok("str", value.toString, start, startLine, m.group(1).toLowerCase.contains('f'))
@@ -296,7 +337,9 @@ private[ide] object DbtAirflowParser {
             while (at < source.length && (source(at).isLetterOrDigit || source(at) == '_')) at += 1
             out += Tok("name", source.substring(start, at), start, line)
           case None if "([{".contains(c) && depth < 100 =>
-            val start = at; val startLine = line; at += 1
+            val start = at;
+            val startLine = line;
+            at += 1
             val children = read(Map('(' -> ')', '[' -> ']', '{' -> '}')(c), depth + 1)
             out += Tok("group", c.toString, start, startLine, items = children)
           case None => out += Tok("op", c.toString, at, line); at += 1
@@ -304,6 +347,7 @@ private[ide] object DbtAirflowParser {
       }
       out.toVector
     }
+
     read(0.toChar, 0)
   }
 
@@ -312,6 +356,7 @@ private[ide] object DbtAirflowParser {
     items.foreach(t => if (t.kind == "op" && t.value == separator) out += Vector.empty else out(out.size - 1) :+= t)
     out.toVector.filter(_.nonEmpty)
   }
+
   private def flatten(value: Value): Option[Vector[String]] = value match {
     case Text(s) => Some(Vector(s))
     case Unset => Some(Vector.empty)
@@ -320,7 +365,9 @@ private[ide] object DbtAirflowParser {
       Option.when(parts.forall(_.nonEmpty))(parts.flatten.flatten)
     case Dynamic => None
   }
+
   private def asText(value: Value): Option[String] = flatten(value).map(_.mkString(" ").trim).filter(_.nonEmpty)
+
   private def eval(tokens: Vector[Tok], env: Env, depth: Int = 0): Value = {
     if (tokens.isEmpty || depth > 8) return Dynamic
     val plus = split(tokens, "+")
@@ -342,14 +389,17 @@ private[ide] object DbtAirflowParser {
       } else Dynamic
     } else {
       val dot = tokens.indices.find(i => tokens(i).value == "." && tokens.lift(i + 1).exists(_.value == "join"))
-      dot.flatMap { i => tokens.lift(i + 2).filter(_.kind == "group").map { group =>
-        (eval(tokens.take(i), env, depth + 1), eval(Vector(group), env, depth + 1)) match {
-          case (Text(separator), list: Values) => flatten(list).map(xs => Text(xs.mkString(separator))).getOrElse(Dynamic)
-          case _ => Dynamic
+      dot.flatMap { i =>
+        tokens.lift(i + 2).filter(_.kind == "group").map { group =>
+          (eval(tokens.take(i), env, depth + 1), eval(Vector(group), env, depth + 1)) match {
+            case (Text(separator), list: Values) => flatten(list).map(xs => Text(xs.mkString(separator))).getOrElse(Dynamic)
+            case _ => Dynamic
+          }
         }
-      }}.getOrElse(Dynamic)
+      }.getOrElse(Dynamic)
     }
   }
+
   private def environment(top: Vector[Tok]): Env = {
     val env = mutable.Map.empty[String, Vector[Tok]]
     top.indices.foreach { i =>
@@ -361,6 +411,7 @@ private[ide] object DbtAirflowParser {
     }
     env.toMap
   }
+
   private def kvs(group: Tok): Vector[KV] = split(group.items).flatMap { el =>
     if (group.value == "(" && el.head.kind == "name" && el.lift(1).exists(_.value == "="))
       Some(KV(el.head.value, el.drop(2), el.head.offset, el.head.line))
@@ -368,6 +419,7 @@ private[ide] object DbtAirflowParser {
       Some(KV(el.head.value, el.drop(2), el.head.offset, el.head.line))
     else None
   }
+
   private def dagDefinition(items: Vector[Tok]): Option[Vector[KV]] = items.indices.iterator.flatMap { i =>
     val t = items(i)
     if (t.kind == "name" && Set("DAG", "dag")(t.value) && !items.lift(i - 1).exists(_.value == "def"))
@@ -379,37 +431,50 @@ private[ide] object DbtAirflowParser {
   def shell(command: String): Option[(String, String, String)] = {
     if (!"""\bdbt\s+(run|build|test|seed|snapshot|ls|list)\b""".r.findFirstIn(command).isDefined) return None
     val tokens = com.intellij.util.execution.ParametersListUtil.parse(command, false, true).asScala.toVector
+
     def grab(flags: Set[String]): String = {
-      val values = mutable.ArrayBuffer.empty[String]; var i = 0
+      val values = mutable.ArrayBuffer.empty[String];
+      var i = 0
       while (i < tokens.size) {
         val token = tokens(i)
         flags.find(f => token.startsWith(f + "=")) match {
           case Some(flag) => values += token.drop(flag.length + 1)
           case None if flags(token) =>
-            while (i + 1 < tokens.size && !tokens(i + 1).startsWith("-") && !Set("&&", ";", "||", "|")(tokens(i + 1))) { i += 1; values += tokens(i) }
+            while (i + 1 < tokens.size && !tokens(i + 1).startsWith("-") && !Set("&&", ";", "||", "|")(tokens(i + 1))) {
+              i += 1;
+              values += tokens(i)
+            }
           case _ =>
         }
         i += 1
       }
       values.mkString(" ")
     }
+
     Some((grab(Set("--select", "--models", "--model", "-s", "-m")), grab(Set("--exclude")), grab(Set("--selector"))))
   }
 
   def parse(file: String, source: String): Vector[Pipeline] = {
-    val top = tokenize(source); val env = environment(top); val dag = dagDefinition(top).getOrElse(Vector.empty)
+    val top = tokenize(source);
+    val env = environment(top);
+    val dag = dagDefinition(top).getOrElse(Vector.empty)
     val pipelines = mutable.LinkedHashMap.empty[String, Pipeline]
     val base = file.replace('\\', '/').split('/').last.stripSuffix(".py")
+
     def text(kv: KV): String = asText(eval(kv.value, env)).getOrElse("")
+
     def find(entries: Vector[KV], keys: Set[String]): Option[KV] = entries.find(k => keys(k.key))
+
     def pipeline(chain: Vector[Vector[KV]]): Pipeline = {
       val flat = chain.flatten ++ dag
       val name = find(flat, NameKeys).map(text).filter(_.nonEmpty).getOrElse(base)
       val schedule = find(flat, ScheduleKeys).map(k => Option(text(k)).filter(_.nonEmpty).getOrElse(k.value.map(_.value).mkString.take(60))).getOrElse("")
       val p = pipelines.getOrElse(name, Pipeline(name, schedule, Vector.empty, Vector.empty))
       val result = if (p.schedule.isEmpty) p.copy(schedule = schedule) else p
-      pipelines(name) = result; result
+      pipelines(name) = result;
+      result
     }
+
     def visit(items: Vector[Tok], chain: Vector[Vector[KV]], depth: Int): Unit = if (depth <= 100) {
       items.indices.foreach { i =>
         ProgressManager.checkCanceled()
@@ -426,9 +491,14 @@ private[ide] object DbtAirflowParser {
           val entries = if (items.lift(i - 2).exists(_.value == "def")) Vector.empty else kvs(t)
           val ancestors = chain.flatten
           val next = if (entries.nonEmpty) chain :+ entries else chain
+
           def inherited(keys: Set[String]): Option[KV] = find(entries, keys).orElse(find(ancestors, keys))
+
           if (entries.nonEmpty && t.value != "[") {
-            val dataset = inherited(DatasetKeys).flatMap(k => eval(k.value, env) match { case Text(s) if s.trim.nonEmpty => Some(s.trim); case _ => None })
+            val dataset = inherited(DatasetKeys).flatMap(k => eval(k.value, env) match {
+              case Text(s) if s.trim.nonEmpty => Some(s.trim);
+              case _ => None
+            })
             val ingests = entries.flatMap { k =>
               val strong = if (TableKeys(k.key)) eval(k.value, env) match {
                 case Text(s) if s.matches("[A-Za-z_]\\w*") => Vector(Ingest(dataset, s, k.offset, k.line, k.key))
@@ -444,13 +514,15 @@ private[ide] object DbtAirflowParser {
               val p = pipeline(Vector(dag))
               pipelines(p.name) = p.copy(ingests = (p.ingests ++ ingests).distinctBy(r => (r.dataset, r.table)))
             }
-            val select = find(entries, SelectKeys); val named = inherited(NamedKeys)
+            val select = find(entries, SelectKeys);
+            val named = inherited(NamedKeys)
             if (select.nonEmpty || named.nonEmpty) {
               val sv = select.map(k => eval(k.value, env)).getOrElse(Unset)
               val xv = inherited(ExcludeKeys).map(k => eval(k.value, env)).getOrElse(Unset)
               val nv = named.map(k => eval(k.value, env)).getOrElse(Unset)
               val dynamic = flatten(sv).isEmpty || flatten(xv).isEmpty || flatten(nv).isEmpty
-              val selection = asText(sv).getOrElse(""); val selector = asText(nv).getOrElse("")
+              val selection = asText(sv).getOrElse("");
+              val selector = asText(nv).getOrElse("")
               if (selection.nonEmpty || selector.nonEmpty || flatten(sv).isEmpty || flatten(nv).isEmpty) {
                 val p = pipeline(next)
                 val location = select.orElse(named).get
@@ -465,6 +537,7 @@ private[ide] object DbtAirflowParser {
         }
       }
     }
+
     visit(top, Vector.empty, 0)
     pipelines.values.toVector.filter(p => p.sites.nonEmpty || p.ingests.nonEmpty)
   }
@@ -480,13 +553,16 @@ final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
           .flatMap(f => Option(f.findElementAt(task.offset))).map { at =>
             new GotoRelatedItem(at, "Airflow DAGs / tasks") {
               override def getCustomName: String = task.dag + " / " + task.task
+
               override def getCustomContainerName: String = task.evidence + ":" + task.line
             }
           }.toVector
         val browser = task.url.toVector.map { url =>
           new GotoRelatedItem(null, "Airflow task links", -1) {
             override def getCustomName: String = "Open " + task.dag + " / " + task.task
+
             override def getCustomContainerName: String = task.schedule
+
             override def navigate(): Unit = BrowserUtil.browse(url)
           }
         }
@@ -498,21 +574,32 @@ final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
 final class DbtAirflowAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
     DbtUi.background(project, "Discover local dbt Airflow context") { _ =>
-      DbtUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) }
+      DbtUi.read {
+        val w = DbtWorkspace.get(project);
+        (DbtAirflow.tasks(w), DbtAirflow.problems(w))
+      }
     } { case (tasks, problems) =>
       val status = DbtUi.textArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Workspace > Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
       val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
         " · " + t.kind + (if (t.schedule.nonEmpty) " · Schedule: " + t.schedule else "") +
         " · " + t.resources.map(_.uniqueId).mkString(", ") + " · " + t.problems.mkString("; ") + " · Source: " + t.evidence + ":" + t.line +
         (if (t.ingestion.nonEmpty) (if (t.kind == "ingestion") " · ingestion destinations: " else " · upstream ingestion pipelines: ") + t.ingestion.mkString(", ") else "")).toArray)
+
       def selected: Option[DbtAirflowTask] = DbtUi.selected(list, tasks)
+
       DbtUi.dialog(project, "dbt Airflow Context", new JScrollPane(list), north = status, south = DbtUi.buttons(
-        DbtUi.button("Open DAG definition") { selected.foreach(t => DbtUi.open(project, t.evidence, t.offset)) },
-        DbtUi.button("Open Airflow task") { selected match {
-          case Some(t) if t.url.nonEmpty => t.url.foreach(BrowserUtil.browse)
-          case _ => Messages.showInfoMessage(project, "Set Airflow URL in Settings > dbt Workspace > Integrations and choose a task.", "Airflow context")
-        } },
-        DbtUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) }))
+        DbtUi.button("Open DAG definition") {
+          selected.foreach(t => DbtUi.open(project, t.evidence, t.offset))
+        },
+        DbtUi.button("Open Airflow task") {
+          selected match {
+            case Some(t) if t.url.nonEmpty => t.url.foreach(BrowserUtil.browse)
+            case _ => Messages.showInfoMessage(project, "Set Airflow URL in Settings > dbt Workspace > Integrations and choose a task.", "Airflow context")
+          }
+        },
+        DbtUi.button("Configure…") {
+          DbtSettingsConfigurable.showIntegrations(project)
+        }))
     }
   }
 }

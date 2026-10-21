@@ -37,21 +37,26 @@ final class DbtPreviewTest extends DbtTestCase {
     val wide = "日本語\t\"quoted\"\n" + "x" * 2048
     (0 until 1002).foreach { index =>
       val row = new JsonObject
-      row.addProperty("id", index); row.addProperty("wide", wide)
+      row.addProperty("id", index);
+      row.addProperty("wide", wide)
       if (index >= 1000) row.addProperty("outside_limit", true)
       rows.add(row)
     }
-    val raw = new JsonObject; raw.add("show", rows)
+    val raw = new JsonObject;
+    raw.add("show", rows)
     val result = DbtQueryResult.parse(raw.toString, "analytics-dev", 1000, 81, "select wide").toOption.get
     assertEquals(1000, result.rows.size)
     assertEquals(Vector("id", "wide"), result.columns)
-    assertEquals("analytics-dev", result.target); assertEquals(81L, result.elapsedMillis)
-    val grid = new DbtResultGrid(getProject); grid.showResult(result)
+    assertEquals("analytics-dev", result.target);
+    assertEquals(81L, result.elapsedMillis)
+    val grid = new DbtResultGrid(getProject);
+    grid.showResult(result)
     val snapshot = grid.exportSnapshot('\t')
     grid.clear("Closed preview")
     val text = CompletableFuture.supplyAsync(() => snapshot()).get(10, TimeUnit.SECONDS)
     assertTrue(text.contains("999\t\"日本語\t\"\"quoted\"\"\n"))
-    assertFalse(text.contains("outside_limit")); assertFalse(text.contains("1000\t"))
+    assertFalse(text.contains("outside_limit"));
+    assertFalse(text.contains("1000\t"))
     assertEquals("Original raw process output remains available", raw.toString, result.raw)
   }
 
@@ -67,7 +72,8 @@ final class DbtPreviewTest extends DbtTestCase {
 
   def testNestedCteShadowingDoesNotPullAnUnrelatedOuterDefinitionIntoThePreview(): Unit = {
     project()
-    val file = configure("models/scopes.sql", """with a as (select 99 as id),
+    val file = configure("models/scopes.sql",
+      """with a as (select 99 as id),
 container as (with a as (select 1 as id), picked as (select * from a) select * from picked)
 select * from container<caret>""")
     val w = workspace
@@ -89,7 +95,9 @@ select * from container<caret>""")
     assertEquals("PSI-dependent preview actions must update in the background", ActionUpdateThread.BGT, action.getActionUpdateThread)
     val probe = new AnAction {
       override def getActionUpdateThread: ActionUpdateThread = action.getActionUpdateThread
+
       override def update(event: AnActionEvent): Unit = action.update(event)
+
       override def actionPerformed(event: AnActionEvent): Unit = ()
     }
     myFixture.testAction(probe)
@@ -116,23 +124,38 @@ select * from container<caret>""")
   }
 
   private val node = "sql_operation.analytics.inline_query"
+
   private def event(name: String, sql: String = "", message: String = "", id: String = "run-1",
     owner: String = node, level: String = "debug", status: String = "executing"): String = {
-    val root = new JsonObject; val info = new JsonObject; val data = new JsonObject; val identity = new JsonObject
-    info.addProperty("name", name); info.addProperty("invocation_id", id); info.addProperty("level", level); info.addProperty("msg", message)
-    identity.addProperty("unique_id", owner); identity.addProperty("node_status", status); data.add("node_info", identity)
+    val root = new JsonObject;
+    val info = new JsonObject;
+    val data = new JsonObject;
+    val identity = new JsonObject
+    info.addProperty("name", name);
+    info.addProperty("invocation_id", id);
+    info.addProperty("level", level);
+    info.addProperty("msg", message)
+    identity.addProperty("unique_id", owner);
+    identity.addProperty("node_status", status);
+    data.add("node_info", identity)
     if (sql.nonEmpty) data.addProperty("sql", sql)
     if (name == "ShowNode") data.addProperty("unique_id", owner)
-    root.add("info", info); root.add("data", data); root.toString
+    root.add("info", info);
+    root.add("data", data);
+    root.toString
   }
+
   private def command(source: String, query: DbtCteQuery, path: String = "/source/report.sql", url: String = "file:///source/report.sql"): DbtCommand =
     DbtCommand(Vector("dbt"), DbtCommandRequest(DbtCommandAction.Preview, DbtCommandScope.Inline(query.sql)), "/source", Map.empty, "dev", false, "/target", Vector.empty,
       previewSource = Some(DbtPreviewSource(path, source, query.sql, query.spans, node, url)))
+
   private def position(sql: String, needle: String): (Int, Int) = {
-    val offset = sql.indexOf(needle); assertTrue(offset >= 0)
+    val offset = sql.indexOf(needle);
+    assertTrue(offset >= 0)
     val before = sql.take(offset)
     (before.count(_ == '\n') + 1, offset - before.lastIndexOf('\n'))
   }
+
   private def failed(command: DbtCommand, adapter: String, needle: String, suffix: String = ""): DbtPreviewEvidence = {
     val at = position(adapter, needle)
     DbtPreviewEvidence.capture(command, Vector(event("MainReportVersion"), event("SQLQuery", adapter),
@@ -241,15 +264,19 @@ select * from container<caret>""")
   }
 
   private def button(grid: DbtResultGrid, text: String): JButton = components(grid).collectFirst { case b: JButton if b.getText == text => b }.get
+
   private def result = DbtQueryResult.parse("""{"show":[{"id":10,"text":"a,b\nž\t日本語","optional":null,"flag":true},{"id":2,"text":"","optional":"NULL","flag":false},{"id":3,"text":"wide value","extra":1}]}""",
     "dev", 20, 12, "select * from orders").toOption.get
 
   def testTypedNullRendererPreservesEmptyLiteralNullUnicodeAndWideValues(): Unit = {
-    val grid = new DbtResultGrid(getProject); val r = result; grid.showResult(r)
+    val grid = new DbtResultGrid(getProject);
+    val r = result;
+    grid.showResult(r)
     val table = component(grid, classOf[JTable])
     assertEquals(classOf[java.math.BigDecimal], table.getColumnClass(0))
     val nullCell = table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2).asInstanceOf[JLabel]
-    assertEquals("NULL", nullCell.getText); assertEquals("SQL NULL (not an empty string)", nullCell.getToolTipText)
+    assertEquals("NULL", nullCell.getText);
+    assertEquals("SQL NULL (not an empty string)", nullCell.getToolTipText)
     val empty = table.prepareRenderer(table.getCellRenderer(1, 1), 1, 1).asInstanceOf[JLabel]
     assertEquals("", empty.getText)
     val text = table.prepareRenderer(table.getCellRenderer(0, 1), 0, 1).asInstanceOf[JLabel]
@@ -258,12 +285,15 @@ select * from container<caret>""")
     assertEquals(JTable.AUTO_RESIZE_OFF, table.getAutoResizeMode)
     assertEquals(java.lang.Boolean.TRUE, table.getValueAt(0, 3))
   }
+
   def testSortingFilteringSelectionCopyAndCsvTsvKeepExactValuesAndViewOrder(): Unit = {
-    val grid = new DbtResultGrid(getProject); grid.showResult(result)
+    val grid = new DbtResultGrid(getProject);
+    grid.showResult(result)
     val table = component(grid, classOf[JTable])
     table.getRowSorter.toggleSortOrder(0)
     assertEquals(new java.math.BigDecimal("2"), table.getValueAt(0, 0))
-    table.setRowSelectionInterval(0, 0); table.setColumnSelectionInterval(1, 2)
+    table.setRowSelectionInterval(0, 0);
+    table.setColumnSelectionInterval(1, 2)
     button(grid, "Copy selection").doClick()
     assertEquals("\"\"\t\"NULL\"\r\n", CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor))
     val csv = grid.exportText(',')
@@ -277,19 +307,26 @@ select * from container<caret>""")
     component(grid, classOf[JComboBox[_]]).setSelectedItem("TSV")
     assertTrue(button(grid, "Export TSV").isEnabled)
   }
+
   def testChangingLimitSortingAndFilteringNeverRunsQueriesUntilExplicitButton(): Unit = {
     val requests = ArrayBuffer.empty[Int]
-    val grid = new DbtResultGrid(getProject, value => requests += value); grid.showResult(result)
+    val grid = new DbtResultGrid(getProject, value => requests += value);
+    grid.showResult(result)
     val spinner = component(grid, classOf[JSpinner])
     spinner.setValue(Int.box(100))
     component(grid, classOf[JTextField]).setText("wide")
     component(grid, classOf[JTable]).getRowSorter.toggleSortOrder(0)
     assertTrue(requests.isEmpty)
-    button(grid, "Run with limit").doClick(); assertEquals(Vector(100), requests.toVector)
-    grid.setRunning(true); assertFalse(button(grid, "Run with limit").isEnabled)
-    grid.clear("Query canceled"); assertEquals(0, component(grid, classOf[JTable]).getRowCount)
-    assertFalse(button(grid, "Copy selection").isEnabled); assertFalse(button(grid, "Export CSV").isEnabled)
+    button(grid, "Run with limit").doClick();
+    assertEquals(Vector(100), requests.toVector)
+    grid.setRunning(true);
+    assertFalse(button(grid, "Run with limit").isEnabled)
+    grid.clear("Query canceled");
+    assertEquals(0, component(grid, classOf[JTable]).getRowCount)
+    assertFalse(button(grid, "Copy selection").isEnabled);
+    assertFalse(button(grid, "Export CSV").isEnabled)
   }
+
   def testEmptyAndMalformedResultsAreDistinctAndRowsAreBoundedWithHeterogeneousColumns(): Unit = {
     val grid = new DbtResultGrid(getProject)
     grid.showResult(DbtQueryResult.parse("{\"show\":[]}", "prod", 10, 5, "select empty").toOption.get)
@@ -298,12 +335,15 @@ select * from container<caret>""")
     assertTrue(DbtQueryResult.parse("{\"show\":[1,2]}", "dev", 10, 1, "").isLeft)
     assertTrue(DbtQueryResult.parse("broken", "dev", 10, 1, "").isLeft)
     val bounded = DbtQueryResult.parse("{\"show\":[{\"first\":1},{\"hidden_only\":2}]}", "dev", 1, 1, "").toOption.get
-    assertEquals(Vector("first"), bounded.columns); assertEquals(1, bounded.rows.size)
+    assertEquals(Vector("first"), bounded.columns);
+    assertEquals(1, bounded.rows.size)
     val zero = DbtQueryResult.parse("{\"show\":[{\"id\":1}]}", "dev", 0, 1, "").toOption.get
     assertEquals(1, zero.limit)
-    grid.showResult(result); grid.clear("Malformed output; see raw dbt output.")
+    grid.showResult(result);
+    grid.clear("Malformed output; see raw dbt output.")
     assertTrue(components(grid).collect { case l: JLabel => l.getText }.mkString(" ").contains("Malformed output"))
   }
+
   def testNullAwareFilteringAndNumericSortingDoNotConfuseNullWithEmptyText(): Unit = {
     val grid = new DbtResultGrid(getProject)
     grid.showResult(DbtQueryResult.parse("{\"show\":[{\"v\":null},{\"v\":\"\"},{\"v\":\"NULL\"}]}", "dev", 20, 1, "").toOption.get)

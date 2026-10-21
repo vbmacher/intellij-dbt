@@ -30,7 +30,9 @@ private[dbt] object DbtResolution {
     val consumer = w.packageOwner(r).getOrElse(r)
     val external = if (consumer.supports(12)) w.rootFile(consumer, "vars.yml").flatMap(DbtYaml.mapping).flatMap(DbtYaml.map(_, "vars")) else None
     val original = DbtYaml.map(consumer.config, "vars")
+
     def nonEmpty(m: Option[YAMLMapping]): Boolean = m.exists(_.getKeyValues.size() > 0)
+
     overriddenVariable(consumer, name) match {
       case Some(definition) => Vector(definition)
       case None if nonEmpty(external) && nonEmpty(original) => Vector.empty
@@ -49,7 +51,7 @@ private[dbt] object DbtResolution {
     val parents = w.declarations(Set("source"), source, root)
     w.symbols.filter(s => s.kind == "source_table" && s.name == table && s.owner == source &&
       s.isEnabled && parents.exists(p => p.namespace == s.namespace &&
-        w.owner(p) == w.owner(s) && (p.file == s.file && p.mapping.exists(_.getTextRange.contains(s.range)) || s.metadata)))
+      w.owner(p) == w.owner(s) && (p.file == s.file && p.mapping.exists(_.getTextRange.contains(s.range)) || s.metadata)))
   }
 
   /** Local sources selected for a builtin, or its documentation. */
@@ -119,10 +121,10 @@ private[navigation] final class DbtBuiltinSources extends DbtDeclarationSource {
       Option(entry.getValue).collect { case s: YAMLScalar => s.getTextValue }.toVector.flatMap(root.psiFile).flatMap { file =>
         val identifier = name.split("\\.").last
         val ranges = if (file.getVirtualFile.getExtension == "py") DbtPython.declarations(file, identifier).map(_.getTextRange)
-          else if (file.getVirtualFile.getExtension == "sql") DbtSyntax.inFile(file)
-            .filter(_.isTag("macro"))
-            .flatMap(_.tokens.lift(1)).filter(_.image == identifier).map(_.range)
-          else Vector.empty
+        else if (file.getVirtualFile.getExtension == "sql") DbtSyntax.inFile(file)
+          .filter(_.isTag("macro"))
+          .flatMap(_.tokens.lift(1)).filter(_.image == identifier).map(_.range)
+        else Vector.empty
         ranges.map(range => DbtSymbol("builtin", name, root.name, file, range, attributes = Map("builtin-root" -> root.directory.getPath)))
       }
     }
@@ -191,8 +193,11 @@ private[navigation] object DbtStaticCalls {
   def constants(blocks: Vector[DbtSyntax.Block], before: Int): Map[String, Vector[String]] = {
     var scopes = List(Map.empty[String, Vector[String]])
     var captures = List.empty[String]
+
     def visible: Map[String, Vector[String]] = scopes.reverse.foldLeft(Map.empty[String, Vector[String]])(_ ++ _)
+
     def bind(name: String, values: Vector[String]): Unit = scopes = (scopes.head + (name -> values)) :: scopes.tail
+
     blocks.takeWhile(_.range.getStartOffset < before).foreach { b =>
       val ts = b.tokens
       val tag = b.tagName.getOrElse("")
@@ -224,7 +229,7 @@ private[navigation] object DbtStaticCalls {
         val preceding = blocks.takeWhile(_.range.getStartOffset < b.range.getStartOffset)
         val conditional = preceding.count(_.isTag("if")) > preceding.count(_.isTag("endif"))
         bind(name, if (conditional && (next.isEmpty || env.get(name).exists(_.isEmpty))) Vector.empty
-          else if (conditional) (env.getOrElse(name, Vector.empty) ++ next).distinct else next)
+        else if (conditional) (env.getOrElse(name, Vector.empty) ++ next).distinct else next)
       } else if (tag == "set" && !ts.lift(2).exists(_.image == ".")) {
         if (!ts.exists(_.image == "=")) ts.lift(1).foreach(t => captures = t.image :: captures)
         else ts.drop(1).takeWhile(_.image != "=").filter(t => !t.string && DbtSyntax.isIdentifier(t.image)).foreach(t => bind(t.image, Vector.empty))
@@ -268,7 +273,9 @@ private[navigation] object DbtStaticCalls {
     val bindings = params.zipWithIndex.flatMap { case (p, i) =>
       call.arguments.find(_.keyword.contains(p.name)).orElse(call.positional.lift(i)).map(a => p.name -> (a, value(a.tokens, constants)))
     }.toMap
+
     def originals(argument: DbtSyntax.Argument): Vector[DbtSyntax.Argument] = argument.tokens.flatMap(t => bindings.get(t.image)).map(_._1)
+
     val env = bindings.view.mapValues(_._2).toMap
     val result = ArrayBuffer.empty[(DbtSyntax.Argument, Vector[PsiElement])]
     body.flatMap(DbtSyntax.calls).foreach { delegated =>
@@ -310,7 +317,8 @@ private[navigation] object DbtStaticCalls {
         call.positional.lift(index).map(_ -> (s"Unresolved ref: '${args(index).head}'" +
           call.version.flatten.map(" (version " + _ + ")").getOrElse("")))
       case "source" if args.size == 2 =>
-        val source = args(0).head; val table = args(1).head
+        val source = args(0).head;
+        val table = args(1).head
         if (w.declarations(Set("source"), source, root).isEmpty) call.positional.headOption.map(_ -> s"Unresolved source: '$source'")
         else call.positional.lift(1).map(_ -> s"Unresolved source table: '$source.$table'")
       case _ => None

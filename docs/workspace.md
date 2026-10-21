@@ -132,7 +132,7 @@ With a [baseline](configuration.md#baseline-state-and-deferral), `state:modified
 selects changed resources and their consumers. **Compare baseline** opens a resource
 chooser and a native diff of the recorded baseline values against the current SQL,
 properties and configuration; current runtime defaults stay unresolved. It does not
-check warehouse relations and is separate from [Git change impact](integrations.md#review-the-impact-of-git-changes).
+check warehouse relations.
 A missing or incompatible baseline blocks state-dependent commands.
 
 ### Tests
@@ -157,7 +157,7 @@ identity stops the run with an explanation; the selection is never widened.
 
 **Preview** needs a dbt version that supports `show`. In a Run configuration, select
 one model in **Scope** and leave **Selection** and **Exclude** empty. In a local model
-editor, use the context menu:
+editor, right-click and open **dbt**:
 
 - **Preview selected dbt SQL** runs the selected SELECT query.
 - **Preview dbt CTE** runs the CTE at the caret with its dependencies.
@@ -179,14 +179,15 @@ position in your source.
 
 ## Compiled SQL
 
-In a model editor, **Open Compiled dbt SQL** opens the compiled SQL read-only, and
+In a model editor, right-click and open **dbt**. **Open Compiled dbt SQL** opens the
+compiled SQL read-only, and
 **Compare Authored and Compiled dbt SQL** opens a diff of **Authored SQL** and
 **Compiled SQL**. Run **Compile** or
 **Generate Docs** for the matching project and target first.
 
 ## Inspect CTE queries
 
-In a local SQL model, choose **Inspect dbt CTEs** from the context menu to open a
+In a local SQL model, choose **dbt → Inspect dbt CTEs** from the context menu to open a
 **Debug** session. Opening it runs no query. It uses the project's
 [execution settings](configuration.md#execution-settings), including the active
 target; Run configuration overrides do not apply. **Frames** lists the model's

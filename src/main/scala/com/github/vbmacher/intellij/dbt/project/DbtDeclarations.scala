@@ -82,24 +82,24 @@ private[dbt] object DbtDeclarations {
 
     /** Macros, generic tests, docs, snapshots and materializations declared by Jinja blocks. */
     private def blocks: Vector[DbtSymbol] = if (!root.resource(file) || !Set("sql", "md").contains(ext)) Vector.empty
-      else jinja.filter(_.tag).flatMap { b =>
-        b.tokens.take(2) match {
-          case Vector(tag, name) if blockKinds.contains(tag.image) =>
-            val kind = blockKinds(tag.image)
-            val attributes = Map("block-start" -> b.range.getEndOffset.toString) ++ (kind match {
-              case "snapshot" => Code ++ configLiterals(jinja.dropWhile(_.range.getStartOffset <= b.range.getStartOffset)
-                .takeWhile(!_.isTag("endsnapshot"))).toMap
-              case "materialization" => Map("adapter" -> b.tokens.sliding(3).collectFirst {
-                case Vector(key, eq, value) if key.image == "adapter" && eq.image == "=" && value.string => value.image
-              }.getOrElse("default"))
-              case _ => Map.empty[String, String]
-            })
-            val parameters = if (Set("macro", "test").contains(tag.image))
-              DbtSyntax.parameters(b).map(t => symbol("parameter", t.image, t.range, name.image)) else Vector.empty
-            symbol(kind, name.image, name.range, attributes = attributes) +: parameters
-          case _ => Vector.empty
-        }
+    else jinja.filter(_.tag).flatMap { b =>
+      b.tokens.take(2) match {
+        case Vector(tag, name) if blockKinds.contains(tag.image) =>
+          val kind = blockKinds(tag.image)
+          val attributes = Map("block-start" -> b.range.getEndOffset.toString) ++ (kind match {
+            case "snapshot" => Code ++ configLiterals(jinja.dropWhile(_.range.getStartOffset <= b.range.getStartOffset)
+              .takeWhile(!_.isTag("endsnapshot"))).toMap
+            case "materialization" => Map("adapter" -> b.tokens.sliding(3).collectFirst {
+              case Vector(key, eq, value) if key.image == "adapter" && eq.image == "=" && value.string => value.image
+            }.getOrElse("default"))
+            case _ => Map.empty[String, String]
+          })
+          val parameters = if (Set("macro", "test").contains(tag.image))
+            DbtSyntax.parameters(b).map(t => symbol("parameter", t.image, t.range, name.image)) else Vector.empty
+          symbol(kind, name.image, name.range, attributes = attributes) +: parameters
+        case _ => Vector.empty
       }
+    }
 
     /** Resources and their children declared in YAML property files. */
     private def resources(top: YAMLMapping): Vector[DbtSymbol] =
@@ -165,7 +165,7 @@ private[dbt] object DbtDeclarations {
         val children = childKeys.flatMap { case (key, childKind) =>
           // Versions without their own columns inherit the columns of the model.
           val items = if (key == "columns" && version.nonEmpty && DbtYaml.value(entry, key).isEmpty) DbtYaml.items(m, key)
-            else DbtYaml.items(entry, key)
+          else DbtYaml.items(entry, key)
           items.flatMap(c => DbtYaml.string(c, "name").toVector.flatMap { n =>
             val inherited = if (childKind == "source_table") DbtYaml.attributes(m) else Map.empty[String, String]
             val child = symbol(childKind, n, DbtYaml.nameRange(c), name, version, inherited ++ DbtYaml.attributes(c), Some(c))
@@ -207,9 +207,9 @@ private[dbt] object DbtConfiguration {
     else roots.flatMap { r =>
       val symbols = w.symbols.filter(s => (kind.contains(s.kind) || kind.contains("source") && s.kind == "source_table") &&
         w.owner(s).contains(r) && path.lastOption.contains(s.name) && (if (s.kind == "source_table") path.dropRight(1).lastOption.contains(s.owner)
-        else !s.isCode || r.relative(s.file.getVirtualFile).exists(relative => r.pathKinds.exists { case (k, base) =>
-          k == s.kind && r.folders(base, relative).contains(path.dropRight(1))
-        })))
+      else !s.isCode || r.relative(s.file.getVirtualFile).exists(relative => r.pathKinds.exists { case (k, base) =>
+        k == s.kind && r.folders(base, relative).contains(path.dropRight(1))
+      })))
       val folders = r.pathKinds.filter(p => kind.contains(p._1)).flatMap { case (_, base) =>
         Option(r.directory.findFileByRelativePath((base +: path).mkString("/"))).filter(_.isDirectory)
           .flatMap(d => Option(PsiManager.getInstance(w.project).findDirectory(d)))
@@ -251,7 +251,7 @@ private[dbt] object DbtConfiguration {
   private def levels(w: DbtWorkspace, resource: DbtRoot, file: PsiFile, name: String): Vector[YAMLMapping] =
     resource.resourceFolders(file.getVirtualFile).toVector.flatMap { case (kind, folders) =>
       val sectionNames = if (kind == "test") Vector("tests", "data_tests")
-        else Vector(if (kind == "analysis") "analyses" else kind + "s")
+      else Vector(if (kind == "analysis") "analyses" else kind + "s")
       configurationRoots(w, resource).flatMap(config => walk(config, sectionNames, resource.name, folders :+ name))
     }
 

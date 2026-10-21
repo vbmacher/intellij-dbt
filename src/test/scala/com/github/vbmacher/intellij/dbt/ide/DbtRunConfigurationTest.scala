@@ -13,22 +13,28 @@ import java.nio.file.{Files, Path}
 /** Native dbt Run configurations: command preparation, persisted overrides and the standard Run/Debug sessions. */
 final class DbtRunConfigurationTest extends DbtTestCase {
   private def setup(): (DbtRunConfiguration, Path) = {
-    project(); add("models/orders.sql", "select 1 as id")
+    project();
+    add("models/orders.sql", "select 1 as id")
     val dir = tempDirectory("dbt native commands ")
     Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\n")
     val script = dir.resolve("dbt.py")
-    Files.writeString(script, """import json,os,time,sys
+    Files.writeString(script,
+      """import json,os,time,sys
 print('native command output',flush=True)
 if 'hold' in sys.argv:
  while not os.path.exists('release'): time.sleep(.01)
 if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
 """)
-    val config = runConfiguration("native command"); config.action = "Run"
+    val config = runConfiguration("native command");
+    config.action = "Run"
     val options = workspace.roots.head.runOptions
-    options.projectRoot = dir.toString; options.notifications = false
-    config.executable = "/usr/bin/python3"; config.executableArguments = "\"" + script.toString + "\" hold"
+    options.projectRoot = dir.toString;
+    options.notifications = false
+    config.executable = "/usr/bin/python3";
+    config.executableArguments = "\"" + script.toString + "\" hold"
     (config, dir)
   }
+
   private def start(config: DbtRunConfiguration): DbtCommandConsole = {
     val executor = DefaultRunExecutor.getRunExecutorInstance
     val environment = ExecutionEnvironmentBuilder.create(executor, config).build()
@@ -39,37 +45,56 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     Disposer.register(getTestRootDisposable, console)
     console
   }
+
   def testNativeCommandSessionStreamsBeforeExitAndStopDoesNotCancelLaterInvocations(): Unit = {
     val (config, dir) = setup()
     val first = start(config)
+
     def output(view: DbtCommandConsole): String = view.console.asInstanceOf[ConsoleViewImpl].getEditor.getDocument.getText
-    await("Ordinary command streams into its own native Run console") { output(first).contains("native command output") }
+
+    await("Ordinary command streams into its own native Run console") {
+      output(first).contains("native command output")
+    }
     assertFalse(first.process.isProcessTerminated)
     first.process.destroyProcess()
-    await("Run Stop cancels the managed command") { first.process.isProcessTerminated && !getProject.getService(classOf[DbtRunner]).isRunning }
+    await("Run Stop cancels the managed command") {
+      first.process.isProcessTerminated && !getProject.getService(classOf[DbtRunner]).isRunning
+    }
     val second = start(config)
-    await("Second invocation starts") { output(second).contains("native command output") }
+    await("Second invocation starts") {
+      output(second).contains("native command output")
+    }
     Disposer.dispose(first)
     assertTrue("Disposing a completed session cannot stop the next command", getProject.getService(classOf[DbtRunner]).isRunning)
     Files.writeString(dir.resolve("release"), "")
-    await("Next invocation completes independently") { second.process.isProcessTerminated }
+    await("Next invocation completes independently") {
+      second.process.isProcessTerminated
+    }
     assertEquals(0, second.process.getExitCode.intValue())
   }
+
   def testSavedInlinePreviewKeepsItsSourceScopeAndRunsThroughTheStandardProfile(): Unit = {
     val (config, dir) = setup()
-    config.action = "Preview"; config.scope = workspace.symbols.find(_.isCode).get.file.getVirtualFile.getPath
+    config.action = "Preview";
+    config.scope = workspace.symbols.find(_.isCode).get.file.getVirtualFile.getPath
     config.inlineSql = "select 7 as id"
-    val xml = new Element("configuration"); config.writeExternal(xml)
-    val saved = runConfiguration("native command"); saved.readExternal(xml)
+    val xml = new Element("configuration");
+    config.writeExternal(xml)
+    val saved = runConfiguration("native command");
+    saved.readExternal(xml)
     Files.writeString(dir.resolve("release"), "")
     assertEquals(DbtCommandScope.Inline("select 7 as id"), saved.prepare().toOption.get._1.request.scope)
     val console = start(saved)
-    await("Saved inline Preview completes") { console.process.isProcessTerminated }
+    await("Saved inline Preview completes") {
+      console.process.isProcessTerminated
+    }
     assertEquals(0, console.process.getExitCode.intValue())
     assertEquals("select 7 as id", saved.inlineSql)
   }
+
   def testNativeDebuggerOpensWithoutQueryingAndUsesSourceBreakpointsAndFrames(): Unit = {
-    project(); val file = configure("models/inspect.sql", "with a as (select 1), b as (select * from a) select * from b<caret>")
+    project();
+    val file = configure("models/inspect.sql", "with a as (select 1), b as (select * from a) select * from b<caret>")
     val frames = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(workspace, file).get.ctes
     val typeOf = com.intellij.xdebugger.XDebuggerUtil.getInstance.findBreakpointType(classOf[DbtCteBreakpointType])
     assertNotNull(typeOf)
@@ -80,8 +105,12 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     var nativeUi = Option.empty[com.intellij.execution.ui.RunnerLayoutUi]
     session.runWhenUiReady(ui => nativeUi = Some(ui))
     try {
-      await("Native debugger frontend finishes creating its tabs") { nativeUi.nonEmpty }
-      await("Native Debug session is suspended before any query") { session.isSuspended && session.getCurrentPosition != null }
+      await("Native debugger frontend finishes creating its tabs") {
+        nativeUi.nonEmpty
+      }
+      await("Native Debug session is suspended before any query") {
+        session.isSuspended && session.getCurrentPosition != null
+      }
       assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
       assertEquals(file.getVirtualFile, session.getCurrentPosition.getFile)
       val process = session.getDebugProcess.asInstanceOf[DbtCteDebugProcess]
@@ -90,9 +119,13 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
       assertNotNull(opened.getRunContentDescriptor.getComponent)
       assertNotNull("CTE rows are installed in the native Debug layout", nativeUi.get.findContent("dbt.cte.rows"))
       session.stepOut()
-      await("Unsupported Step Out preserves the inspection position") { session.isSuspended }
+      await("Unsupported Step Out preserves the inspection position") {
+        session.isSuspended
+      }
       session.runToPosition(session.getCurrentPosition, false)
-      await("Unsupported Run to Cursor preserves the inspection position") { session.isSuspended }
+      await("Unsupported Run to Cursor preserves the inspection position") {
+        session.isSuspended
+      }
       assertFalse("Unsupported debugger actions execute no query", getProject.getService(classOf[DbtRunner]).isRunning)
     } finally {
       session.stop()
@@ -112,10 +145,13 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     project("profile: analytics\n")
     add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: postgres}, prod: {type: postgres}}}\n")
     val model = add("models/orders.sql", "{{ config(materialized='incremental') }} select 1 as id")
-    val w = workspace; val root = w.roots.head
+    val w = workspace;
+    val root = w.roots.head
     root.runOptions.target = "dev"
     val config = runConfiguration()
-    config.target = "prod"; config.executable = "/usr/bin/python3"; config.executableArguments = "'wrapper with spaces.py'"
+    config.target = "prod";
+    config.executable = "/usr/bin/python3";
+    config.executableArguments = "'wrapper with spaces.py'"
     for (action <- DbtCommand.Actions :+ "Resolve Selection") {
       config.action = action
       config.scope = if (action == "Preview") model.getVirtualFile.getPath else ""
@@ -126,27 +162,44 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
       assertEquals("dev", root.runOptions.target)
       assertEquals("dbt", root.runOptions.executable)
     }
-    config.action = "Build"; config.scope = model.getVirtualFile.getPath; config.fullRefresh = true
-    val xml = new Element("configuration"); config.writeExternal(xml)
-    val restored = runConfiguration(); restored.readExternal(xml)
-    assertEquals(config.scope, restored.scope); assertEquals(config.target, restored.target)
+    config.action = "Build";
+    config.scope = model.getVirtualFile.getPath;
+    config.fullRefresh = true
+    val xml = new Element("configuration");
+    config.writeExternal(xml)
+    val restored = runConfiguration();
+    restored.readExternal(xml)
+    assertEquals(config.scope, restored.scope);
+    assertEquals(config.target, restored.target)
     assertEquals(config.executableArguments, restored.executableArguments)
     assertTrue(restored.prepare().toOption.get._1.request.fullRefresh)
   }
+
   def testStoredConfigurationsHaveIndependentScopesAndGraphFilteringCannotRetargetThem(): Unit = {
-    project(); val one = add("models/one.sql", "select 1"); val two = add("models/two.sql", "select 2")
-    val first = runConfiguration(); first.action = "Run"; first.scope = one.getVirtualFile.getPath
-    val second = runConfiguration(); second.action = "Compile"; second.scope = two.getVirtualFile.getPath
+    project();
+    val one = add("models/one.sql", "select 1");
+    val two = add("models/two.sql", "select 2")
+    val first = runConfiguration();
+    first.action = "Run";
+    first.scope = one.getVirtualFile.getPath
+    val second = runConfiguration();
+    second.action = "Compile";
+    second.scope = two.getVirtualFile.getPath
     val before = first.prepare().toOption.get._1
-    val panel = new DbtToolWindowPanel(getProject); Disposer.register(getTestRootDisposable, panel)
+    val panel = new DbtToolWindowPanel(getProject);
+    Disposer.register(getTestRootDisposable, panel)
     panel.handleMessage("""{"type":"filter","id":"two","value":""}""")
     assertEquals(before.arguments, first.prepare().toOption.get._1.arguments)
     assertTrue(second.prepare().toOption.get._1.arguments.contains("fqn:analytics.two"))
     assertFalse(second.prepare().toOption.get._1.arguments.contains("fqn:analytics.one"))
   }
+
   def testCliSelectionBecomesUnusableAfterSourceOrExecutionSettingsChange(): Unit = {
-    project(); val file = add("models/orders.sql", "select 1")
-    val config = runConfiguration(); config.action = "Run"; config.selectors = Vector("runtime:unknown")
+    project();
+    val file = add("models/orders.sql", "select 1")
+    val config = runConfiguration();
+    config.action = "Run";
+    config.selectors = Vector("runtime:unknown")
     assertTrue(config.prepare().isLeft)
     config.cliSelection = Some(config.sourceKey(workspace) -> Vector("model.analytics.orders"))
     assertTrue(config.prepare().isRight)
@@ -158,9 +211,12 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     config.cliSelection = Some(config.sourceKey(workspace) -> Vector("missing.resource"))
     assertTrue("Unknown CLI identities must never widen execution", config.prepare().isLeft)
   }
+
   def testPreviewRejectsFoldersAndFreshnessRemainsProjectWide(): Unit = {
-    project(); val model = add("models/orders.sql", "select 1")
-    val config = runConfiguration(); config.action = "Preview"
+    project();
+    val model = add("models/orders.sql", "select 1")
+    val config = runConfiguration();
+    config.action = "Preview"
     assertTrue(config.prepare().isLeft)
     config.scope = model.getVirtualFile.getPath
     assertTrue(config.prepare().isRight)

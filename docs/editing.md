@@ -55,8 +55,8 @@ definitions of builtins instead, see
 
 ## Edit and generate YAML properties
 
-**Edit dbt Properties YAML** (editor context menu) opens the resource's authored YAML,
-where descriptions, tags, data tests, types and custom fields stay editable.
+**dbt → Edit dbt Properties YAML** (editor context menu) opens the resource's
+authored YAML, where descriptions, tags, data tests, types and custom fields stay editable.
 
 **Code → Generate → dbt Columns** adds missing known column declarations.
 **Inherit dbt Descriptions** fills empty descriptions, only for proven single-column
@@ -149,8 +149,8 @@ First choose a [SQL formatter and executable](configuration.md#sql-formatter).
 - **Code → Reformat Code** formats the SQL/Jinja document in the background with
   sqlfmt or SQLFluff. SQLFluff `format` applies only its formatting rules. If
   formatting fails or the document changes meanwhile, the document stays unchanged.
-- With SQLFluff, **Inspect dbt SQL** (Tools menu or editor context menu) shows the
-  project's lint results as editor warnings or errors. **Alt+Enter → Apply SQLFluff
+- With SQLFluff, **Inspect dbt SQL** (Tools menu or editor context menu under **dbt**)
+  shows the project's lint results as editor warnings or errors. **Alt+Enter → Apply SQLFluff
   … fix** applies an offered fix; no fixes are offered while the file has parse or
   templating errors. Editing clears the results; run the action again.
 - With [**Format dbt SQL on save**](configuration.md#sql-formatter), saving formats the file in the background.
@@ -159,8 +159,8 @@ Formatting and fixes support Undo.
 
 ## SQL clipboard conversion
 
-**Copy for Target DB** (Edit menu, editor context menu, **Ctrl+Shift+C** / macOS
-**Cmd+Shift+C**) copies the selection or whole document without changing it. Static
+**Copy for Target DB** (Edit menu, editor context menu under **dbt**,
+**Ctrl+Shift+C** / macOS **Cmd+Shift+C**) copies the selection or whole document without changing it. Static
 `ref`, `source` and `this` references become physical relation names, including
 aliases and quoting; other Jinja is wrapped in marked SQL comments:
 

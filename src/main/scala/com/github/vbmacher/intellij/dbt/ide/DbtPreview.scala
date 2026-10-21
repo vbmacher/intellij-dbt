@@ -19,19 +19,22 @@ import scala.util.Try
 
 final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
+
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
     DbtEditorAction.sql(event, editor = true) && event.getData(CommonDataKeys.EDITOR).getSelectionModel.hasSelection)
+
   override def actionPerformed(event: AnActionEvent): Unit = DbtCteInspection.launchPreview[DbtCommand](event, "Preview selected dbt SQL") {
     (file, editor) =>
       val sql = Option(editor.getSelectionModel.getSelectedText).filter(_.trim.nonEmpty)
-      (w, before) => for {
-        text <- sql.toRight("Select SQL to preview.")
-        _ <- Either.cond(DbtNavigation.projectedColumns(text).nonEmpty,
-          (), "Select one supported SELECT query to preview. Statements that modify data or schema cannot be previewed.")
-        model <- w.model(file).toRight("Choose a dbt source model.")
-        _ <- Either.cond(before == DbtCteInspection.context(w, model), (), "Source or execution settings changed; select the query again.")
-        command <- DbtCteInspection.command(w, model, text)
-      } yield command
+      (w, before) =>
+        for {
+          text <- sql.toRight("Select SQL to preview.")
+          _ <- Either.cond(DbtNavigation.projectedColumns(text).nonEmpty,
+            (), "Select one supported SELECT query to preview. Statements that modify data or schema cannot be previewed.")
+          model <- w.model(file).toRight("Choose a dbt source model.")
+          _ <- Either.cond(before == DbtCteInspection.context(w, model), (), "Source or execution settings changed; select the query again.")
+          command <- DbtCteInspection.command(w, model, text)
+        } yield command
   } { (command, before, current) =>
     Either.cond(before.nonEmpty && before == current(), command, "Source or execution settings changed; no query was launched.")
   }
@@ -39,19 +42,22 @@ final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
 
 final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
+
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event, editor = true))
+
   override def actionPerformed(event: AnActionEvent): Unit =
     DbtCteInspection.launchPreview[(DbtCteContext, DbtCommand)](event, "Preview dbt CTE") { (file, editor) =>
       val offset = editor.getCaretModel.getOffset
-      (w, _) => for {
-        resource <- w.model(file).toRight("Choose a dbt source model.")
-        snapshot <- DbtCteInspection.context(w, resource).toRight("The execution project is unavailable.")
-        analysis <- DbtSqlAnalysis.get(w, file).toRight("This SQL cannot be inspected safely.")
-        cte <- DbtCteInspection.at(w, file, analysis, offset)
-          .toRight("Place the caret at a recognized CTE definition or reference.")
-        query <- DbtCteInspection.plan(snapshot.source, analysis, cte)
-        command <- DbtCteInspection.command(w, resource, query.sql, query.spans)
-      } yield snapshot -> command
+      (w, _) =>
+        for {
+          resource <- w.model(file).toRight("Choose a dbt source model.")
+          snapshot <- DbtCteInspection.context(w, resource).toRight("The execution project is unavailable.")
+          analysis <- DbtSqlAnalysis.get(w, file).toRight("This SQL cannot be inspected safely.")
+          cte <- DbtCteInspection.at(w, file, analysis, offset)
+            .toRight("Place the caret at a recognized CTE definition or reference.")
+          query <- DbtCteInspection.plan(snapshot.source, analysis, cte)
+          command <- DbtCteInspection.command(w, resource, query.sql, query.spans)
+        } yield snapshot -> command
     } { case ((snapshot, command), expected, current) =>
       Either.cond(expected.contains(snapshot) && current().contains(snapshot), command,
         "Source or execution settings changed; no query was launched. Invoke Preview CTE again.")
@@ -72,7 +78,12 @@ private[ide] object DbtCteInspection {
     DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
       val prepare = input(file, editor)
       DbtUi.saveAndCommit(project)
-      def current(): Option[DbtCteContext] = DbtUi.read { val w = DbtWorkspace.get(project); w.model(file).flatMap(context(w, _)) }
+
+      def current(): Option[DbtCteContext] = DbtUi.read {
+        val w = DbtWorkspace.get(project);
+        w.model(file).flatMap(context(w, _))
+      }
+
       val before = current()
       DbtUi.readLater(project)(prepare(DbtWorkspace.get(project), before)) { result =>
         result.flatMap(verify(_, before, () => current())) match {
@@ -113,20 +124,27 @@ private[ide] object DbtCteInspection {
     if (analysis.issues.exists(_.startsWith("Explicit CTE column lists"))) return Left("Explicit CTE column lists cannot be inspected safely. Preview the complete model instead.")
     val selected = scala.collection.mutable.LinkedHashSet.empty[DbtCte]
     val visiting = scala.collection.mutable.Set.empty[DbtCte]
+
     def visit(current: DbtCte): Either[String, Unit] = {
       if (visiting(current)) Left("Recursive CTE inspection is unsupported.")
       else {
         visiting += current
         val parents = analysis.ctes.filter(p => p.body.contains(current.range))
-        val result = current.dependencies.foldLeft[Either[String, Unit]](Right(())) { (previous, name) => previous.flatMap { _ =>
-          val candidates = analysis.ctes.filter(c => c.name.equalsIgnoreCase(name) && c.range.getStartOffset < current.range.getStartOffset &&
-            (analysis.ctes.filter(p => p.body.contains(c.range)).toSet.subsetOf(parents.toSet)))
-          candidates.sortBy(_.range.getStartOffset).lastOption.toRight("A CTE dependency is unavailable: " + name).flatMap(visit)
-        }}
+        val result = current.dependencies.foldLeft[Either[String, Unit]](Right(())) { (previous, name) =>
+          previous.flatMap { _ =>
+            val candidates = analysis.ctes.filter(c => c.name.equalsIgnoreCase(name) && c.range.getStartOffset < current.range.getStartOffset &&
+              (analysis.ctes.filter(p => p.body.contains(c.range)).toSet.subsetOf(parents.toSet)))
+            candidates.sortBy(_.range.getStartOffset).lastOption.toRight("A CTE dependency is unavailable: " + name).flatMap(visit)
+          }
+        }
         visiting -= current
-        result.map(_ => { selected += current; () })
+        result.map(_ => {
+          selected += current;
+          ()
+        })
       }
     }
+
     if (analysis.issues.exists(_.toLowerCase.contains("recursive"))) Left("Recursive CTE inspection is unsupported.")
     else visit(cte).flatMap(_ => prefix(text, analysis, selected.toVector, cte)).map { setup =>
       val name = if (DbtSyntax.isIdentifier(cte.name)) cte.name else "\"" + cte.name.replace("\"", "\"\"") + "\""
@@ -142,6 +160,7 @@ private[ide] object DbtCteInspection {
       DbtCteQuery(query.toString, spans.result())
     }
   }
+
   def context(w: DbtWorkspace, model: DbtSymbol): Option[DbtCteContext] = w.owner(model).map(w.executionRoot).map { root =>
     val manager = FileDocumentManager.getInstance()
     val document = Option(manager.getCachedDocument(model.file.getVirtualFile))
@@ -151,11 +170,12 @@ private[ide] object DbtCteInspection {
       root.config.getContainingFile.getText, root.settings.map(_.getText).getOrElse(""),
       root.psiFile(root.profilesFile).map(f => DbtHash.sha256(f.getText)).getOrElse(""))
     val dependencies = w.files.filter(f => w.root(f).exists(r => w.executionRoot(r) == root &&
-      (r.resource(f) || f.getName == "dbt_project.yml" || f.getName == "profiles.yml" || f.getName == ".dbt-navigation.yml")))
+        (r.resource(f) || f.getName == "dbt_project.yml" || f.getName == "profiles.yml" || f.getName == ".dbt-navigation.yml")))
       .map(f => f.getVirtualFile.getPath -> Option(manager.getCachedDocument(f.getVirtualFile)).map(_.getModificationStamp).getOrElse(f.getModificationStamp))
       .sortBy(_._1)
     DbtCteContext(source, document.map(_.getModificationStamp).getOrElse(model.file.getModificationStamp), execution, dependencies)
   }
+
   def command(w: DbtWorkspace, resource: DbtSymbol, sql: String,
     spans: Vector[DbtPreviewSpan] = Vector.empty): Either[String, DbtCommand] = for {
     owner <- w.owner(resource).toRight("Owning dbt project is unavailable.")
@@ -178,10 +198,14 @@ private[ide] final case class DbtCteContext(source: String, stamp: Long, executi
 
 /** Only unchanged authored spans can be navigated after CTE extraction and adapter wrapping. */
 private[ide] final case class DbtPreviewSpan(queryStart: Int, sourceStart: Int, length: Int)
+
 private[ide] final case class DbtCteQuery(sql: String, spans: Vector[DbtPreviewSpan])
+
 private[ide] final case class DbtPreviewSource(path: String, text: String, query: String,
   spans: Vector[DbtPreviewSpan], nodeId: String, fileUrl: String)
+
 private[ide] final case class DbtPreviewLocation(source: DbtPreviewSource, offset: Int, line: Int, column: Int)
+
 private[ide] final case class DbtPreviewEvidence(submitted: String, adapterSql: Option[String], raw: String,
   invocation: Option[String], location: Option[DbtPreviewLocation], explanation: String) {
   def displaySql: String = adapterSql.fold("Adapter SQL unavailable: this CLI/adapter did not emit one unambiguous SQLQuery event for this preview.")(
@@ -190,12 +214,17 @@ private[ide] final case class DbtPreviewEvidence(submitted: String, adapterSql: 
 }
 
 private[ide] object DbtPreviewEvidence {
+
   import DbtJson.{child, text}
+
   private final case class Event(info: JsonObject, data: JsonObject) {
     def name: String = text(info, "name").getOrElse("")
+
     def invocation: String = text(info, "invocation_id").getOrElse("")
+
     def node: String = child(data, "node_info").flatMap(text(_, "unique_id")).getOrElse("")
   }
+
   def capture(command: DbtCommand, output: String, failed: Boolean, canceled: Boolean): DbtPreviewEvidence = {
     val submitted = command.request.scope match {
       case DbtCommandScope.Inline(sql) => sql
@@ -212,8 +241,8 @@ private[ide] object DbtPreviewEvidence {
       events.exists(e => e.name == "MainReportVersion" && e.invocation == id)) else None
     val expected = command.previewSource.map(_.nodeId).filter(_.nonEmpty)
     val queries = invocation.toVector.flatMap(id => events.filter(e => e.invocation == id && e.name == "SQLQuery" &&
-      expected.contains(e.node) && child(e.data, "node_info").flatMap(text(_, "node_status")).contains("executing"))
-      .flatMap(e => text(e.data, "sql")))
+          expected.contains(e.node) && child(e.data, "node_info").flatMap(text(_, "node_status")).contains("executing"))
+        .flatMap(e => text(e.data, "sql")))
       .filter(sql => sql.nonEmpty && !sql.trim.endsWith("...") &&
         DbtNavigation.projectedColumns(sql).nonEmpty).distinct
     // Macro SQL and transaction statements are not the preview SQL. A plain query can be located
@@ -224,7 +253,7 @@ private[ide] object DbtPreviewEvidence {
     val matchingShow = shown.exists(e => invocation.contains(e.invocation) && expected.contains(text(e.data, "unique_id").getOrElse("")))
     val adapter = if (canceled || !failed && !matchingShow) None else selected
     val errors = events.filter(e => invocation.contains(e.invocation) && expected.contains(e.node) &&
-      (e.name == "CatchableExceptionOnRun" || text(e.info, "level").exists(level => level == "error" || level == "fatal")))
+        (e.name == "CatchableExceptionOnRun" || text(e.info, "level").exists(level => level == "error" || level == "fatal")))
       .flatMap(e => text(e.info, "msg").orElse(text(e.data, "exc"))).distinct
     val location = if (!failed || canceled) None else for {
       sql <- adapter
@@ -237,9 +266,9 @@ private[ide] object DbtPreviewEvidence {
       DbtPreviewLocation(source, offset, before.count(_ == '\n') + 1, offset - before.lastIndexOf('\n'))
     }
     val explanation = if (canceled) "Preview canceled; no SQL execution or error location is certified."
-      else if (!failed) "Adapter SQL is available only when the current invocation identifies its preview statement."
-      else location.fold("Error location unavailable: an exact unchanged authored span and a supported unambiguous adapter location were not both available. See raw output.")(
-        at => s"Error maps to authored CTE source at line ${at.line}, column ${at.column}. Navigation is disabled if the source changes.")
+    else if (!failed) "Adapter SQL is available only when the current invocation identifies its preview statement."
+    else location.fold("Error location unavailable: an exact unchanged authored span and a supported unambiguous adapter location were not both available. See raw output.")(
+      at => s"Error maps to authored CTE source at line ${at.line}, column ${at.column}. Navigation is disabled if the source changes.")
     DbtPreviewEvidence(submitted, adapter, output, invocation, location, explanation)
   }
 
@@ -251,6 +280,7 @@ private[ide] object DbtPreviewEvidence {
       for (line <- m.group(1).toIntOption; position <- m.group(2).toIntOption if position < Int.MaxValue) yield line -> (position + 1))
     (bracket ++ snowflake).toVector.distinct
   }
+
   private[ide] def authoredOffset(source: DbtPreviewSource, adapter: String, line: Int, column: Int): Option[Int] = {
     val query = source.query
     val start = if (query.nonEmpty) adapter.indexOf(query) else -1
@@ -288,13 +318,21 @@ private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPane
         val descriptor = new OpenFileDescriptor(project, f, at.offset)
         Option(FileEditorManager.getInstance(project).openTextEditor(descriptor, true)).foreach(descriptor.navigateIn)
       }
-      else { navigate.setEnabled(false); label.setText("Source changed; rerun the preview before navigating to its error.") }
+      else {
+        navigate.setEnabled(false);
+        label.setText("Source changed; rerun the preview before navigating to its error.")
+      }
     }))
-  add(details); add(navigate); add(label)
+  add(details);
+  add(navigate);
+  add(label)
+
   def showEvidence(value: Option[DbtPreviewEvidence]): Unit = {
     evidence = value
-    details.setEnabled(value.nonEmpty); navigate.setEnabled(value.exists(_.location.nonEmpty))
+    details.setEnabled(value.nonEmpty);
+    navigate.setEnabled(value.exists(_.location.nonEmpty))
     label.setText(value.map(_.explanation).getOrElse(""))
   }
+
   showEvidence(None)
 }

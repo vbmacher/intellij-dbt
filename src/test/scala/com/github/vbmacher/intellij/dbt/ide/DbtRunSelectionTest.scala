@@ -144,7 +144,10 @@ final class DbtRunSelectionTest extends DbtTestCase {
       assertEquals(Vector(root.executionDirectory.resolve("scripts/dbt-wrapper").toString, "analytics", subcommand), command.arguments.take(3))
       assertTrue(command.arguments.sliding(2).exists(_ == Vector("--target", "dev")))
       if (action == "Generate Docs") assertEquals("generate", command.arguments(3))
-      else if (action == "Source Freshness") { assertEquals("freshness", command.arguments(3)); assertFalse(command.arguments.contains("--select")) }
+      else if (action == "Source Freshness") {
+        assertEquals("freshness", command.arguments(3));
+        assertFalse(command.arguments.contains("--select"))
+      }
       else assertTrue(command.arguments.sliding(2).exists(_ == Vector("--select", "fqn:analytics.orders")))
       assertEquals(root.directory.getPath, command.directory)
     }

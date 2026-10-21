@@ -38,7 +38,9 @@ final class DbtImplicitReferenceProvider extends ImplicitReferenceProvider {
       references.headOption.filter(_ => candidates.nonEmpty).map { first =>
         new PsiSymbolReference {
           override def getElement: PsiElement = file
+
           override def getRangeInElement: TextRange = first.getRangeInElement
+
           override def resolveReference(): java.util.Collection[_ <: Symbol] = candidates.map(new DbtPsiSymbol(_, file, offsetInElement)).asJava
         }
       }.orNull
@@ -72,10 +74,10 @@ final class DbtReferencesSearch extends QueryExecutorBase[PsiReference, Referenc
     val scope = parameters.getEffectiveSearchScope
     val files = workspace.files ++ workspace.roots.flatMap(r => DbtEnvironment(r, declaration.getText).map(_.file))
     files.distinct.iterator.filter { file =>
-      ProgressManager.checkCanceled()
-      PsiSearchScopeUtil.isInScope(scope, file)
-    }.flatMap(file => DbtNavigation.inFile(file).iterator.filter(ref => ref.isReferenceTo(declaration) &&
-      Option(file.findElementAt(ref.getRangeInElement.getStartOffset)).exists(PsiSearchScopeUtil.isInScope(scope, _))))
+        ProgressManager.checkCanceled()
+        PsiSearchScopeUtil.isInScope(scope, file)
+      }.flatMap(file => DbtNavigation.inFile(file).iterator.filter(ref => ref.isReferenceTo(declaration) &&
+        Option(file.findElementAt(ref.getRangeInElement.getStartOffset)).exists(PsiSearchScopeUtil.isInScope(scope, _))))
       .forall(consumer.process)
   }
 }
@@ -162,6 +164,7 @@ private[dbt] final class DbtPsiSymbol(val element: PsiElement, val source: PsiFi
     case symbol: DbtPsiSymbol => element == symbol.element
     case _ => false
   }
+
   override def hashCode(): Int = element.hashCode()
 }
 
@@ -175,7 +178,7 @@ final class DbtSymbolDocumentationTargetProvider extends SymbolDocumentationTarg
 final class DbtSymbolSearchTargetFactory extends SymbolSearchTargetFactory[DbtPsiSymbol] {
   override def searchTarget(project: Project, symbol: DbtPsiSymbol): SearchTarget = symbol.element match {
     case e: DbtSymbolElement if e.symbol.kind == "documentation" => null
-    // The platform also adds PSI usage targets. Avoid presenting the same declaration twice.
+      // The platform also adds PSI usage targets. Avoid presenting the same declaration twice.
     case _ if Option(symbol.source.findReferenceAt(symbol.offset)).exists(_.isReferenceTo(symbol.element)) => null
     case _ => new DbtSymbolSearchTarget(symbol)
   }
@@ -184,12 +187,16 @@ final class DbtSymbolSearchTargetFactory extends SymbolSearchTargetFactory[DbtPs
 private[ide] final class DbtSymbolSearchTarget(val symbol: DbtPsiSymbol) extends SearchTarget {
   override def createPointer(): Pointer[_ <: SearchTarget] = Pointer.delegatingPointer(symbol.createPointer(),
     (fresh: DbtPsiSymbol) => new DbtSymbolSearchTarget(fresh))
+
   override def presentation(): TargetPresentation = symbol.presentation()
+
   override def getUsageHandler: UsageHandler = UsageHandler.createEmptyUsageHandler(presentation().getPresentableText)
+
   override def equals(other: Any): Boolean = other match {
     case target: DbtSymbolSearchTarget => symbol == target.symbol
     case _ => false
   }
+
   override def hashCode(): Int = symbol.hashCode()
 }
 

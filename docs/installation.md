@@ -68,7 +68,7 @@ Match the operating system and architecture, and match the SDK's `jcefBuild` val
 To download the Python Community plugin matching the development SDK and run the Python integration suite:
 
 ```bash
-sbt 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' testPython
+sbt 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' updateIntellij testPython
 ```
 
 To use another SDK with Python Community Edition already available:

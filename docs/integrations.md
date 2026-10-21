@@ -1,4 +1,4 @@
-# Change impact and integrations
+# Integrations
 
 [User guide](getting_started.md)
 
@@ -6,32 +6,9 @@ Open these actions from the **Tools** menu:
 
 | Action | Use it to |
 | --- | --- |
-| **dbt Change Impact** | Compare the project with a Git revision and review potentially affected resources. |
 | **dbt Downstream Consumers** | Find declared exposures and cached Metabase consumers. |
 | **dbt Airflow Context** | View automatically detected local Airflow pipelines. |
 | **dbt Local MCP Server** | Start or stop read-only project access for an AI assistant on this computer. |
-
-## Review the impact of Git changes
-
-In a Git checkout, open **Tools → dbt Change Impact** and enter a branch, tag or
-commit, such as `main`. The dialog compares it with the current source, including
-unsaved edits, and lists added, removed, moved and changed resources in these tabs:
-
-- **Affected resources (potential)**: downstream resources and the dependency path
-  from each changed resource. Select an entry and click **Go to definition**.
-- **Consumers**: declared exposures and cached Metabase consumers.
-- **Airflow**: detected task associations and unresolved selections.
-- **Validation plan / limitations**: the suggested selection and what the analysis
-  could not resolve.
-
-**Copy selection** copies the suggested selection. **Build reviewed selection** runs
-dbt **Build** for it with the owning project's
-[execution settings](configuration.md#execution-settings); output appears in the
-**Run** window. Changes spanning several dbt projects need separate builds, and
-removed-only changes have no runnable selection.
-
-Analysis fails for a baseline with more than 1,500 relevant files or 32 MiB of
-source, or when a single Git read exceeds 2 MiB or 10 seconds.
 
 ## Find downstream consumers
 
@@ -102,7 +79,6 @@ Use it when you ask an assistant to:
 - write or check model and column descriptions (`get_documentation`);
 - explain where a column comes from or what uses it (`get_column_lineage`, `get_lineage`);
 - find which resource a `ref(...)` or `source(...)` points to (`resolve_reference`);
-- choose which models to rebuild or test after Git changes (`suggest_validation_selection`);
 - check which resources a selection such as `+orders` matches (`resolve_selection`).
 
 The assistant must run on the same computer and support MCP over HTTP with custom

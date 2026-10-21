@@ -18,13 +18,15 @@ import scala.jdk.CollectionConverters._
 /** Copying and pasting dbt SQL as physical relations, and copying the lineage graph as a PNG image. */
 final class DbtClipboardActionTest extends DbtTestCase {
   override protected def createTempDirTestFixture(): TempDirTestFixture = IdeaTestFixtureFactory.getFixtureFactory.createTempDirTestFixture()
+
   private def setupRelations(): Unit = {
     val config = project()
     PsiTestUtil.addContentRoot(getModule, config.getVirtualFile.getParent)
     add("models/orders.sql", "select 1")
     add("seeds/countries.csv", "id\n1\n")
     add("models/sources.yml", "sources: [{name: raw, tables: [{name: events}]}]\n")
-    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
+    add("target/manifest.json",
+      """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
       "model.analytics.orders":{"unique_id":"model.analytics.orders","resource_type":"model","name":"orders","package_name":"analytics","original_file_path":"models/orders.sql","database":"db","schema":"mart","alias":"physical_orders","relation_name":"\"db\".\"mart\".\"physical_orders\""},
       "seed.analytics.countries":{"unique_id":"seed.analytics.countries","resource_type":"seed","name":"countries","package_name":"analytics","relation_name":"db.lookups.country_codes"}
       },"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","resource_type":"source","source_name":"raw","name":"events","package_name":"analytics","relation_name":"db.landing.actual_events"}}}""")
@@ -33,7 +35,9 @@ final class DbtClipboardActionTest extends DbtTestCase {
     val root = workspace.roots.head
     DbtArtifactContext.record(root.directory.getPath + "/target", DbtArtifactContext.identity(root))
   }
+
   private def clipboard: String = Option(CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor)).getOrElse("")
+
   private def save(): Unit = {
     FileDocumentManager.getInstance().saveAllDocuments()
     // Save actions can change a document (for example, adding an EOF newline) after the edit was committed.
@@ -50,10 +54,12 @@ final class DbtClipboardActionTest extends DbtTestCase {
     assertTrue(clipboard.contains("\"db\".\"mart\".\"physical_orders\""))
     assertTrue(clipboard.contains("db.landing.actual_events"))
     assertTrue(clipboard.contains("/* dbt-workspace-jinja:"))
-    val w = workspace; val root = w.root(file).get
+    val w = workspace;
+    val root = w.root(file).get
     val restored = DbtClipboard.paste(w, root, clipboard).toOption.get
     assertTrue(restored.startsWith("{{ config(materialized='table') }}"))
-    assertTrue(restored.contains("{{ ref('orders') }}")); assertTrue(restored.contains("{{ source('raw', 'events') }}"))
+    assertTrue(restored.contains("{{ ref('orders') }}"));
+    assertTrue(restored.contains("{{ source('raw', 'events') }}"))
   }
 
   def testCopySelectionAndThisUseTheResolvedPhysicalRelation(): Unit = {
@@ -94,8 +100,10 @@ final class DbtClipboardActionTest extends DbtTestCase {
     myFixture.testAction(new DbtPasteAsRefsAction)
     await("Clipboard action completed")(myFixture.getEditor.getDocument.getText.contains("{{ ref('orders') }}"))
     val text = myFixture.getEditor.getDocument.getText
-    assertTrue(text.contains("o.id")); assertTrue(text.contains("'db.mart.physical_orders'"))
-    assertTrue(text.contains("-- db.mart.physical_orders")); assertTrue(text.contains("mystery.other_table"))
+    assertTrue(text.contains("o.id"));
+    assertTrue(text.contains("'db.mart.physical_orders'"))
+    assertTrue(text.contains("-- db.mart.physical_orders"));
+    assertTrue(text.contains("mystery.other_table"))
   }
 
   def testUnknownRefIsCommentedAndOnlyOurOwnCommentsAreRestored(): Unit = {
@@ -111,7 +119,8 @@ final class DbtClipboardActionTest extends DbtTestCase {
 
   def testChangingTargetOrManifestBytesInvalidatesPhysicalConversion(): Unit = {
     setupRelations()
-    val w = workspace; val root = w.roots.head
+    val w = workspace;
+    val root = w.roots.head
     assertTrue(DbtClipboard.ready(root).isRight)
     root.runOptions.target = "prod"
     assertTrue(DbtClipboard.ready(root).isLeft)
@@ -174,7 +183,8 @@ final class DbtClipboardActionTest extends DbtTestCase {
     try {
       settings.setEnsureNewLineAtEOF(true)
       setupRelations()
-      val w = workspace; val root = w.roots.head
+      val w = workspace;
+      val root = w.roots.head
       val manifest = root.psiFile("target/manifest.json").get
       edit(manifest, manifest.getText.replace("db.lookups.country_codes", "another.mart.physical_orders"))
       save()
@@ -183,6 +193,7 @@ final class DbtClipboardActionTest extends DbtTestCase {
       assertEquals(Right("select * from mart.physical_orders"), DbtClipboard.paste(current, current.roots.head, "select * from mart.physical_orders"))
     } finally settings.setEnsureNewLineAtEOF(ensureNewline)
   }
+
   def testMalformedAndRelationFreeManifestsWarnBeforeConversion(): Unit = {
     setupRelations()
     val root = workspace.roots.head
@@ -221,6 +232,7 @@ final class DbtClipboardActionTest extends DbtTestCase {
       action.update(event)
       event.getPresentation.isEnabled
     }
+
     val outside = configure("notes.sql", "select 1<caret>")
     val actions = Vector(new DbtCopyForTargetAction, new DbtPasteAsRefsAction)
     actions.foreach(a => assertFalse(enabled(a, outside)))

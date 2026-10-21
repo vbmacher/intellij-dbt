@@ -28,23 +28,35 @@ private[ide] sealed abstract class DbtCommandAction(val label: String, val comma
 
 private[ide] object DbtCommandAction {
   case object Run extends DbtCommandAction("Run", Vector("run"), structured = true)
+
   case object Build extends DbtCommandAction("Build", Vector("build"), structured = true)
+
   case object Test extends DbtCommandAction("Test", Vector("test"), structured = true)
+
   case object Compile extends DbtCommandAction("Compile", Vector("compile"))
+
   case object Preview extends DbtCommandAction("Preview", Vector("show"))
+
   case object GenerateDocs extends DbtCommandAction("Generate Docs", Vector("docs", "generate"), usesState = false)
+
   case object SourceFreshness extends DbtCommandAction("Source Freshness", Vector("source", "freshness"), usesState = false, structured = true)
+
   case object ResolveSelection extends DbtCommandAction("Resolve Selection", Vector("ls", "--quiet", "--output", "json"), usesState = false)
 
   lazy val toolbar: Vector[DbtCommandAction] = Vector(Run, Build, Test, Compile, Preview, GenerateDocs, SourceFreshness)
+
   def fromLabel(label: String): Option[DbtCommandAction] = (toolbar :+ ResolveSelection).find(_.label == label)
 }
 
 private[ide] sealed abstract class DbtCommandScope
+
 private[ide] object DbtCommandScope {
   case object All extends DbtCommandScope
+
   final case class Selected(terms: Vector[String]) extends DbtCommandScope
+
   final case class Named(name: String) extends DbtCommandScope
+
   final case class Inline(sql: String) extends DbtCommandScope
 }
 
@@ -70,6 +82,7 @@ private[ide] final case class DbtCommandRequest(action: DbtCommandAction, scope:
       indirectSelection.toVector.flatMap(value => Vector("--indirect-selection", value)) ++ extraArguments
   }
 }
+
 private[ide] object DbtCommandRequest {
   /** Preview row limits are bounded to 1–1000 wherever they are requested, rendered or displayed. */
   def limit(value: Int): Int = value.max(1).min(1000)
@@ -81,18 +94,24 @@ private[ide] final case class DbtCommand(prefix: Vector[String], request: DbtCom
   artifactContext: Vector[String], colors: Boolean = true, root: String = "", sourceSql: String = "",
   previewSource: Option[DbtPreviewSource] = None) {
   def action: String = request.action.label
+
   lazy val arguments: Vector[String] = prefix ++ request.arguments ++
     (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (colors) "--use-colors" else "--no-use-colors")
+
   def commandLine: String = ParametersListUtil.join(arguments.asJava)
+
   def executionRoot: String = Option(root).filter(_.nonEmpty).getOrElse(artifactContext.headOption.getOrElse(directory))
 }
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = DbtCommandAction.toolbar.map(_.label)
+
   private def incremental(w: DbtWorkspace, s: DbtSymbol): Boolean =
     DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental")
+
   private def wholeProject(w: DbtWorkspace, root: DbtRoot): Either[String, DbtRunSelection] =
     DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
+
   def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean,
     requested: Option[DbtRunSelection] = None, cliIds: Option[Vector[String]] = None): Either[String, DbtCommand] = {
     val options = root.runOptions
@@ -128,6 +147,7 @@ private[ide] object DbtCommand {
       base.copy(request = base.request.copy(scope = scope, exclude = excluded))
     }
   }
+
   /** Explicit CLI resolution shares the normal managed process and execution context. */
   def resolveSelection(w: DbtWorkspace, root: DbtRoot, requested: Option[DbtRunSelection]): Either[String, DbtCommand] = {
     val expression = DbtSelectionReview.expression(w, root, requested)
@@ -136,7 +156,7 @@ private[ide] object DbtCommand {
       everything <- wholeProject(w, root)
       base <- prepare(w, everything, DbtCommandAction.ResolveSelection, fullRefresh = false, Some(root.runOptions))
       baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Some(p.toString))
-        else Right(None)
+      else Right(None)
       exclusions <- DbtSelectionReview.cliTerms(w, root, exclude)
       selected <- {
         val named = "^selector:([^+,\\s]+)$".r
@@ -151,6 +171,7 @@ private[ide] object DbtCommand {
       base.copy(request = base.request.copy(scope = selected, exclude = exclusions, state = baseline))
     }
   }
+
   def create(w: DbtWorkspace, requested: DbtRunSelection, action: String, fullRefresh: Boolean, options: Option[DbtRunOptions] = None): Either[String, DbtCommand] =
     DbtCommandAction.fromLabel(action).toRight("Unknown dbt command.").flatMap(prepare(w, requested, _, fullRefresh, options))
 
@@ -214,24 +235,35 @@ final class DbtRunner(project: Project) extends Disposable {
   @volatile private var disposed = false
   @volatile private var handler: KillableProcessHandler = _
   private val listeners = new CopyOnWriteArrayList[DbtRunnerEvent => Unit]()
+
   def isRunning: Boolean = busy.get()
+
   def listen(parent: Disposable, listener: DbtRunnerEvent => Unit): Unit = {
     listeners.add(listener)
-    Disposer.register(parent, new Disposable { override def dispose(): Unit = { listeners.remove(listener); () } })
+    Disposer.register(parent, new Disposable {
+      override def dispose(): Unit = {
+        listeners.remove(listener);
+        ()
+      }
+    })
   }
+
   private def fire(event: DbtRunnerEvent): Unit = listeners.asScala.foreach(_(event))
 
   private[ide] def start(command: DbtCommand, outputSink: (String, Key[_]) => Unit = (_, _) => ()): Boolean = {
     if (disposed || !busy.compareAndSet(false, true)) false
     else {
       val modality = ModalityState.defaultModalityState()
+
       def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action, modality)
+
       cancelled.set(false)
       evidence.begin(command)
       fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = evidence.active, command = Some(command)))
       AppExecutorUtil.getAppExecutorService.execute(() => {
         if (disposed || cancelled.get()) onUi {
-          busy.set(false); fire(DbtRunnerEvent(running = false, s"${command.action} cancelled", execution = evidence.finish(command, canceled = true), command = Some(command), exitCode = Some(130)))
+          busy.set(false);
+          fire(DbtRunnerEvent(running = false, s"${command.action} cancelled", execution = evidence.finish(command, canceled = true), command = Some(command), exitCode = Some(130)))
         }
         else try {
           val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
@@ -243,11 +275,16 @@ final class DbtRunner(project: Project) extends Disposable {
           val output = new StringBuilder
           process.addProcessListener(new ProcessListener {
             override def onTextAvailable(event: ProcessEvent, outputType: Key[_]): Unit = {
-              output.synchronized { if (output.length < 10000000) output.append(event.getText) }
+              output.synchronized {
+                if (output.length < 10000000) output.append(event.getText)
+              }
               display.textAvailable(event.getText, outputType)
               evidence.stream(event.getText)
-              evidence.active.foreach(run => onUi { fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = Some(run))) })
+              evidence.active.foreach(run => onUi {
+                fire(DbtRunnerEvent(running = true, s"${command.action} running", execution = Some(run)))
+              })
             }
+
             override def processTerminated(event: ProcessEvent): Unit = {
               display.finish()
               val wasCancelled = cancelled.get()
@@ -271,7 +308,8 @@ final class DbtRunner(project: Project) extends Disposable {
               val displayedPreview = if (preview.nonEmpty && result.isEmpty)
                 Some("Malformed or unavailable dbt preview JSON. See raw process output.") else preview
               onUi {
-                handler = null; busy.set(false)
+                handler = null;
+                busy.set(false)
                 fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command), previewEvidence,
                   Option.when(success && command.action == "Resolve Selection")(capturedOutput), Some(event.getExitCode)))
                 DaemonCodeAnalyzer.getInstance(project).restart("dbt execution results changed")
@@ -283,20 +321,34 @@ final class DbtRunner(project: Project) extends Disposable {
             process.startNotify()
             if (cancelled.get()) process.destroyProcess()
           }
-          if (disposed) { process.startNotify(); process.destroyProcess() }
+          if (disposed) {
+            process.startNotify();
+            process.destroyProcess()
+          }
         } catch {
           case NonFatal(error) => onUi {
-            busy.set(false); handler = null
+            busy.set(false);
+            handler = null
             val message = "Cannot launch dbt: " + Option(error.getMessage).getOrElse(error.toString) + ". Check the executable in dbt Workspace settings."
-            fire(DbtRunnerEvent(running = false, message, execution = evidence.finish(command, canceled = cancelled.get()), command = Some(command), exitCode = Some(1))); DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
+            fire(DbtRunnerEvent(running = false, message, execution = evidence.finish(command, canceled = cancelled.get()), command = Some(command), exitCode = Some(1)));
+            DbtNotifications.publish(project, command, message, success = false, wasCancelled = cancelled.get())
           }
         }
       })
       true
     }
   }
-  def stop(): Unit = { cancelled.set(true); Option(handler).foreach(_.destroyProcess()) }
-  override def dispose(): Unit = { disposed = true; stop(); listeners.clear() }
+
+  def stop(): Unit = {
+    cancelled.set(true);
+    Option(handler).foreach(_.destroyProcess())
+  }
+
+  override def dispose(): Unit = {
+    disposed = true;
+    stop();
+    listeners.clear()
+  }
 }
 
 private[ide] object DbtNotifications {

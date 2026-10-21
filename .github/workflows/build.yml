@@ -55,4 +55,4 @@ jobs:
           cache: sbt
       - uses: sbt/setup-sbt@v1
       - name: Test with the Python Community plugin matching the SDK
-        run: sbt --batch 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' testPython
+        run: sbt --batch 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' updateIntellij testPython

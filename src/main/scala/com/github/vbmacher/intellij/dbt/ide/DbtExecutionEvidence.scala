@@ -13,26 +13,34 @@ import scala.util.Try
 private[ide] final case class DbtExecutionResult(id: String, status: String, message: String, failures: Long = 0L,
   relation: String = "", duration: Long = 0L) {
   def failed: Boolean = Set("failed", "error")(status)
+
   def test: Boolean = id.startsWith("test.") || id.startsWith("unit_test.")
 }
+
 private[ide] final case class DbtExecutionRun(context: Vector[String], target: String, invocation: String, timestamp: String,
   artifact: String, results: Vector[DbtExecutionResult], problem: String = "", active: Boolean = false, root: String = "")
 
 /** Execution evidence is separate from declarations. Only changed artifacts from this invocation receive provenance. */
 private[ide] object DbtExecutionEvidence {
   private val gson = new Gson
+
   def obj(o: JsonObject, key: String): JsonObject = DbtJson.child(o, key).getOrElse(new JsonObject)
+
   def objects(o: JsonObject, key: String): Vector[JsonObject] = Option(o.get(key)).toVector.flatMap { e =>
     if (e.isJsonArray) e.getAsJsonArray.asScala.toVector.filter(_.isJsonObject).map(_.getAsJsonObject)
     else if (e.isJsonObject) e.getAsJsonObject.entrySet.asScala.toVector.map(_.getValue).filter(_.isJsonObject).map(_.getAsJsonObject)
     else Vector.empty
   }
+
   private def bounded[T](path: Path)(read: => T): Option[T] = Try {
     require(Files.size(path) <= 25000000L, "Artifact exceeds 25 MB")
     read
   }.toOption
+
   def json(path: Path): Option[JsonObject] = bounded(path)(JsonParser.parseString(Files.readString(path)).getAsJsonObject)
+
   def fingerprint(path: Path): Option[String] = bounded(path)(DbtHash.sha256(Files.readAllBytes(path)))
+
   def normalize(status: String): String = status.toLowerCase match {
     case "pass" | "success" => "passed"
     case "fail" => "failed"
@@ -43,8 +51,10 @@ private[ide] object DbtExecutionEvidence {
     case "cancelled" | "canceled" => "canceled"
     case _ => "unknown"
   }
+
   def parse(path: Path, context: Vector[String], target: String, expectedInvocation: String = ""): DbtExecutionRun = {
     def invalid(reason: String) = DbtExecutionRun(context, target, "", "", path.toString, Vector.empty, reason)
+
     json(path).fold(invalid(if (Files.exists(path)) "Malformed execution artifact" else "Not run / result unavailable")) { top =>
       val metadata = obj(top, "metadata")
       val schema = string(metadata, "dbt_schema_version")
@@ -72,11 +82,16 @@ private[ide] object DbtExecutionEvidence {
       }
     }
   }
+
   def marker(path: Path): Path = path.resolveSibling("." + path.getFileName + ".dbt-evidence")
+
   def record(path: Path, context: Vector[String]): Unit = fingerprint(path).foreach { digest =>
-    val m = new JsonObject; m.add("context", gson.toJsonTree(context.asJava)); m.addProperty("digest", digest)
+    val m = new JsonObject;
+    m.add("context", gson.toJsonTree(context.asJava));
+    m.addProperty("digest", digest)
     Files.writeString(marker(path), m.toString)
   }
+
   def read(root: DbtRoot, name: String): DbtExecutionRun = {
     val path = root.artifactDirectory.resolve(name)
     val context = DbtArtifactContext.identity(root)
@@ -98,14 +113,18 @@ private[ide] object DbtExecutionEvidence {
 
 @Service(Array(Service.Level.PROJECT))
 final class DbtExecutionEvidence(project: Project) {
+
   import DbtExecutionEvidence._
+
   @volatile private var current: Option[DbtExecutionRun] = None
   private var before = Map.empty[String, Option[String]]
   private var pending = ""
   private var finishedFingerprint: Option[String] = None
   private var finishedPath = ""
   private val names = Vector("run_results.json", "sources.json")
+
   def active: Option[DbtExecutionRun] = current.filter(_.active)
+
   def begin(command: DbtCommand): Unit = synchronized {
     if (Set("Run", "Build", "Test", "Source Freshness")(command.action)) {
       pending = ""
@@ -114,22 +133,29 @@ final class DbtExecutionEvidence(project: Project) {
         command.artifactDirectory, Vector.empty, active = true, root = command.executionRoot))
     } else current = None
   }
+
   def stream(text: String): Unit = synchronized {
     current.filter(_.active).foreach { run =>
       pending = (pending + text).takeRight(1000000)
       val lines = pending.split("\n", -1).toVector
       pending = lines.lastOption.getOrElse("")
-      lines.dropRight(1).foreach { line => Try(JsonParser.parseString(line).getAsJsonObject).toOption.foreach { top =>
-        val info = obj(top, "info"); val data = obj(top, "data"); val node = obj(data, "node_info")
-        val id = string(node, "unique_id"); val status = normalize(string(node, "node_status"))
-        val invocation = string(info, "invocation_id")
-        val next = current.getOrElse(run)
-        current = Some(next.copy(invocation = if (invocation.nonEmpty) invocation else next.invocation,
-          results = if (id.isEmpty) next.results else next.results.filterNot(_.id == id) :+
-            DbtExecutionResult(id, status, string(info, "msg"))))
-      }}
+      lines.dropRight(1).foreach { line =>
+        Try(JsonParser.parseString(line).getAsJsonObject).toOption.foreach { top =>
+          val info = obj(top, "info");
+          val data = obj(top, "data");
+          val node = obj(data, "node_info")
+          val id = string(node, "unique_id");
+          val status = normalize(string(node, "node_status"))
+          val invocation = string(info, "invocation_id")
+          val next = current.getOrElse(run)
+          current = Some(next.copy(invocation = if (invocation.nonEmpty) invocation else next.invocation,
+            results = if (id.isEmpty) next.results else next.results.filterNot(_.id == id) :+
+              DbtExecutionResult(id, status, string(info, "msg"))))
+        }
+      }
     }
   }
+
   def finish(command: DbtCommand, canceled: Boolean): Option[DbtExecutionRun] = synchronized {
     current.filter(_.active).map { run =>
       val name = if (command.action == "Source Freshness") "sources.json" else "run_results.json"
@@ -148,9 +174,11 @@ final class DbtExecutionEvidence(project: Project) {
       finishedFingerprint = fingerprint(path)
       val recorded = if (!canceled && outcome.invocation.nonEmpty && parsed.results.nonEmpty && outcome.problem.isEmpty &&
         Try(record(path, command.artifactContext)).isFailure) outcome.copy(problem = "Cannot persist artifact provenance; results are available for this session") else outcome
-      current = Some(recorded); recorded
+      current = Some(recorded);
+      recorded
     }
   }
+
   def runs(root: DbtRoot): Vector[DbtExecutionRun] = {
     val latest = current.filter(r => r.context == DbtArtifactContext.identity(root) &&
       (r.active || finishedPath.nonEmpty && fingerprint(Paths.get(finishedPath)) == finishedFingerprint))
@@ -160,6 +188,7 @@ final class DbtExecutionEvidence(project: Project) {
       else run
     }.toVector ++ names.map(read(root, _))
   }
+
   def overlay(symbol: DbtSymbol, runs: Vector[DbtExecutionRun], definitions: Vector[DbtTestDefinition]): JsonObject = {
     val data = new JsonObject
     val direct = runs.flatMap(run => run.results.find(_.id == symbol.uniqueId).map(run -> _)).headOption

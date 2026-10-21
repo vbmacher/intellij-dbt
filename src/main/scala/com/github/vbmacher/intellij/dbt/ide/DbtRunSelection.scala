@@ -52,8 +52,8 @@ private[ide] object DbtRunSelection {
   def selectedModels(w: DbtWorkspace, selection: DbtRunSelection): Vector[DbtSymbol] = models(w).filter { s =>
     w.owner(s).exists(r => owner(w, selection).exists(selected => w.executionRoot(r) == w.executionRoot(selected))) &&
       (if (selection.path.isEmpty) true
-       else if (selection.directory) s.file.getVirtualFile.getPath.startsWith(selection.path + "/")
-       else s.file.getVirtualFile.getPath == selection.path)
+      else if (selection.directory) s.file.getVirtualFile.getPath.startsWith(selection.path + "/")
+      else s.file.getVirtualFile.getPath == selection.path)
   }
 
   /** Expand folders to model FQNs so similarly named paths in other packages cannot join the run. */
@@ -142,22 +142,26 @@ private[ide] object DbtSelectionReview {
 private[ide] object DbtSelectionResults {
   private def show(project: Project, label: String, resources: Vector[(PsiFile, TextRange)], problems: Vector[String]): UsageView = {
     val presentation = new UsageViewPresentation
-    presentation.setTabText(label); presentation.setTabName(label)
-    presentation.setDynamicUsagesString("resources"); presentation.setOpenInNewTab(true)
+    presentation.setTabText(label);
+    presentation.setTabName(label)
+    presentation.setDynamicUsagesString("resources");
+    presentation.setOpenInNewTab(true)
     presentation.setScopeText(if (problems.isEmpty) "Matched resources" else "Incomplete: " + problems.mkString("; "))
     val usages = resources.map { case (file, range) => new UsageInfo2UsageAdapter(new UsageInfo(file,
-      range.getStartOffset, range.getEndOffset)): Usage }.toArray
+      range.getStartOffset, range.getEndOffset)): Usage
+    }.toArray
     val view = UsageViewManager.getInstance(project).showUsages(Array.empty[UsageTarget], usages, presentation)
     if (problems.nonEmpty) Messages.showWarningDialog(project, problems.mkString("\n"), label + " — incomplete")
     view
   }
+
   def review(configuration: DbtRunConfiguration): Unit = {
     val project = configuration.getProject
     DbtUi.readLater(project, smartIn = Some(project)) {
       val w = DbtWorkspace.get(project)
       configuration.configuredRoot(w).map { root =>
         val selection = if (configuration.scope.isEmpty) DbtRunSelection.all(w, root.directory.getPath)
-          else DbtRunSelection.available(w).find(_.path == configuration.scope)
+        else DbtRunSelection.available(w).find(_.path == configuration.scope)
         val expression = DbtSelectionReview.expression(w, root, selection)
         val result = DbtSelection.resolve(w, root, expression, root.runOptions.exclude)
         (result.resources, result.problems, configuration.prepare().map(_._1))
@@ -167,15 +171,16 @@ private[ide] object DbtSelectionResults {
       case Right((resources, problems, command)) =>
         val view = show(project, "dbt local selection · " + configuration.target, resources.map(s => s.file -> s.range), problems)
         view.addButtonToLowerPane(() => DbtLineageSelection.show(project, configuration.root,
-              if (configuration.namedSelector.nonEmpty) "selector:" + configuration.namedSelector
-              else if (configuration.selectors.nonEmpty) configuration.selectors.mkString(" ")
-              else command.toOption.map(_.request.scope).collect { case DbtCommandScope.Selected(terms) => terms.mkString(" ") }.getOrElse(""),
-              configuration.exclude.mkString(" ")), "Show in Lineage", false)
+          if (configuration.namedSelector.nonEmpty) "selector:" + configuration.namedSelector
+          else if (configuration.selectors.nonEmpty) configuration.selectors.mkString(" ")
+          else command.toOption.map(_.request.scope).collect { case DbtCommandScope.Selected(terms) => terms.mkString(" ") }.getOrElse(""),
+          configuration.exclude.mkString(" ")), "Show in Lineage", false)
         command.foreach { value =>
           view.addButtonToLowerPane(() => DbtUi.copy(value.commandLine), "Copy command", true)
         }
     }
   }
+
   def showCli(configuration: DbtRunConfiguration, raw: String): Unit = {
     val project = configuration.getProject
     DbtUi.readLater(project) {

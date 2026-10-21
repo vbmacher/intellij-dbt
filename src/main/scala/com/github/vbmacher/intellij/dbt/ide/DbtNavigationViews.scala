@@ -31,7 +31,9 @@ import scala.jdk.CollectionConverters._
 /** One navigation marker per line, anchored to a real leaf even in plain-text SQL. */
 final class DbtLineMarkerProvider extends LineMarkerProviderDescriptor {
   override def getName: String = "dbt navigation"
+
   override def getIcon: Icon = DbtIcons.Gutter
+
   override def getLineMarkerInfo(element: PsiElement): LineMarkerInfo[_] = null
 
   override def collectSlowLineMarkers(elements: JList[_ <: PsiElement], result: Collection[_ >: LineMarkerInfo[_]]): Unit = {
@@ -52,6 +54,7 @@ final class DbtLineMarkerProvider extends LineMarkerProviderDescriptor {
 
 private[ide] object DbtLineMarkerProvider {
   private[ide] final case class Marker(range: TextRange, choices: Vector[DbtNavigationItem], tooltip: String)
+
   private val MarkerCache = Key.create[CachedValue[Vector[Marker]]]("dbt.gutter.markers")
   private val BlockKinds = Set("macro", "generic_test", "doc", "materialization")
 
@@ -121,32 +124,41 @@ final class DbtHierarchyProvider extends HierarchyProvider {
     val w = DbtWorkspace.get(project)
     val resolved = file.toVector.flatMap(DbtNavigation.resolvedAt(_, offset)).filter(s => DbtSymbol.ColumnKinds(s.kind)).distinctBy(_.id)
     if (resolved.size > 1) None else resolved.headOption.orElse(
-      file.flatMap(f => w.symbolAt(f, offset).find(s => DbtSymbol.ColumnKinds(s.kind))))
+        file.flatMap(f => w.symbolAt(f, offset).find(s => DbtSymbol.ColumnKinds(s.kind))))
       .orElse(DbtResourceAction.at(w, file, offset)).map(_.element)
   }.orNull
+
   override def createHierarchyBrowser(target: PsiElement): HierarchyBrowser = new DbtHierarchyBrowser(target.getProject, target)
+
   override def browserActivated(browser: HierarchyBrowser): Unit = browser.asInstanceOf[DbtHierarchyBrowser].changeView(CallHierarchyBrowserBase.getCalleeType)
 }
+
 private[ide] final class DbtHierarchyBrowser(project: Project, target: PsiElement) extends CallHierarchyBrowserBase(project, target) {
   override protected def createTrees(trees: java.util.Map[_ >: String, _ >: JTree]): Unit = {
     trees.put(CallHierarchyBrowserBase.getCallerType, createTree(false))
     trees.put(CallHierarchyBrowserBase.getCalleeType, createTree(false))
   }
+
   override protected def getPresentableNameMap: java.util.Map[String, java.util.function.Supplier[String]] = {
     val names = new java.util.LinkedHashMap[String, java.util.function.Supplier[String]]
     names.put(CallHierarchyBrowserBase.getCalleeType, () => "Upstream dependencies")
     names.put(CallHierarchyBrowserBase.getCallerType, () => "Downstream consumers")
     names
   }
+
   override protected def getElementFromDescriptor(descriptor: HierarchyNodeDescriptor): PsiElement = descriptor.getPsiElement
+
   override protected def isApplicableElement(element: PsiElement): Boolean = element.isInstanceOf[DbtSymbolElement]
+
   override protected def getComparator: java.util.Comparator[NodeDescriptor[_]] =
     (a: NodeDescriptor[_], b: NodeDescriptor[_]) => a.toString.compareToIgnoreCase(b.toString)
+
   override protected def createHierarchyTreeStructure(view: String, element: PsiElement): HierarchyTreeStructure = element match {
     case target: DbtSymbolElement => new DbtHierarchyTree(project, target.symbol, view == CallHierarchyBrowserBase.getCallerType)
     case _ => null
   }
 }
+
 private[ide] final class DbtHierarchyNode(project: Project, parent: DbtHierarchyNode, val symbol: DbtSymbol,
   val path: Set[String], relation: String = "") extends HierarchyNodeDescriptor(project, parent, symbol.element, parent == null) {
   override def update(): Boolean = {
@@ -154,9 +166,11 @@ private[ide] final class DbtHierarchyNode(project: Project, parent: DbtHierarchy
     myHighlightedText.getEnding.addText(symbol.namespace + "." + Option(symbol.owner).filter(_.nonEmpty).map(_ + ".").getOrElse("") + symbol.name +
       (if (relation.isEmpty) "" else " · " + relation))
     myName = myHighlightedText.getText
-    setIcon(symbol.element.getIcon(0)); true
+    setIcon(symbol.element.getIcon(0));
+    true
   }
 }
+
 private[ide] final class DbtHierarchyTree(project: Project, symbol: DbtSymbol, downstream: Boolean)
   extends HierarchyTreeStructure(project, new DbtHierarchyNode(project, null, symbol, Set(symbol.id))) {
   override protected def buildChildren(descriptor: HierarchyNodeDescriptor): Array[AnyRef] = descriptor match {
@@ -168,6 +182,7 @@ private[ide] final class DbtHierarchyTree(project: Project, symbol: DbtSymbol, d
     case _ => Array.empty
   }
 }
+
 private[ide] object DbtHierarchy {
   def related(w: DbtWorkspace, symbol: DbtSymbol, downstream: Boolean): Vector[(DbtSymbol, String)] = {
     def label(edge: DbtColumnEdge): String =
@@ -176,7 +191,7 @@ private[ide] object DbtHierarchy {
 
     if (DbtSymbol.ColumnKinds(symbol.kind)) {
       val resource = w.symbols.find(s => DbtSymbol.RelationKinds(s.kind) && s.namespace == symbol.namespace &&
-        s.relationName == symbol.owner && w.owner(s) == w.owner(symbol))
+          s.relationName == symbol.owner && w.owner(s) == w.owner(symbol))
         .orElse(w.model(symbol.file))
       DbtColumnLineage.edges(w).flatMap { edge =>
         if (!downstream && resource.exists(_.sameResource(edge.resource)) && edge.column.equalsIgnoreCase(symbol.name))
@@ -220,11 +235,15 @@ final class DbtSqlStructureViewFactory extends PsiStructureViewFactory {
 
 private[ide] final class DbtSqlStructureElement(file: PsiFile, symbol: Option[DbtSymbol]) extends StructureViewTreeElement {
   override def getValue: AnyRef = symbol.map(_.element).getOrElse(file)
+
   override def getPresentation: ItemPresentation = symbol.map(_.element.getPresentation).getOrElse(new ItemPresentation {
     override def getPresentableText: String = file.getName
+
     override def getLocationString: String = null
+
     override def getIcon(open: Boolean): Icon = file.getIcon(0)
   })
+
   override def getChildren: Array[TreeElement] = {
     val w = DbtWorkspace.get(file.getProject)
     val nodes = for {
@@ -236,20 +255,25 @@ private[ide] final class DbtSqlStructureElement(file: PsiFile, symbol: Option[Db
     } yield new DbtSqlStructureElement(file, Some(DbtSymbol("cte", cte.name, model.namespace, file, cte.range))): TreeElement
     nodes.toArray
   }
+
   override def canNavigate: Boolean = symbol.exists(_.element.canNavigate)
+
   override def canNavigateToSource: Boolean = canNavigate
+
   override def navigate(requestFocus: Boolean): Unit = symbol.foreach(_.element.navigate(requestFocus))
 }
 
 /** Extend a SQL plugin's existing outline rather than replacing its structure provider. */
 final class DbtSqlStructureViewExtension extends StructureViewExtension {
   override def getType: Class[_ <: PsiElement] = classOf[PsiFile]
+
   override def getChildren(element: PsiElement): Array[StructureViewTreeElement] = element match {
     case file: PsiFile if Option(Language.findLanguageByID("SQL")).exists(file.getLanguage.isKindOf) &&
       DbtWorkspace.get(file.getProject).model(file).nonEmpty =>
       new DbtSqlStructureElement(file, None).getChildren.map(_.asInstanceOf[StructureViewTreeElement])
     case _ => Array.empty
   }
+
   override def getCurrentEditorElement(editor: Editor, parent: PsiElement): AnyRef = parent match {
     case file: PsiFile => getChildren(file).map(_.getValue).collectFirst {
       case e: DbtSymbolElement if e.symbol.range.containsOffset(editor.getCaretModel.getOffset) => e

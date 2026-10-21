@@ -14,7 +14,7 @@ and fixture files. Markers also flag references with several definitions or
 metadata-only targets; the tooltip explains ambiguity and staleness. Targets on the
 same line share one popup.
 
-The same popups are available from the editor context menu:
+Right-click in the editor and open **dbt** to find the same popups:
 
 - **dbt Properties** opens the resource's YAML properties from its source file.
 - **dbt Dependencies** groups dependencies under **Uses** and consumers under

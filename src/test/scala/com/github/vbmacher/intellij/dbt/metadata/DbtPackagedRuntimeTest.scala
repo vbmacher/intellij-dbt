@@ -14,6 +14,7 @@ import scala.jdk.CollectionConverters._
 /** Assert that the shipped reader runs without the original dependency archives on its classpath. */
 final class DbtPackagedRuntimeTest extends DbtTestCase {
   override protected def getProjectDescriptor(): LightProjectDescriptor = DbtPackagedRuntimeTest.descriptor
+
   override protected def createTempDirTestFixture(): fixtures.TempDirTestFixture =
     new fixtures.impl.TempDirTestFixtureImpl()
 

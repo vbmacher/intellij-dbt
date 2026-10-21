@@ -29,7 +29,8 @@ private[ide] final case class DbtPropertyEdit(path: String, before: String, afte
       file match {
         case Some(source) =>
           if (documents.getDocument(source).getText != before) throw new IllegalStateException("Properties changed; reopen the editor to review current source.")
-          documents.getDocument(source).setText(after); documents.commitAllDocuments()
+          documents.getDocument(source).setText(after);
+          documents.commitAllDocuments()
         case None =>
           val parent = directory.orElse(Option(com.intellij.openapi.vfs.LocalFileSystem.getInstance
             .findFileByPath(path.substring(0, path.lastIndexOf('/'))))).getOrElse(
@@ -41,6 +42,7 @@ private[ide] final case class DbtPropertyEdit(path: String, before: String, afte
     }
   })
 }
+
 private[ide] object DbtPropertiesEditor {
   def editableColumns(w: DbtWorkspace, resource: DbtSymbol): Vector[DbtColumnData] =
     DbtResourceData.get(w, resource).columns.map(c => c.copy(description = w.columns(resource).find(_.name == c.name)
@@ -51,12 +53,13 @@ private[ide] object DbtPropertiesEditor {
     val edges = DbtColumnLineage.upstream(w, resource, column).filter(_.kind == "value")
     val inputs = edges.map(_.input).distinctBy(_.id)
     val state = if (edges.isEmpty || !edges.forall(_.complete)) "Unknown lineage"
-      else if (inputs.size == 1 && edges.forall(_.direct)) "Passthrough"
-      else "Calculated / multiple inputs"
+    else if (inputs.size == 1 && edges.forall(_.direct)) "Passthrough"
+    else "Calculated / multiple inputs"
     val names = inputs.map(input => input.namespace + "." + Option(input.owner).filter(_.nonEmpty).map(_ + ".").getOrElse("") +
       input.name + input.version.map(" v" + _).getOrElse("") + " · " + input.file.getName)
     (state + (if (names.isEmpty) "" else ": " + names.mkString(", ")), inputs)
   }
+
   /** The editable properties declarations of a resource; property and source table declarations describe themselves. */
   private def declarations(w: DbtWorkspace, resource: DbtSymbol): Vector[DbtSymbol] =
     if (resource.kind == "source_table" || resource.isProperty) Vector(resource) else w.properties(resource)
@@ -66,7 +69,7 @@ private[ide] object DbtPropertiesEditor {
     val flow = sequence.getText.trim.startsWith("[")
     val offset = sequence.getTextRange.getEndOffset - (if (flow) 1 else 0)
     val insertion = if (flow) (if (sequence.getItems.isEmpty) "" else ", ") + values.mkString(", ")
-      else values.map(v => "\n" + " " * YAMLUtil.getIndentInThisLine(sequence) + "- " + v).mkString
+    else values.map(v => "\n" + " " * YAMLUtil.getIndentInThisLine(sequence) + "- " + v).mkString
     text.substring(0, offset) + insertion + text.substring(offset)
   }
 
@@ -102,74 +105,79 @@ private[ide] object DbtPropertiesEditor {
         val offset = properties.headOption.flatMap(_.mapping).map(_.getTextOffset)
         val target = if (source.nonEmpty) offset.flatMap(o => Option(copy.findElementAt(o)))
           .flatMap(e => Iterator.iterate(e)(_.getParent).takeWhile(_ != null).collectFirst { case m: YAMLMapping => m })
-          else DbtYaml.mapping(copy).toVector.flatMap(DbtYaml.items(_, section.get)).headOption
-        target.toRight("The properties mapping could not be located.").flatMap { mapping => scala.util.Try {
-          val generator = YAMLElementGenerator.getInstance(w.project)
-          def quoted(value: String): String = new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(value)
-          def put(m: YAMLMapping, key: String, value: String): Unit = {
-            val replacement = generator.createYamlKeyValue(key, value)
-            m.getKeyValues.asScala.find(_.getKeyText == key) match {
-              case Some(existing) if existing.getValue != null =>
-                if (com.intellij.psi.util.PsiTreeUtil.findChildOfType(existing.getValue, classOf[org.jetbrains.yaml.psi.YAMLAnchor]) != null)
-                  throw new IllegalArgumentException(s"'$key' defines a YAML anchor. Edit it in source to preserve its aliases.")
-                if (com.intellij.psi.util.PsiTreeUtil.findChildOfType(existing.getValue, classOf[com.intellij.psi.PsiComment]) != null)
-                  throw new IllegalArgumentException(s"'$key' contains comments. Edit its sequence in source to preserve those comments.")
-                existing.setValue(replacement.getValue)
-              case None if m.getFirstChild.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.LBRACE =>
-                val closing = m.getLastChild
-                m.getKeyValues.asScala.lastOption.foreach { previous =>
-                  val trailingComma = Iterator.iterate(previous.getNextSibling)(_.getNextSibling)
-                    .takeWhile(e => e != null && e != closing).exists(_.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.COMMA)
-                  if (!trailingComma) m.addAfter(generator.createComma(), previous)
-                }
-                // YAMLHashImpl.putKeyValue does not reliably attach its separator to the inserted copy.
-                // Append with explicit native PSI tokens, retaining existing key order and comments.
-                m.addBefore(generator.createSpace(), closing)
-                m.addBefore(replacement, closing)
-              case _ => m.putKeyValue(replacement)
+        else DbtYaml.mapping(copy).toVector.flatMap(DbtYaml.items(_, section.get)).headOption
+        target.toRight("The properties mapping could not be located.").flatMap { mapping =>
+          scala.util.Try {
+            val generator = YAMLElementGenerator.getInstance(w.project)
+
+            def quoted(value: String): String = new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(value)
+
+            def put(m: YAMLMapping, key: String, value: String): Unit = {
+              val replacement = generator.createYamlKeyValue(key, value)
+              m.getKeyValues.asScala.find(_.getKeyText == key) match {
+                case Some(existing) if existing.getValue != null =>
+                  if (com.intellij.psi.util.PsiTreeUtil.findChildOfType(existing.getValue, classOf[org.jetbrains.yaml.psi.YAMLAnchor]) != null)
+                    throw new IllegalArgumentException(s"'$key' defines a YAML anchor. Edit it in source to preserve its aliases.")
+                  if (com.intellij.psi.util.PsiTreeUtil.findChildOfType(existing.getValue, classOf[com.intellij.psi.PsiComment]) != null)
+                    throw new IllegalArgumentException(s"'$key' contains comments. Edit its sequence in source to preserve those comments.")
+                  existing.setValue(replacement.getValue)
+                case None if m.getFirstChild.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.LBRACE =>
+                  val closing = m.getLastChild
+                  m.getKeyValues.asScala.lastOption.foreach { previous =>
+                    val trailingComma = Iterator.iterate(previous.getNextSibling)(_.getNextSibling)
+                      .takeWhile(e => e != null && e != closing).exists(_.getNode.getElementType == org.jetbrains.yaml.YAMLTokenTypes.COMMA)
+                    if (!trailingComma) m.addAfter(generator.createComma(), previous)
+                  }
+                  // YAMLHashImpl.putKeyValue does not reliably attach its separator to the inserted copy.
+                  // Append with explicit native PSI tokens, retaining existing key order and comments.
+                  m.addBefore(generator.createSpace(), closing)
+                  m.addBefore(replacement, closing)
+                case _ => m.putKeyValue(replacement)
+              }
             }
-          }
-          if (!DbtYaml.string(mapping, "description").contains(description)) put(mapping, "description", quoted(description))
-          if (tags.nonEmpty || updateTags) {
-            val target = DbtYaml.map(mapping, "config").filter(m => DbtYaml.value(m, "tags").nonEmpty).getOrElse(mapping)
-            put(target, "tags", tags.map(quoted).mkString("[", ", ", "]"))
-          }
-          val testKey = if (r.supports(8)) "data_tests" else "tests"
-          if (tests.nonEmpty || updateTests) {
-            val actualKey = if (DbtYaml.value(mapping, "tests").nonEmpty && DbtYaml.value(mapping, "data_tests").isEmpty) "tests" else testKey
-            put(mapping, actualKey, tests.map(quoted).mkString("[", ", ", "]"))
-          }
-          val missing = editedColumns.filterNot(column => DbtYaml.items(mapping, "columns").exists(m => DbtYaml.string(m, "name").contains(column.name)))
-          editedColumns.foreach { column =>
-            val existing = DbtYaml.items(mapping, "columns").find(m => DbtYaml.string(m, "name").contains(column.name))
-            existing match {
-              case Some(m) =>
-                if (!DbtYaml.string(m, "description").contains(column.description)) put(m, "description", quoted(column.description))
-                if (column.dataType.nonEmpty && !DbtYaml.string(m, "data_type").contains(column.dataType)) put(m, "data_type", quoted(column.dataType))
-              case None => ()
+
+            if (!DbtYaml.string(mapping, "description").contains(description)) put(mapping, "description", quoted(description))
+            if (tags.nonEmpty || updateTags) {
+              val target = DbtYaml.map(mapping, "config").filter(m => DbtYaml.value(m, "tags").nonEmpty).getOrElse(mapping)
+              put(target, "tags", tags.map(quoted).mkString("[", ", ", "]"))
             }
-          }
-          val values = missing.map { column =>
-            val dataType = if (column.dataType.nonEmpty) s", data_type: ${quoted(column.dataType)}" else ""
-            s"{name: ${quoted(column.name)}$dataType, description: ${quoted(column.description)}}"
-          }
-          val after = if (values.isEmpty) copy.getText else DbtYaml.value(mapping, "columns") match {
-            case Some(sequence: YAMLSequence) => appendItems(copy.getText, sequence, values)
-            case None =>
-              // YAML's key generator moves long flow sequences to a new line
-              // with root indentation. Insert at the native mapping range so
-              // new columns remain children of this resource.
-              val text = copy.getText
-              val flow = mapping.getText.trim.startsWith("{")
-              val offset = mapping.getTextRange.getEndOffset - (if (flow) 1 else 0)
-              val firstKey = mapping.getKeyValues.asScala.head.getTextOffset
-              val indent = firstKey - text.lastIndexOf('\n', firstKey - 1) - 1
-              val prefix = if (flow) (if (mapping.getKeyValues.isEmpty) "" else ", ") else "\n" + " " * indent
-              text.substring(0, offset) + prefix + "columns: " + values.mkString("[", ", ", "]") + text.substring(offset)
-            case _ => throw new IllegalArgumentException("Columns must be a YAML sequence before synchronization.")
-          }
-          DbtPropertyEdit(path, before, after, source, Some(resource.file.getVirtualFile.getParent))
-        }.toEither.left.map(e => Option(e.getMessage).getOrElse("The properties edit could not preserve the current YAML structure.")) }
+            val testKey = if (r.supports(8)) "data_tests" else "tests"
+            if (tests.nonEmpty || updateTests) {
+              val actualKey = if (DbtYaml.value(mapping, "tests").nonEmpty && DbtYaml.value(mapping, "data_tests").isEmpty) "tests" else testKey
+              put(mapping, actualKey, tests.map(quoted).mkString("[", ", ", "]"))
+            }
+            val missing = editedColumns.filterNot(column => DbtYaml.items(mapping, "columns").exists(m => DbtYaml.string(m, "name").contains(column.name)))
+            editedColumns.foreach { column =>
+              val existing = DbtYaml.items(mapping, "columns").find(m => DbtYaml.string(m, "name").contains(column.name))
+              existing match {
+                case Some(m) =>
+                  if (!DbtYaml.string(m, "description").contains(column.description)) put(m, "description", quoted(column.description))
+                  if (column.dataType.nonEmpty && !DbtYaml.string(m, "data_type").contains(column.dataType)) put(m, "data_type", quoted(column.dataType))
+                case None => ()
+              }
+            }
+            val values = missing.map { column =>
+              val dataType = if (column.dataType.nonEmpty) s", data_type: ${quoted(column.dataType)}" else ""
+              s"{name: ${quoted(column.name)}$dataType, description: ${quoted(column.description)}}"
+            }
+            val after = if (values.isEmpty) copy.getText else DbtYaml.value(mapping, "columns") match {
+              case Some(sequence: YAMLSequence) => appendItems(copy.getText, sequence, values)
+              case None =>
+                // YAML's key generator moves long flow sequences to a new line
+                // with root indentation. Insert at the native mapping range so
+                // new columns remain children of this resource.
+                val text = copy.getText
+                val flow = mapping.getText.trim.startsWith("{")
+                val offset = mapping.getTextRange.getEndOffset - (if (flow) 1 else 0)
+                val firstKey = mapping.getKeyValues.asScala.head.getTextOffset
+                val indent = firstKey - text.lastIndexOf('\n', firstKey - 1) - 1
+                val prefix = if (flow) (if (mapping.getKeyValues.isEmpty) "" else ", ") else "\n" + " " * indent
+                text.substring(0, offset) + prefix + "columns: " + values.mkString("[", ", ", "]") + text.substring(offset)
+              case _ => throw new IllegalArgumentException("Columns must be a YAML sequence before synchronization.")
+            }
+            DbtPropertyEdit(path, before, after, source, Some(resource.file.getVirtualFile.getParent))
+          }.toEither.left.map(e => Option(e.getMessage).getOrElse("The properties edit could not preserve the current YAML structure."))
+        }
       }
     }
   }
@@ -192,8 +200,8 @@ private[ide] object DbtPropertiesEditor {
       .flatMap(DbtYaml.string(_, "description")).headOption.getOrElse("")
     val proposedColumns = generatedColumns(w, resource, inherit)
     val prepared = if (inherit && proposedColumns.isEmpty) Left("No empty descriptions have an unambiguous documented passthrough source.")
-      else com.intellij.openapi.application.WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
-        plan(w, resource, description, proposedColumns, Vector.empty, Vector.empty))
+    else com.intellij.openapi.application.WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
+      plan(w, resource, description, proposedColumns, Vector.empty, Vector.empty))
     prepared match {
       case Left(error) => com.intellij.openapi.ui.Messages.showInfoMessage(w.project, error, "Generate dbt properties")
       case Right(edit) =>
@@ -204,14 +212,23 @@ private[ide] object DbtPropertiesEditor {
           private val factory = DiffContentFactory.getInstance()
           diff.setRequest(new SimpleDiffRequest(edit.path, factory.create(edit.before), factory.create(edit.after), "Current YAML", "Generated YAML"))
           setTitle(if (inherit) "Inherit empty dbt descriptions" else "Generate dbt columns")
-          setOKButtonText("Apply"); init()
+          setOKButtonText("Apply");
+          init()
+
           override def createCenterPanel(): JComponent = {
-            val component = diff.getComponent; component.setPreferredSize(new java.awt.Dimension(850, 550)); component
+            val component = diff.getComponent;
+            component.setPreferredSize(new java.awt.Dimension(850, 550));
+            component
           }
+
           override def doValidate(): ValidationInfo =
             if (settings != DbtProjectSettings.get(w.project).getModificationCount || sources.exists { case (f, stamp) => !f.isValid || f.getModificationStamp != stamp })
               new ValidationInfo("Source or settings changed. Generate the properties again.") else null
-          override def doOKAction(): Unit = if (doValidate() == null) { edit.apply(w.project); super.doOKAction() }
+
+          override def doOKAction(): Unit = if (doValidate() == null) {
+            edit.apply(w.project);
+            super.doOKAction()
+          }
         }.show()
     }
   }
@@ -219,11 +236,15 @@ private[ide] object DbtPropertiesEditor {
 
 abstract class DbtPropertiesIntention(inherit: Boolean) extends IntentionAction {
   override def getText: String = if (inherit) "Inherit empty dbt column descriptions" else "Generate missing dbt columns"
+
   override def getFamilyName: String = "dbt properties"
+
   override def startInWriteAction(): Boolean = false
+
   private def resource(project: Project, editor: Editor, file: PsiFile): Option[(DbtWorkspace, DbtSymbol)] =
     DbtResourceAction.at(project, Some(file), editor.getCaretModel.getOffset)
       .filter { case (w, s) => !s.metadata && s.file.isWritable && w.owner(s).exists(w.packageOwner(_).isEmpty) }
+
   override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean =
     resource(project, editor, file).exists { case (w, symbol) =>
       if (inherit) DbtColumnLineage.inherited(w, symbol).nonEmpty
@@ -232,23 +253,33 @@ abstract class DbtPropertiesIntention(inherit: Boolean) extends IntentionAction 
         DbtResourceData.get(w, symbol).columns.exists(c => !names(c.name))
       }
     }
+
   override def invoke(project: Project, editor: Editor, file: PsiFile): Unit =
     resource(project, editor, file).foreach { case (w, symbol) => DbtPropertiesEditor.generate(w, symbol, inherit) }
 }
+
 final class DbtGenerateColumnsIntention extends DbtPropertiesIntention(inherit = false)
+
 final class DbtInheritDescriptionsIntention extends DbtPropertiesIntention(inherit = true)
 
 /** IntelliJ supplies a preview and one undoable write command for this intention. */
 final class DbtExpandColumnsIntention extends IntentionAction {
   override def getText: String = "Expand dbt SQL columns"
+
   override def getFamilyName: String = "dbt SQL"
+
   override def startInWriteAction(): Boolean = true
+
   private def analysis(file: PsiFile) = DbtSqlAnalysis.get(DbtWorkspace.get(file.getProject), file).toVector
+
   private def expansion(file: PsiFile, offset: Int) =
     analysis(file).flatMap(_.wildcards).find { case (range, columns) => range.containsOffset(offset) && columns.nonEmpty }
+
   private def problem(file: PsiFile, offset: Int) = analysis(file).flatMap(_.wildcardProblems).find(_.range.containsOffset(offset))
+
   override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean =
     expansion(file, editor.getCaretModel.getOffset).nonEmpty || problem(file, editor.getCaretModel.getOffset).nonEmpty
+
   override def invoke(project: Project, editor: Editor, file: PsiFile): Unit = {
     val offset = editor.getCaretModel.getOffset
     expansion(file, offset) match {
@@ -256,14 +287,15 @@ final class DbtExpandColumnsIntention extends IntentionAction {
       case _ => problem(file, offset).foreach(p => HintManager.getInstance().showErrorHint(editor, p.message))
     }
   }
+
   override def generatePreview(project: Project, editor: Editor, file: PsiFile): IntentionPreviewInfo = {
     val original = file.getOriginalFile
     expansion(original, editor.getCaretModel.getOffset).map { case (range, columns) =>
-      val text = original.getText
-      new IntentionPreviewInfo.CustomDiff(file.getFileType, text,
-        text.substring(0, range.getStartOffset) + columns.mkString(", ") + text.substring(range.getEndOffset)): IntentionPreviewInfo
-    }.orElse(problem(original, editor.getCaretModel.getOffset).map(p =>
-      new IntentionPreviewInfo.Html(StringUtil.escapeXmlEntities(p.message)): IntentionPreviewInfo))
+        val text = original.getText
+        new IntentionPreviewInfo.CustomDiff(file.getFileType, text,
+          text.substring(0, range.getStartOffset) + columns.mkString(", ") + text.substring(range.getEndOffset)): IntentionPreviewInfo
+      }.orElse(problem(original, editor.getCaretModel.getOffset).map(p =>
+        new IntentionPreviewInfo.Html(StringUtil.escapeXmlEntities(p.message)): IntentionPreviewInfo))
       .getOrElse(IntentionPreviewInfo.EMPTY)
   }
 }

@@ -45,6 +45,7 @@ private[metadata] object DbtArtifacts {
 
 /** Declarations and dependencies of the `manifest`, `state-manifest` and `catalog` artifacts selected in the settings. */
 private[metadata] final class DbtArtifactSource extends DbtDeclarationSource with DbtDependencySource {
+
   import DbtArtifactSource._
   import DbtArtifacts._
 
@@ -247,10 +248,12 @@ private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
 
   override def read(root: DbtRoot, path: String, policy: DbtManifestPolicy): Either[String, DbtManifest] = {
     val psi = root.psiFile(path)
+
     def editor = psi.toRight("Cannot read manifest.").flatMap { file =>
       CachedValuesManager.getManager(file.getProject).getCachedValue(file, cache(policy), () =>
         CachedValueProvider.Result.create(parse(file.getText, policy), file), false)
     }
+
     def disk = Try {
       val file = Paths.get(root.directory.getPath).resolve(path).normalize()
       val stream = Files.newInputStream(file)
@@ -260,10 +263,11 @@ private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
         else parse(new String(bytes, StandardCharsets.UTF_8), policy)
       } finally stream.close()
     }.toEither.left.map(_ => "Cannot read manifest.").flatten
+
     val unsaved = psi.exists(f => Option(PsiDocumentManager.getInstance(f.getProject).getDocument(f))
       .exists(FileDocumentManager.getInstance().isDocumentUnsaved))
     val result = if (policy == DbtManifestPolicy.TestDiscovery && !unsaved) disk.orElse(editor)
-      else if (psi.nonEmpty) editor else disk
+    else if (psi.nonEmpty) editor else disk
     result.flatMap { manifest =>
       if (policy == DbtManifestPolicy.TestDiscovery && manifest.projectName.exists(p => p.nonEmpty && p != root.name))
         Left("Manifest belongs to another project.")

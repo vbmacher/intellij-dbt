@@ -14,6 +14,7 @@ import scala.jdk.CollectionConverters._
 /** User-visible regressions found while checking the authoring ticket acceptance criteria. */
 final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
   private def model(name: String) = workspace.symbols.find(s => s.kind == "model" && s.isCode && s.name == name).get
+
   def testEditPropertiesNavigatesToYamlWhenSqlHasMergedPropertiesMetadata(): Unit = {
     project()
     val yaml = add("models/orders.yml", "models:\n  - name: orders\n    description: Orders\n")
@@ -109,7 +110,8 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
     configure("models/report.sql", before.replace("select *", "select <caret>*"))
     myFixture.launchAction(myFixture.findSingleIntention("Expand dbt SQL columns"))
     assertEquals("select l.id, l.amount, r.id, r.total from {{ ref('left_orders') }} l join {{ ref('right_orders') }} r on l.id = r.id", myFixture.getFile.getText)
-    undo(orProject = true); assertEquals(before, myFixture.getFile.getText)
+    undo(orProject = true);
+    assertEquals(before, myFixture.getFile.getText)
   }
 
   def testRegisteredWildcardIntentionLoadsNativeSettingsDescriptionAndExamples(): Unit = {
@@ -152,7 +154,8 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
     assertEquals(plan.after + "\nColumns: " + workspace.columns(model("orders")).map(c => (c.name, c.attributes)) +
       "\nMappings: " + workspace.properties(model("orders")).map(_.mapping.map(_.getText)),
       "Identifier", DbtResourceData.get(workspace, model("orders")).columns.find(_.name == "id").get.description)
-    undo(orProject = true); assertNull(source.getVirtualFile.getParent.findChild("orders.yml"))
+    undo(orProject = true);
+    assertNull(source.getVirtualFile.getParent.findChild("orders.yml"))
   }
 
   def testDescriptionInheritanceKeepsExactOriginAndRejectsUnionAggregateAndExistingDoc(): Unit = {
@@ -189,16 +192,18 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
     val previous = settings.AUTOCOMPLETE_ON_CODE_COMPLETION
     settings.AUTOCOMPLETE_ON_CODE_COMPLETION = false
     try {
-    val config = project()
-    open(config, config.getText.length)
-    def keys: Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet
-    assertTrue(keys.contains("model-paths"))
-    com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
-    configure("packages.yml", "<caret>\n")
-    assertTrue(keys.contains("packages"))
-    com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
-    configure("selectors.yml", "<caret>\n")
-    assertTrue(keys.contains("selectors"))
+      val config = project()
+      open(config, config.getText.length)
+
+      def keys: Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet
+
+      assertTrue(keys.contains("model-paths"))
+      com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
+      configure("packages.yml", "<caret>\n")
+      assertTrue(keys.contains("packages"))
+      com.intellij.codeInsight.lookup.LookupManager.hideActiveLookup(getProject)
+      configure("selectors.yml", "<caret>\n")
+      assertTrue(keys.contains("selectors"))
     } finally settings.AUTOCOMPLETE_ON_CODE_COMPLETION = previous
   }
 
@@ -207,6 +212,7 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
     (1 to 100).foreach(i => add(s"models/orders_$i.sql", "select 1 as id"))
     val file = configure("models/report.sql", "select * from {{ ref('ord<caret>') }}")
     val offset = myFixture.getCaretOffset
+
     def cancels(action: () => Unit): Unit = {
       val canceled = new java.util.concurrent.atomic.AtomicBoolean
       com.intellij.openapi.application.ApplicationManager.getApplication.executeOnPooledThread(new Runnable {
@@ -217,13 +223,22 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
               indicator.cancel()
               com.intellij.openapi.application.ReadAction.runBlocking(() => action())
             }
-          }, indicator) catch { case _: ProcessCanceledException => canceled.set(true) }
+          }, indicator) catch {
+            case _: ProcessCanceledException => canceled.set(true)
+          }
         }
       }).get(10, java.util.concurrent.TimeUnit.SECONDS)
       assertTrue("Background work must observe cancellation", canceled.get())
     }
-    cancels(() => { DbtCompletion.suggestions(file, offset); () })
-    cancels(() => { DbtSqlAnalysis.get(workspace, file); () })
+
+    cancels(() => {
+      DbtCompletion.suggestions(file, offset);
+      ()
+    })
+    cancels(() => {
+      DbtSqlAnalysis.get(workspace, file);
+      ()
+    })
     assertTrue("Cancellation must not poison future completion", DbtCompletion.suggestions(file, myFixture.getCaretOffset).exists(_.text == "orders_1"))
   }
 
@@ -250,22 +265,29 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
     myFixture.launchAction(action)
     assertEquals("Explaining unsupported expansion must preserve source", before, myFixture.getFile.getText)
   }
+
   def testNativeIntentionExplainsMissingSchemaWithoutEditingSql(): Unit = {
     project()
     explain("select <caret>* from unknown_relation", "Add or update")
   }
+
   def testNativeIntentionExplainsWildcardModifiersAndPreservesThem(): Unit = {
-    project(); add("models/orders.sql", "select 1 as id, 2 as amount")
+    project();
+    add("models/orders.sql", "select 1 as id, 2 as amount")
     Vector("except (id)", "exclude id", "replace (3 as id)").zipWithIndex.foreach { case (modifier, index) =>
       explain(s"select <caret>* $modifier from {{ ref('orders') }}", "remove the modifier", index)
     }
   }
+
   def testNativeIntentionExplainsUnresolvedQualifierInsteadOfGuessingAnotherRelation(): Unit = {
-    project(); add("models/orders.sql", "select 1 as id")
+    project();
+    add("models/orders.sql", "select 1 as id")
     explain("select other_alias.<caret>* from {{ ref('orders') }} o", "declared relation alias")
   }
+
   def testCountMultiplicationCommentsAndStringStarsHaveNoExpansionAction(): Unit = {
-    project(); add("models/orders.sql", "select 1 as id")
+    project();
+    add("models/orders.sql", "select 1 as id")
     Vector("select count(<caret>*) from {{ ref('orders') }}", "select id <caret>* 2 from {{ ref('orders') }}",
       "select '<caret>*' as value", "select 1 /* <caret>* */", "select 1 -- <caret>*\n")
       .zipWithIndex.foreach { case (sql, i) =>
@@ -273,10 +295,13 @@ final class DbtAuthoringAcceptanceAuditTest extends DbtTestCase {
         assertFalse(sql, myFixture.getAvailableIntentions.asScala.exists(_.getText == "Expand dbt SQL columns"))
       }
   }
+
   def testDuplicateRelationAliasesAreExplainedWithoutChoosingOne(): Unit = {
-    project(); add("models/orders.sql", "select 1 as id")
+    project();
+    add("models/orders.sql", "select 1 as id")
     explain("select o.<caret>* from {{ ref('orders') }} o join {{ ref('orders') }} o on 1=1", "No unique relation")
   }
+
   def testKnownWildcardStillHasEditablePreviewAfterUnknownSchemaBecomesKnown(): Unit = {
     project()
     val upstream = add("models/orders.sql", "select * from unknown_relation")

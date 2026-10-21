@@ -39,6 +39,7 @@ import scala.util.control.NonFatal
 
 /** Declarations and dependencies of the dbt v2 Information Schema artifacts selected in the settings. */
 private[metadata] final class DbtParquetArtifactSource extends DbtDeclarationSource with DbtDependencySource {
+
   import DbtArtifacts._
   import DbtParquetArtifactSource._
 

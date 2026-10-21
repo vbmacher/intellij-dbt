@@ -19,8 +19,10 @@ import scala.jdk.CollectionConverters._
 private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[DbtRoot], val files: Vector[PsiFile],
   val symbols: Vector[DbtSymbol]) extends com.intellij.openapi.util.UserDataHolderBase {
   private val documentation = new java.util.concurrent.ConcurrentHashMap[String, DbtResourceData]()
+
   def resourceData(symbol: DbtSymbol)(read: => DbtResourceData): DbtResourceData =
     documentation.computeIfAbsent(symbol.id, _ => read)
+
   private lazy val byKindAndName = symbols.groupBy(s => (s.kind, s.name))
 
   private def rootOf(file: VirtualFile): Option[DbtRoot] =
@@ -71,11 +73,13 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
       ProgressManager.checkCanceled()
       namespace.forall(_ == s.namespace) && visibleSymbol(s, from, namespace.nonEmpty)
     }
+
     def usable(selected: Vector[DbtSymbol]): Vector[DbtSymbol] =
       selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
         .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
           t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
         .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
+
     // Like dbt, an unqualified name falls back to packages when no enabled local declaration exists.
     val local = if (namespace.isEmpty) usable(candidates.filter(_.namespace == from.name)) else Vector.empty
     if (local.nonEmpty) local else usable(candidates)
@@ -83,7 +87,7 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
 
   private def functionSupported(symbol: DbtSymbol, from: DbtRoot): Boolean = {
     val language = if (symbol.isCode) Option(symbol.file.getVirtualFile.getExtension)
-      else symbol.attributes.get("language").orElse(symbol.attributes.get("node_language"))
+    else symbol.attributes.get("language").orElse(symbol.attributes.get("node_language"))
     val adapter = from.adapter
     val languages = language.forall {
       case "js" | "javascript" => from.supports(12) && adapter.forall(Set("snowflake", "bigquery"))
@@ -175,11 +179,14 @@ private[dbt] object DbtWorkspace {
     val bases = (Option(project.getBasePath).flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).toVector ++
       ProjectRootManager.getInstance(project).getContentRoots.toVector).distinct
     val enclosing = mutable.Map.empty[VirtualFile, Option[DbtRoot]]
+
     def enclosingRoot(directory: VirtualFile): Option[DbtRoot] = if (directory == null) None
-      else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
+    else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
+
     // Installed packages are excluded from their owner's resources, but they are projects of their own.
     def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", ".venv", "venv", "target", "logs").contains(file.getName) &&
       enclosingRoot(file.getParent).forall(r => !r.excluded(file) || r.relative(file).exists(r.pathContains(r.packagePath, _)))
+
     val configs = mutable.ArrayBuffer.empty[VirtualFile]
     bases.foreach(b => VfsUtilCore.iterateChildrenRecursively(b, discoverable(_), f => {
       ProgressManager.checkCanceled()
@@ -262,18 +269,23 @@ private[dbt] object DbtDeclarationSource {
  * Baseline snapshots contain only resources participating in source-state comparison.
  */
 private[dbt] sealed abstract class DbtManifestPolicy(val maxBytes: Int) extends Product with Serializable
+
 private[dbt] object DbtManifestPolicy {
   case object Navigation extends DbtManifestPolicy(Int.MaxValue)
+
   case object TestDiscovery extends DbtManifestPolicy(25000000)
+
   case object Baseline extends DbtManifestPolicy(50000000)
 }
 
 /** Gson field access and construction; a field holding another JSON type is absent. */
 private[dbt] object DbtJson {
   def child(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+
   /** A JSON string value; numbers, booleans and null are absent. */
   def text(o: JsonObject, key: String): Option[String] =
     Option(o.get(key)).filter(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
+
   /** Any JSON primitive as text, or empty. */
   def string(o: JsonObject, key: String): String = Option(o.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
 
@@ -290,11 +302,22 @@ private[dbt] object DbtJson {
     }
     o
   }
-  def strings(values: Iterable[String]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
-  def array(values: Iterable[JsonElement]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
+
+  def strings(values: Iterable[String]): JsonArray = {
+    val a = new JsonArray;
+    values.foreach(a.add);
+    a
+  }
+
+  def array(values: Iterable[JsonElement]): JsonArray = {
+    val a = new JsonArray;
+    values.foreach(a.add);
+    a
+  }
 }
 
 private[dbt] final case class DbtManifestResource(section: String, id: String, data: JsonObject)
+
 private[dbt] final case class DbtManifest(schemaVersion: Int, projectName: Option[String], resources: Vector[DbtManifestResource]) {
   def in(sections: String*): Vector[DbtManifestResource] = resources.filter(r => sections.contains(r.section))
 }
@@ -302,6 +325,7 @@ private[dbt] final case class DbtManifest(schemaVersion: Int, projectName: Optio
 /** Local manifest access, implemented by metadata. Baseline paths must be checked by the caller before reading. */
 private[dbt] trait DbtManifestReader {
   def parse(text: String, policy: DbtManifestPolicy): Either[String, DbtManifest]
+
   def read(root: DbtRoot, path: String, policy: DbtManifestPolicy): Either[String, DbtManifest]
 }
 

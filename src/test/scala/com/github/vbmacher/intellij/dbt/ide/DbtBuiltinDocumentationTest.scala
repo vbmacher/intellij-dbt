@@ -22,7 +22,8 @@ final class DbtBuiltinDocumentationTest extends DbtTestCase {
   private val requested = new ConcurrentLinkedQueue[String]()
   private var autoUpdate = false
   private var skipPopup = false
-  private val page = """<html><head><style>unwanted css</style></head><body><nav>Website menu</nav><article>
+  private val page =
+    """<html><head><style>unwanted css</style></head><body><nav>Website menu</nav><article>
     <nav>Breadcrumbs</nav><div class="markdown"><h1>ref</h1><p>Returns a relation and records a model dependency.</p>
     <pre><code>{{ ref('orders') }}</code></pre><table><tr><th>Argument</th><td>model_name</td></tr></table>
     <a href="/reference/dbt-jinja-functions/source">source</a><h2 id="versions">Versions</h2>
@@ -150,12 +151,14 @@ final class DbtBuiltinDocumentationTest extends DbtTestCase {
     project()
     configure("models/report.sql", "{{ r<caret>ef('orders') }}")
     val manager = ToolWindowManager.getInstance(getProject)
+
     def displayed(text: String): Boolean =
       Option(manager.getToolWindow(DocumentationToolWindowManager.TOOL_WINDOW_ID)).exists(window =>
         window.getContentManager.getContents.exists(content => components(content.getComponent).exists {
           case pane: JEditorPane => org.jsoup.Jsoup.parse(pane.getText).text().contains(text)
           case _ => false
         }))
+
     myFixture.performEditorAction("GotoDeclaration")
     await("Builtin navigation displays native documentation")(displayed("Returns a relation"))
     assertEquals("models/report.sql", myFixture.getFile.getVirtualFile.getPath.takeRight("models/report.sql".length))

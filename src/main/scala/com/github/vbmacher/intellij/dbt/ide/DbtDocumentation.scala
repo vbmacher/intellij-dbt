@@ -31,7 +31,7 @@ final class DbtDocumentationTargetProvider extends DocumentationTargetProvider {
     val targets = DbtNavigation.resolvedAt(file, offset).filter(s => DbtResourceData.GraphKinds(s.kind) ||
       Set("macro", "documentation")(s.kind) || DbtSymbol.ColumnKinds(s.kind)).distinctBy(_.id)
     (if (targets.size != 1) Vector.empty
-      else DbtDocumentation.target(file.getProject, targets.head)(new DbtDocumentationTarget(file, offset, _)).toVector).asJava
+    else DbtDocumentation.target(file.getProject, targets.head)(new DbtDocumentationTarget(file, offset, _)).toVector).asJava
   }
 }
 
@@ -103,8 +103,11 @@ private[ide] object DbtDocumentation {
   /** Documentation follows resource and macro dependencies, not navigation to config keys or source groups. */
   def dependencies(w: DbtWorkspace, s: DbtSymbol): (Vector[String], Vector[String]) = {
     def documented(symbol: DbtSymbol): Boolean = DbtResourceData.GraphKinds(symbol.kind) || symbol.kind == "macro"
+
     val edges = DbtLineage.edges(w).filter(e => documented(e.from) && documented(e.to))
+
     def same(a: DbtSymbol): Boolean = w.owner(a) == w.owner(s) && a.uniqueId == s.uniqueId
+
     edges.filter(e => same(e.from)).map(e => displayName(e.to)).distinct ->
       edges.filter(e => same(e.to)).map(e => displayName(e.from)).distinct
   }
@@ -121,9 +124,12 @@ private[ide] object DbtDocumentation {
   def render(w: DbtWorkspace, s: DbtSymbol): String = {
     val data = DbtResourceData.get(w, s)
     val (upstream, downstream) = dependencies(w, s)
+
     def e(value: String): String = escape(value)
+
     def list(label: String, items: Vector[String]): String =
       s"<h3>$label (${items.size})</h3>" + (if (items.isEmpty) "<p>None recorded</p>" else "<ul>" + items.map(x => s"<li>${e(x)}</li>").mkString + "</ul>")
+
     val relation = data.attributes.get("relation_name").orElse(data.attributes.get("identifier")).getOrElse("")
     val metadata = Vector("Package" -> s.namespace) ++ s.version.map("Version" -> _) ++
       Vector("Database" -> "database", "Schema" -> "schema", "Materialization" -> "materialized").flatMap { case (label, key) =>
@@ -142,7 +148,7 @@ private[ide] object DbtDocumentation {
       list("Upstream", upstream) + list("Downstream", downstream) +
       s"<h3>Tests (${data.tests.size})</h3>" + data.tests.map(t => s"<p>${e(t.name)} ${e(t.column)}</p>").mkString +
       "<h3>Airflow context</h3>" + DbtAirflow.context(w, s).map(t =>
-        s"<p>${e(t.dag)} / ${e(t.task)} — ${e(t.schedule)}<br>Selection: ${e(t.selection)}<br>Exclude: ${e(t.exclude)}<br>${e(t.problems.mkString("; "))}</p>").mkString +
+      s"<p>${e(t.dag)} / ${e(t.task)} — ${e(t.schedule)}<br>Selection: ${e(t.selection)}<br>Exclude: ${e(t.exclude)}<br>${e(t.problems.mkString("; "))}</p>").mkString +
       s"<p>Source: ${e(s.file.getVirtualFile.getPath)}</p>"
   }
 }
@@ -154,6 +160,7 @@ private[ide] trait DbtBuiltinDocumentationSource {
 /** Network work happens only in the documentation target's asynchronous computation. */
 final class DbtBuiltinDocumentationLoader extends DbtBuiltinDocumentationSource {
   private val pages = ContainerUtil.createConcurrentSoftValueMap[String, String]()
+
   override def html(url: String): String = pages.computeIfAbsent(url.takeWhile(_ != '#'), address => {
     val page = HttpRequests.request(address).productNameAsUserAgent().connectTimeout(5000).readTimeout(5000).readString()
     DbtBuiltinDocumentationLoader.article(page, address)
@@ -183,18 +190,22 @@ private[ide] object DbtBuiltinDocumentationLoader {
 
 private[ide] final class DbtBuiltinDocumentationTarget(val symbol: DbtSymbol) extends DocumentationTarget {
   val url: String = symbol.attributes("url")
+
   override def createPointer(): Pointer[_ <: DocumentationTarget] = Pointer.fileRangePointer(symbol.file, symbol.range,
     (fresh: PsiFile, range: TextRange) =>
       new DbtBuiltinDocumentationTarget(symbol.copy(file = fresh, range = range)))
+
   override def computePresentation(): TargetPresentation = TargetPresentation.builder(s"dbt.${symbol.name}")
     .icon(symbol.element.getIcon(0)).presentation()
+
   override def computeDocumentation(): DocumentationResult = DocumentationResult.asyncDocumentation(() => {
     val title = s"<div class='definition'><b>dbt.${DbtDocumentation.escape(symbol.name)}</b></div>"
     val content = try symbol.file.getProject.getService(classOf[DbtBuiltinDocumentationSource]).html(url)
-      catch { case error: IOException =>
+    catch {
+      case error: IOException =>
         "<p>Unable to load the dbt reference documentation. Check your connection and invoke Quick Documentation again.</p><p>" +
           DbtDocumentation.escape(Option(error.getMessage).getOrElse("Network error")) + "</p>"
-      }
+    }
     val result = DocumentationResult.documentation(title + "<div class='content'>" + content + "</div>").externalUrl(url)
     Option(new URI(url).getFragment).fold(result)(result.anchor)
   })
@@ -235,27 +246,36 @@ final class DbtColumnDocumentationLinkHandler extends DocumentationLinkHandler {
     }.orNull
   }
 }
+
 private[ide] final class DbtColumnDocumentationTarget(resource: DbtSymbol, name: String) extends DocumentationTarget {
   private def current(w: DbtWorkspace): Option[DbtSymbol] = w.symbols.find(s => s.file == resource.file && s.sameResource(resource))
+
   private def column(w: DbtWorkspace, model: DbtSymbol): Option[DbtSymbol] = w.columns(model).find(_.name == name).orElse(
     DbtSqlAnalysis.get(w, model.file).flatMap(_.columns.find(_.name == name)).map(c =>
       DbtSymbol("sql_projection", name, model.namespace, model.file, c.range, owner = model.name)))
+
   override def createPointer(): Pointer[_ <: DocumentationTarget] = Pointer.fileRangePointer(resource.file, resource.range,
     (file: PsiFile, range: TextRange) => current(DbtWorkspace.get(file.getProject))
       .map(s => new DbtColumnDocumentationTarget(s, name)).orNull)
+
   override def computePresentation(): TargetPresentation = TargetPresentation.builder(resource.name + "." + name).presentation()
+
   override def getNavigatable: Navigatable = {
     val w = DbtWorkspace.get(resource.file.getProject)
     current(w).flatMap(column(w, _)).map(_.element).orNull
   }
+
   override def computeDocumentation(): DocumentationResult = DbtDocumentation.compute(resource.file.getProject) {
     val w = DbtWorkspace.get(resource.file.getProject)
     current(w).map { model =>
       def e(text: String): String = DbtDocumentation.escape(text)
+
       val data = DbtResourceData.get(w, model).columns.find(_.name == name)
+
       def related(downstream: Boolean): String = column(w, model).toVector.flatMap(DbtHierarchy.related(w, _, downstream)).map {
         case (symbol, kind) => s"<li>${e(symbol.namespace)}.${e(symbol.owner)}.${e(symbol.name)} — ${e(kind)}</li>"
       }.mkString("<ul>", "", "</ul>")
+
       val origin = DbtPropertiesEditor.origins(w, model, name)._1
       s"<div class='definition'><b>${e(model.name)}.${e(name)}</b></div><p>${e(origin)}</p>" +
         data.map(c => s"<p>${e(c.dataType)}</p><p>${e(c.description)}</p>").getOrElse("") +

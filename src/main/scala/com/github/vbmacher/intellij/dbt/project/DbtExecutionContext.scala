@@ -52,7 +52,9 @@ final class DbtSettingsState {
   @BeanProperty var pinnedFocus: String = ""
 
   def upstream: Int = depth(upstreamDepth)
+
   def downstream: Int = depth(downstreamDepth)
+
   private def depth(value: Int): Int = value.max(1).min(20)
 }
 
@@ -60,9 +62,19 @@ final class DbtSettingsState {
 @State(name = "DbtWorkspaceSettings", storages = Array(new Storage("dbt-workspace.xml")))
 final class DbtProjectSettings(project: Project) extends SimpleModificationTracker with PersistentStateComponent[DbtSettingsState] {
   private var state = new DbtSettingsState
+
   override def getState: DbtSettingsState = state
-  override def loadState(value: DbtSettingsState): Unit = { state = value; changed() }
-  def changed(): Unit = { incModificationCount(); project.getMessageBus.syncPublisher(DbtProjectSettings.Changed).settingsChanged() }
+
+  override def loadState(value: DbtSettingsState): Unit = {
+    state = value;
+    changed()
+  }
+
+  def changed(): Unit = {
+    incModificationCount();
+    project.getMessageBus.syncPublisher(DbtProjectSettings.Changed).settingsChanged()
+  }
+
   def options(root: String): DbtRunOptions = synchronized {
     state.projects.computeIfAbsent(root, _ => new DbtRunOptions)
   }
@@ -70,10 +82,13 @@ final class DbtProjectSettings(project: Project) extends SimpleModificationTrack
 
 private[dbt] object DbtProjectSettings {
   val Changed: Topic[DbtSettingsListener] = Topic.create("dbt settings changed", classOf[DbtSettingsListener])
+
   def get(project: Project): DbtProjectSettings = project.getService(classOf[DbtProjectSettings])
 }
 
-private[dbt] trait DbtSettingsListener { def settingsChanged(): Unit }
+private[dbt] trait DbtSettingsListener {
+  def settingsChanged(): Unit
+}
 
 /** Environment variables declared by `.env` files and the `env` section of a run configuration. */
 private[dbt] object DbtEnvironment {
@@ -140,7 +155,7 @@ private[dbt] object DbtExecutionContext {
       .orElse(environment.get("DBT_PROFILES_DIR").filter(_.nonEmpty).map(Paths.get(_)))
       .map(p => if (p.isAbsolute) p else root.executionDirectory.resolve(p))
       .getOrElse(if (root.psiFile(root.executionDirectory.resolve("profiles.yml").toString).nonEmpty) root.executionDirectory
-        else Paths.get(System.getProperty("user.home"), ".dbt"))
+      else Paths.get(System.getProperty("user.home"), ".dbt"))
     val config = root.yaml(root.executionDirectory.resolve("dbt_project.yml").toString).getOrElse(root.config)
     val profile = DbtYaml.string(config, "profile")
       .flatMap(name => root.yaml(directory.resolve("profiles.yml").toString).flatMap(DbtYaml.map(_, name)))
@@ -174,15 +189,20 @@ private[dbt] object DbtExecutionContext {
 private[dbt] object DbtHash {
   def sha256(bytes: Array[Byte]): String =
     java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+
   def sha256(text: String): String = sha256(text.getBytes(StandardCharsets.UTF_8))
 }
 
 /** Provenance binds the manifest bytes to the execution configuration captured before launching dbt. */
 private[dbt] object DbtArtifactContext {
   private val Marker = ".dbt-workspace-context"
+
   private def textDigest(text: String): String = DbtHash.sha256(text.stripPrefix("\ufeff").replace("\r\n", "\n"))
+
   private def digest(path: Path): String = textDigest(Files.readString(path, StandardCharsets.UTF_8))
+
   def fingerprint(directory: String): Option[String] = Try(digest(Paths.get(directory).resolve("manifest.json"))).toOption
+
   def identity(root: DbtRoot): Vector[String] = {
     val directory = root.executionDirectory
     val profiles = DbtExecutionContext.profiles(root).directory.normalize()
@@ -199,11 +219,13 @@ private[dbt] object DbtArtifactContext {
         root.runOptions.favorState.toString) ++ baseline
     Vector(directory.toString, DbtExecutionContext.activeTarget(root).getOrElse(""), textDigest(configuration.mkString("\u0000")))
   }
+
   def record(directory: String, context: Vector[String]): Unit = {
     val path = Paths.get(directory)
     val manifest = path.resolve("manifest.json")
     if (Files.isRegularFile(manifest)) Files.write(path.resolve(Marker), (context :+ digest(manifest)).asJava, StandardCharsets.UTF_8)
   }
+
   def matches(root: DbtRoot): Boolean = {
     val manifest = root.setting("manifest").map(Paths.get(_)).map(p => if (p.isAbsolute) p else Paths.get(root.directory.getPath).resolve(p))
     manifest.exists { path =>

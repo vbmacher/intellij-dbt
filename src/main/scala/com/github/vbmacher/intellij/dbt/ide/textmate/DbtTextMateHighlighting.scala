@@ -74,15 +74,19 @@ final class DbtSqlFileTypeOverrider extends FileTypeOverrider {
     if (original.isInstanceOf[LanguageFileType]) return null
     val project = ProjectLocator.getInstance.guessProjectForFile(file)
     if (project == null || project.isDisposed) return null
-    if (DbtSqlFileType.inProject(project, file)(_.kind(file).nonEmpty)) DbtSqlFileType else null
+    if (DbtSqlFileType.inProject(project, file)(_.kind(file).nonEmpty)) DbtSqlFileType.instance else null
   }
 }
 
-private object DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
+private final class DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANCE, true) {
   override def getName: String = "DBT_SQL"
   override def getDescription: String = "dbt SQL"
   override def getDefaultExtension: String = "sql"
   override def getIcon: javax.swing.Icon = com.intellij.icons.AllIcons.FileTypes.Text
+}
+
+private object DbtSqlFileType {
+  val instance: DbtSqlFileType = new DbtSqlFileType
 
   /** Whether `file` is an unexcluded file of a dbt project root accepted by `accept`. */
   def inProject(project: Project, file: VirtualFile)(accept: DbtRoot => Boolean): Boolean =

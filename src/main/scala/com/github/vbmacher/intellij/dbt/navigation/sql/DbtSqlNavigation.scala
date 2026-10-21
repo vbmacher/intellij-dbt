@@ -23,7 +23,9 @@ import scala.jdk.CollectionConverters._
 /** Relations, columns and aliases of SQL resources; the Jinja references found before resolve template relations. */
 private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
   override def relationRanges(sql: String): Vector[TextRange] = DbtSqlNavigation.relationRanges(sql)
+
   override def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = DbtSqlNavigation.projectedColumns(sql)
+
   override def withPrefix(text: String, end: Int): Option[String] = DbtSqlNavigation.withPrefix(text, end)
 
   override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[DbtSqlAnalysis] =
@@ -97,7 +99,9 @@ private[sql] object DbtSqlNavigation {
   def range(text: String, t: Token): TextRange = new TextRange(offset(text, t), offset(text, t, end = true))
 
   def parse(sql: String): Option[Statement] =
-    try Some(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch { case _: JSQLParserException => None }
+    try Some(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch {
+      case _: JSQLParserException => None
+    }
 
   /** The output name of a select item: its alias or its column. */
   def itemName(item: SelectItem[_]): Option[String] = Option(item.getAlias).map(_.getUnquotedName).orElse(item.getExpression match {
@@ -153,7 +157,10 @@ private[sql] object DbtSqlNavigation {
             var last = first
             // FromItem includes aliases/hints; consume only the parser's multipart table name.
             var remaining = table.getNameParts.size() * 2 - 2
-            while (remaining > 0 && last.next != null) { last = last.next; remaining -= 1 }
+            while (remaining > 0 && last.next != null) {
+              last = last.next;
+              remaining -= 1
+            }
             result += new TextRange(offset(sql, first), offset(sql, last, end = true))
           }
           super.visit(table, context)
@@ -163,8 +170,11 @@ private[sql] object DbtSqlNavigation {
         val statements = CCJSqlParserUtil.parseStatements(sql, p => p.withTimeOut(1000))
         statements.forEach(statement => visitor.getTables(statement))
         Some(result.toVector.distinct)
-      } catch { case _: JSQLParserException => None }
+      } catch {
+        case _: JSQLParserException => None
+      }
     }
+
     Vector("", "select ", "select * ").iterator.flatMap { prefix =>
       parsed(prefix + sql).map(_.filter(_.getStartOffset >= prefix.length).map(_.shiftRight(-prefix.length)))
     }.take(1).toVector.flatten
@@ -180,9 +190,11 @@ private[sql] object DbtSqlNavigation {
     stream.setTabSize(1)
     val lexer = new CCJSqlParserTokenManager(stream)
     val starts = Vector(0) ++ text.indices.filter(text(_) == '\n').map(_ + 1)
+
     def range(token: Token): TextRange = new TextRange(
       math.min(text.length, starts.lift(token.beginLine - 1).getOrElse(0) + token.beginColumn - 1),
       math.min(text.length, starts.lift(token.endLine - 1).getOrElse(0) + token.endColumn))
+
     val tokens = ArrayBuffer.empty[(String, TextRange)]
     val comments = ArrayBuffer.empty[DbtSqlSuppressionComment]
     try {
@@ -201,7 +213,9 @@ private[sql] object DbtSqlNavigation {
         done = token.kind == 0
         if (!done) tokens += token.image -> range(token)
       }
-    } catch { case _: TokenMgrException => () } // Keep proven boundaries preceding unfinished SQL.
+    } catch {
+      case _: TokenMgrException => ()
+    } // Keep proven boundaries preceding unfinished SQL.
     val ends = tokens.collect { case (";", r) => r.getEndOffset }.toVector :+ text.length
     val statements = (Vector(0) ++ ends).sliding(2).collect { case Vector(start, end) if end > start =>
       val first = tokens.iterator.map(_._2.getStartOffset).find(i => i >= start && i < end)
@@ -217,6 +231,7 @@ private[sql] object DbtSqlNavigation {
       case p: ParenthesedFromItem => safeFrom(p.getFromItem) && all(p.getJoins).forall(j => safeFrom(j.getFromItem))
       case _ => true
     }
+
     def safe(s: Select): Boolean = all(s.getWithItemsList).forall(i => i.getParenthesedStatement match {
       case p: ParenthesedSelect => safe(p.getSelect)
       case _ => false
@@ -227,6 +242,7 @@ private[sql] object DbtSqlNavigation {
         safeFrom(p.getFromItem) && all(p.getJoins).forall(j => safeFrom(j.getFromItem))
       case _ => false
     })
+
     def select(s: Select): (Vector[String], Boolean) = s match {
       case p: ParenthesedSelect => select(p.getSelect)
       case sets: SetOperationList => all(sets.getSelects).headOption.map(select).getOrElse(Vector.empty -> false)
@@ -236,10 +252,13 @@ private[sql] object DbtSqlNavigation {
         names -> (names.size == items.size)
       case _ => Vector.empty -> false
     }
-    if (sql.length > 1000000) None else masked(sql, DbtSyntax.blocks(sql)).filter { query => scala.util.Try {
-      val parsedTokens = tokens(query)
-      !parsedTokens.zipWithIndex.exists { case (token, index) => token.image == ";" && index != parsedTokens.size - 1 }
-    }.getOrElse(false) }.flatMap(parse).collect { case s: Select if safe(s) => select(s) }
+
+    if (sql.length > 1000000) None else masked(sql, DbtSyntax.blocks(sql)).filter { query =>
+      scala.util.Try {
+        val parsedTokens = tokens(query)
+        !parsedTokens.zipWithIndex.exists { case (token, index) => token.image == ";" && index != parsedTokens.size - 1 }
+      }.getOrElse(false)
+    }.flatMap(parse).collect { case s: Select if safe(s) => select(s) }
   }
 
   def projections(resource: DbtSymbol): Vector[DbtSymbol] = {
@@ -432,9 +451,11 @@ private[sql] object DbtSqlNavigation {
 
 /** A conservative, offset-preserving projection analysis. All dialect syntax is parsed by JSqlParser. */
 private object DbtSqlAnalyzer {
+
   import DbtSqlNavigation.{aliasToken, all, itemName, nodeTokens, offset, parse, tokens}
 
   private final case class Relation(columns: Vector[DbtSymbol], known: Boolean, cte: Option[(String, TextRange)] = None)
+
   private val ModifierProblem = "Wildcard EXCEPT, EXCLUDE or REPLACE modifiers cannot be expanded safely. " +
     "Write the required columns explicitly, or remove the modifier before expanding."
 
@@ -445,7 +466,9 @@ private object DbtSqlAnalyzer {
     val blocks = DbtSyntax.inFile(file)
     val sql = DbtSqlNavigation.masked(text, blocks).getOrElse(return Some(DbtSqlAnalysis(Vector.empty, Vector.empty,
       Vector.empty, Vector.empty, Vector("Dynamic Jinja control flow; column analysis unavailable."))))
+
     def span(t: Token): TextRange = DbtSqlNavigation.range(text, t)
+
     val parsed = parse(sql).orElse(completionOffset.filter(i => i > 0 && i <= sql.length).flatMap { i =>
       parse(sql.updated(i - 1, if (sql(i - 1) == '.') ' ' else '*'))
     }).getOrElse {
@@ -485,11 +508,14 @@ private object DbtSqlAnalyzer {
     val problems = ArrayBuffer.empty[DbtSqlProblem]
     val deletions = ArrayBuffer.empty[(TextRange, TextRange)]
     val declarations = ArrayBuffer.empty[DbtSymbol]
+
     def range(node: ASTNodeAccess): TextRange = {
       val tokens = nodeTokens(node)
       if (tokens.isEmpty) TextRange.EMPTY_RANGE else new TextRange(offset(text, tokens.head), offset(text, tokens.last, end = true))
     }
+
     def nameRange(node: ASTNodeAccess): TextRange = nodeTokens(node).lastOption.map(span).getOrElse(TextRange.EMPTY_RANGE)
+
     def removable(item: TextRange, allowSoleWith: Boolean): Option[TextRange] = {
       val before = allTokens.filter(t => offset(text, t, end = true) <= item.getStartOffset).lastOption
       val after = allTokens.find(t => offset(text, t) >= item.getEndOffset)
@@ -498,6 +524,7 @@ private object DbtSqlAnalyzer {
         Some(new TextRange(offset(text, before.get), item.getEndOffset))
       else None
     }
+
     def external(table: Table): Relation = {
       val candidates = blocks.zipWithIndex.find { case (_, i) => table.getName == DbtSqlNavigation.marker(i) }.toVector.flatMap { case (b, _) =>
         references.filter(r => b.range.contains(r.getRangeInElement)).flatMap(_.candidates).collect {
@@ -520,6 +547,7 @@ private object DbtSqlAnalyzer {
         }
       }
     }
+
     def local(columns: Vector[DbtSqlColumn]): Relation = {
       intermediate ++= columns
       Relation(columns.map(c => DbtSymbol("sql_projection", c.name, root.name, file, c.range)),
@@ -575,20 +603,23 @@ private object DbtSqlAnalyzer {
               case _ => Relation(Vector.empty, known = false)
             }
             val alias = Option(f.getAlias).map(_.getUnquotedName).getOrElse(f match { case t: Table => t.getUnquotedName; case _ => "" })
-            Option(f.getAlias).foreach { a => f match {
-              case n: ASTNodeAccess => aliasToken(n, a.getUnquotedName).foreach { token =>
-                val aliasRange = span(token)
-                declarations += DbtSymbol("sql_alias", a.getUnquotedName, root.name, file, aliasRange)
-                val previous = allTokens.filter(t => offset(text, t, end = true) <= aliasRange.getStartOffset).lastOption
-                val start = previous.filter(_.image.equalsIgnoreCase("as")).map(offset(text, _)).getOrElse(aliasRange.getStartOffset)
-                deletions += aliasRange -> new TextRange(start, aliasRange.getEndOffset)
+            Option(f.getAlias).foreach { a =>
+              f match {
+                case n: ASTNodeAccess => aliasToken(n, a.getUnquotedName).foreach { token =>
+                  val aliasRange = span(token)
+                  declarations += DbtSymbol("sql_alias", a.getUnquotedName, root.name, file, aliasRange)
+                  val previous = allTokens.filter(t => offset(text, t, end = true) <= aliasRange.getStartOffset).lastOption
+                  val start = previous.filter(_.image.equalsIgnoreCase("as")).map(offset(text, _)).getOrElse(aliasRange.getStartOffset)
+                  deletions += aliasRange -> new TextRange(start, aliasRange.getEndOffset)
+                }
+                case _ => ()
               }
-              case _ => ()
-            }}
+            }
             alias -> relation
           }
           val complete = relations.forall(_._2.known)
           scopes += DbtSqlScope(range(p), relations.map { case (a, r) => a -> r.columns }, complete)
+
           def resolve(c: Column, report: Boolean = true): Vector[DbtSymbol] = {
             val qualifier = Option(c.getTable).flatMap(t => Option(t.getName))
             val candidates = relations.filter { case (a, _) => qualifier.forall(_.equalsIgnoreCase(a)) }
@@ -597,13 +628,16 @@ private object DbtSqlAnalyzer {
               problems += DbtSqlProblem(nameRange(c), "Unknown column '" + c.getUnquotedColumnName + "' in this SQL scope.")
             if (candidates.size == 1) candidates else Vector.empty
           }
+
           def quoted(c: DbtSymbol): String = {
             val raw = c.range.substring(c.file.getText)
             if (raw.startsWith("\"") || raw.startsWith("`")) raw
             else if (DbtSyntax.isIdentifier(c.name)) c.name else "\"" + c.name.replace("\"", "\"\"") + "\""
           }
+
           def qualifiedAlias(alias: String): String = from.find(f => Option(f.getAlias).exists(_.getUnquotedName.equalsIgnoreCase(alias)))
             .flatMap(f => Option(f.getAlias).map(_.getName)).getOrElse(alias)
+
           val output = all(p.getSelectItems).flatMap { item =>
             val expression = item.getExpression.asInstanceOf[Expression]
             val star = expression match {
@@ -641,7 +675,8 @@ private object DbtSqlAnalyzer {
                 override def visit[S](c: Column, context: S): Void = {
                   val targets = resolve(c)
                   if (targets.isEmpty) resolved = false
-                  inputs ++= targets; null
+                  inputs ++= targets;
+                  null
                 }
               }, null)
               val dataType = expression match {
@@ -658,20 +693,25 @@ private object DbtSqlAnalyzer {
           output.filter(_.outputAlias).foreach(c => declarations += DbtSymbol("sql_projection", c.name, root.name, file, c.range))
           all(p.getSelectItems).foreach(item => removable(range(item), allowSoleWith = false).foreach(delete => deletions += nameRange(item) -> delete))
           val contextInputs = ArrayBuffer.empty[(DbtSymbol, String)]
+
           def context(expression: Expression, kind: String): Unit = if (expression != null) expression.accept(new ExpressionVisitorAdapter[Void] {
             override def visit[S](c: Column, ignored: S): Void = {
               val inputs = resolve(c, report = false)
               val aliases = if (inputs.isEmpty && Option(c.getTable).forall(_.getName == null))
                 output.filter(_.name.equalsIgnoreCase(c.getUnquotedColumnName)).flatMap(_.inputs) else Vector.empty
-              contextInputs ++= (inputs ++ aliases).map(_ -> kind); null
+              contextInputs ++= (inputs ++ aliases).map(_ -> kind);
+              null
             }
           }, null)
-          context(p.getWhere, "filter"); context(p.getHaving, "filter")
+
+          context(p.getWhere, "filter");
+          context(p.getHaving, "filter")
           all(p.getJoins).foreach(j => all(j.getOnExpressions).foreach(context(_, "join")))
           output.map(c => c.copy(contextInputs = contextInputs.toVector.distinct))
         case _ => issues += "Unsupported SQL query shape."; Vector.empty
       }
     }
+
     parsed match {
       case s: Select =>
         val columns = select(s, Map.empty)

@@ -235,6 +235,7 @@ private[dbt] object DbtSyntax {
 /** Host spans only, not a SQL grammar. Used to keep diagnostics and clipboard edits out of comments/literals. */
 private[dbt] object DbtSqlText {
   final case class Token(text: String, range: TextRange, protectedText: Boolean = false, identifier: Boolean = false)
+
   private val DollarQuote = "\\$[A-Za-z_0-9]*\\$".r
 
   def tokens(text: String): Vector[Token] = {
@@ -250,23 +251,42 @@ private[dbt] object DbtSqlText {
         val end = text.indexOf(endTag, i + 2)
         i = if (end < 0) text.length else end + 2
       }
-      else if (text.startsWith("--", i)) { protectedText = true; i = text.indexOf('\n', i) match { case -1 => text.length; case n => n } }
+      else if (text.startsWith("--", i)) {
+        protectedText = true;
+        i = text.indexOf('\n', i) match {
+          case -1 => text.length;
+          case n => n
+        }
+      }
       else if (text.startsWith("/*", i)) {
         protectedText = true
-        var depth = 1; i += 2
+        var depth = 1;
+        i += 2
         while (i < text.length && depth > 0) {
-          if (text.startsWith("/*", i)) { depth += 1; i += 2 }
-          else if (text.startsWith("*/", i)) { depth -= 1; i += 2 }
+          if (text.startsWith("/*", i)) {
+            depth += 1;
+            i += 2
+          }
+          else if (text.startsWith("*/", i)) {
+            depth -= 1;
+            i += 2
+          }
           else i += 1
         }
       } else if (Set('\'', '"', '`', '[')(text(i))) {
-        val quote = text(i); val end = if (quote == '[') ']' else quote
-        protectedText = quote == '\''; identifier = !protectedText; i += 1
+        val quote = text(i);
+        val end = if (quote == '[') ']' else quote
+        protectedText = quote == '\'';
+        identifier = !protectedText;
+        i += 1
         var done = false
         while (i < text.length && !done) {
           if (text(i) == end) {
             if (i + 1 < text.length && text(i + 1) == end) i += 2
-            else { i += 1; done = true }
+            else {
+              i += 1;
+              done = true
+            }
           } else if (text(i) == '\\' && i + 1 < text.length) i += 2 else i += 1
         }
       } else if (text(i) == '$' && DollarQuote.findPrefixOf(text.substring(i)).nonEmpty) {
@@ -275,9 +295,13 @@ private[dbt] object DbtSqlText {
         val end = text.indexOf(delimiter, i + delimiter.length)
         i = if (end < 0) text.length else end + delimiter.length
       } else if (text(i).isLetterOrDigit || text(i) == '_') {
-        identifier = true; i += 1
+        identifier = true;
+        i += 1
         while (i < text.length && (text(i).isLetterOrDigit || Set('_', '$')(text(i)))) i += 1
-      } else if (text(i).isWhitespace) { i += 1; while (i < text.length && text(i).isWhitespace) i += 1 }
+      } else if (text(i).isWhitespace) {
+        i += 1;
+        while (i < text.length && text(i).isWhitespace) i += 1
+      }
       else i += 1
       result += Token(text.substring(start, i), new TextRange(start, i), protectedText, identifier)
     }

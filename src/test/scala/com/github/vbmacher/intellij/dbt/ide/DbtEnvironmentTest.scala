@@ -22,6 +22,7 @@ final class DbtEnvironmentTest extends DbtTestCase {
     add("models/orders.sql", "select 1")
     workspace.roots.head
   }
+
   private def command(root: DbtRoot, action: String = "Run"): DbtCommand = {
     val result = if (action == "Resolve Selection") DbtCommand.resolveSelection(workspace, root, None)
     else {
@@ -34,7 +35,8 @@ final class DbtEnvironmentTest extends DbtTestCase {
   }
 
   def testDotenvSyntaxKeepsValuesLiteralAndIgnoresInvalidAssignments(): Unit = {
-    val text = "\ufeff# comment\r\n" + """ export ATHENA_WORK_GROUP = dev # comment
+    val text = "\ufeff# comment\r\n" +
+      """ export ATHENA_WORK_GROUP = dev # comment
 EMPTY=
 COMMENT= # empty
 SINGLE=' spaces # = $HOME\n ' # comment
@@ -126,7 +128,8 @@ BROKEN="unterminated
   def testManagedProcessReceivesDefaultDotenvWithoutLoggingItsValues(): Unit = {
     val root = setupRoot()
     add(".env", "ATHENA_WORK_GROUP=private-workgroup\n")
-    val executable = add("fake-dbt", """#!/usr/bin/python3
+    val executable = add("fake-dbt",
+      """#!/usr/bin/python3
 import json, os
 with open('environment.json', 'w') as f:
     json.dump({'workgroup': os.environ.get('ATHENA_WORK_GROUP'), 'home': os.environ.get('HOME')}, f)
@@ -136,7 +139,10 @@ with open('environment.json', 'w') as f:
     root.runOptions.notifications = false
     val runner = newRunner()
     val output = new StringBuffer
-    assertTrue(runner.start(command(root), (text, _) => { output.append(text); () }))
+    assertTrue(runner.start(command(root), (text, _) => {
+      output.append(text);
+      ()
+    }))
     await("dbt completes with configured environment")(!runner.isRunning)
     val invocation = JsonParser.parseString(Files.readString(root.executionDirectory.resolve("environment.json"))).getAsJsonObject
     assertEquals("private-workgroup", invocation.get("workgroup").getAsString)

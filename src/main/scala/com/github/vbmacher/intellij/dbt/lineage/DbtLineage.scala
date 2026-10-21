@@ -106,6 +106,7 @@ private[dbt] final case class DbtColumnEdge(resource: DbtSymbol, column: String,
 
 private[dbt] object DbtColumnLineage {
   private val Cache = Key.create[Vector[DbtColumnEdge]]("dbt.column.lineage")
+
   def edges(w: DbtWorkspace): Vector[DbtColumnEdge] = Option(w.getUserData(Cache)).getOrElse {
     val result = w.symbols.filter(s => s.kind == "model" && s.isCode && s.isEnabled).flatMap { resource =>
       ProgressManager.checkCanceled()
@@ -120,13 +121,16 @@ private[dbt] object DbtColumnLineage {
             case None => Vector(input -> (column.direct && column.complete))
           }
         }
+
         analysis.columns.flatMap(c => inputs(c, Set.empty).map { case (input, direct) =>
           DbtColumnEdge(resource, c.name, input, direct, c.expression, c.complete)
         } ++ c.contextInputs.map { case (input, kind) => DbtColumnEdge(resource, c.name, input, direct = false,
-          kind + " dependency", c.complete, kind) })
+          kind + " dependency", c.complete, kind)
+        })
       }
     }
-    w.putUserData(Cache, result); result
+    w.putUserData(Cache, result);
+    result
   }
 
   private def of(w: DbtWorkspace, resource: DbtSymbol)(e: DbtColumnEdge): Boolean =
@@ -172,19 +176,30 @@ private[dbt] object DbtSelection {
 
   def resolve(w: DbtWorkspace, root: DbtRoot, expression: String, exclude: String = ""): DbtSelection = {
     val problems = ArrayBuffer.empty[String]
+
     def identity(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
+
     def union(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.flatten.distinctBy(identity)
+
     def intersect(xs: Vector[Vector[DbtSymbol]]): Vector[DbtSymbol] = xs.headOption.getOrElse(Vector.empty)
       .filter(s => xs.drop(1).forall(_.exists(t => identity(t) == identity(s))))
-    def unsupported(message: String = "Unsupported named selector definition."): Vector[DbtSymbol] = { problems += message; Vector.empty }
+
+    def unsupported(message: String = "Unsupported named selector definition."): Vector[DbtSymbol] = {
+      problems += message;
+      Vector.empty
+    }
+
     lazy val manifestSelectors = root.setting("manifest").toVector.flatMap(path =>
       DbtManifestReader.get(w.project).read(root, path, DbtManifestPolicy.Navigation).toOption.toVector.flatMap(_.in("selectors")))
+
     def json(value: JsonElement, visiting: Set[String]): Vector[DbtSymbol] = {
       if (value.isJsonPrimitive && value.getAsJsonPrimitive.isString) terms(value.getAsString, visiting)
       else if (value.isJsonArray) union(value.getAsJsonArray.asScala.toVector.map(json(_, visiting)))
       else if (value.isJsonObject) {
         val mapping = value.getAsJsonObject
+
         def get(key: String) = Option(mapping.get(key)).filterNot(_.isJsonNull)
+
         val combined = get("union").orElse(get("intersection"))
         val selected = combined match {
           case Some(array) if array.isJsonArray =>
@@ -200,6 +215,7 @@ private[dbt] object DbtSelection {
         selected.filterNot(s => removed(identity(s)))
       } else unsupported()
     }
+
     def yaml(value: YAMLValue, visiting: Set[String]): Vector[DbtSymbol] = value match {
       case scalar: YAMLScalar => terms(scalar.getTextValue, visiting)
       case sequence: YAMLSequence => union(sequence.getItems.asScala.toVector.flatMap(i => Option(i.getValue).map(yaml(_, visiting))))
@@ -226,6 +242,7 @@ private[dbt] object DbtSelection {
         selected.filterNot(s => removed(identity(s)))
       case _ => unsupported("Unsupported selector value.")
     }
+
     def term(raw: String, visiting: Set[String]): Vector[DbtSymbol] = {
       ProgressManager.checkCanceled()
       val core = DbtLineage.withoutOperators(raw)
@@ -261,8 +278,10 @@ private[dbt] object DbtSelection {
         DbtSelectors.select(w, root, qualified, includeGraph = true).collect { case e: DbtSymbolElement => e.symbol }
       }
     }
+
     def terms(text: String, visiting: Set[String]): Vector[DbtSymbol] = union(text.trim.split("\\s+").toVector.filter(_.nonEmpty)
       .map(part => intersect(part.split(",", -1).toVector.map(term(_, visiting)))))
+
     val selected = terms(if (expression.trim.isEmpty) "*" else expression, Set.empty)
     val removed = if (exclude.trim.isEmpty) Set.empty[String] else terms(exclude, Set.empty).map(identity).toSet
     DbtSelection(selected.filter(DbtSelectors.selectable).filterNot(s => removed(identity(s))).distinctBy(identity), problems.toVector.distinct)
@@ -304,28 +323,30 @@ private[dbt] object DbtSelectors {
       s.name == value && w.root(s.file).contains(root)).map(_.element) else Vector.empty
     val candidates = w.symbols.filter(s => selectable(s) &&
       w.declarations(Set(s.kind), s.name, root, Some(s.namespace)).contains(s))
-    val selected = candidates.filter { s => method match {
-      case "fqn" =>
-        val relative = w.root(s.file).flatMap(_.relative(s.file.getVirtualFile))
-          .map(_.stripSuffix("." + s.file.getVirtualFile.getExtension).replace('/', '.')).getOrElse("")
-        val parts = fqn(w, s)
-        val prefixes = parts.indices.map(i => parts.take(i + 1).mkString(".")) ++ parts.drop(1).indices.map(i => parts.drop(1).take(i + 1).mkString("."))
-        glob(value, parts.mkString(".")) || glob(value, s.name) || prefixes.exists(glob(value, _)) || glob(value, s.namespace + "." + s.name) ||
-          glob(value, s.namespace + "." + relative.stripPrefix("models."))
-      case "path" => w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).exists(p => glob(value, p) || p.startsWith(value.stripSuffix("/") + "/"))
-      case "file" => glob(value, s.file.getName.replaceFirst("\\.(sql|py|csv)$", ""))
-      case "package" => glob(value, s.namespace)
-      case "tag" | "config.tags" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
-      case "access" => s.attributes.get("access").exists(glob(value, _))
-      case "config.materialized" => s.attributes.get("materialized").exists(glob(value, _))
-      case "source" => s.kind == "source_table" && (glob(value, s.owner + "." + s.name) || glob(value, s.owner) ||
-        glob(value, s.namespace + "." + s.owner + "." + s.name))
-      case "resource_type" | "type" => glob(value, if (s.kind == "source_table") "source" else s.kind) || s.kind == value
-      case "group" => s.kind == "group" && glob(value, s.name) || s.attributes.get("group").exists(glob(value, _))
-      case "exposure" | "metric" | "saved_query" => s.kind == method && (glob(value, s.name) || glob(value, s.namespace + "." + s.name))
-      case "function" | "check" | "test" => s.kind == method && glob(value, s.name)
-      case _ => false
-    }}.distinct
+    val selected = candidates.filter { s =>
+      method match {
+        case "fqn" =>
+          val relative = w.root(s.file).flatMap(_.relative(s.file.getVirtualFile))
+            .map(_.stripSuffix("." + s.file.getVirtualFile.getExtension).replace('/', '.')).getOrElse("")
+          val parts = fqn(w, s)
+          val prefixes = parts.indices.map(i => parts.take(i + 1).mkString(".")) ++ parts.drop(1).indices.map(i => parts.drop(1).take(i + 1).mkString("."))
+          glob(value, parts.mkString(".")) || glob(value, s.name) || prefixes.exists(glob(value, _)) || glob(value, s.namespace + "." + s.name) ||
+            glob(value, s.namespace + "." + relative.stripPrefix("models."))
+        case "path" => w.root(s.file).flatMap(_.relative(s.file.getVirtualFile)).exists(p => glob(value, p) || p.startsWith(value.stripSuffix("/") + "/"))
+        case "file" => glob(value, s.file.getName.replaceFirst("\\.(sql|py|csv)$", ""))
+        case "package" => glob(value, s.namespace)
+        case "tag" | "config.tags" => s.attributes.get("tags").exists(_.split(",").exists(glob(value, _)))
+        case "access" => s.attributes.get("access").exists(glob(value, _))
+        case "config.materialized" => s.attributes.get("materialized").exists(glob(value, _))
+        case "source" => s.kind == "source_table" && (glob(value, s.owner + "." + s.name) || glob(value, s.owner) ||
+          glob(value, s.namespace + "." + s.owner + "." + s.name))
+        case "resource_type" | "type" => glob(value, if (s.kind == "source_table") "source" else s.kind) || s.kind == value
+        case "group" => s.kind == "group" && glob(value, s.name) || s.attributes.get("group").exists(glob(value, _))
+        case "exposure" | "metric" | "saved_query" => s.kind == method && (glob(value, s.name) || glob(value, s.namespace + "." + s.name))
+        case "function" | "check" | "test" => s.kind == method && glob(value, s.name)
+        case _ => false
+      }
+    }.distinct
     val expanded = selected ++ (if (includeGraph) DbtLineage.neighbours(w, selected, prefix, suffix) else Vector.empty)
     expanded.filter(selectable).map(_.element).distinct
   }
@@ -343,20 +364,21 @@ private[dbt] object DbtSelectors {
             val key = DbtYaml.key(scalar)
             val method = DbtYaml.parentMapping(scalar).flatMap(DbtYaml.string(_, "method"))
             val selectionContext = (if (selectionFile) ancestors.exists(Set("select", "exclude", "selector"))
-              else ancestors.contains("definition")) && !ancestors.exists(Set("vars", "env", "description"))
+            else ancestors.contains("definition")) && !ancestors.exists(Set("vars", "env", "description"))
             val named = selectionContext && (key == "selector" || (key == "value" && method.contains("selector")))
             val expression = if (!selectionContext) None else if (selectionFile && Set("select", "exclude").contains(key)) Some(scalar.getTextValue)
-              else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
-              else if (MethodKeys(key)) Some(key + ":" + scalar.getTextValue)
-              else if (key == "definition" || scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
+            else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
+            else if (MethodKeys(key)) Some(key + ":" + scalar.getTextValue)
+            else if (key == "definition" || scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
             lazy val targets = if (named) w.symbols.filter(s => s.kind == "selector" && selectorFile.contains(s.file) && s.name == scalar.getTextValue)
-                .map(_.element)
-              else expression.toVector.flatMap(select(w, root, _, includeGraph))
+              .map(_.element)
+            else expression.toVector.flatMap(select(w, root, _, includeGraph))
             if (selectionContext && expression.contains(scalar.getTextValue) && !named) {
               DbtYaml.decoded(scalar).foreach { case (text, offset) => "[^\\s,]+".r.findAllMatchIn(text).foreach { term =>
                 val range = new TextRange(offset(term.start), offset(term.end))
                 result += new DbtNavigationReference(file, range, select(w, root, term.matched, includeGraph), term.matched)
-              }}
+              }
+              }
             } else if (named || expression.nonEmpty) result += new DbtNavigationReference(file, scalar.getTextRange, targets, scalar.getTextValue)
           case _ => ()
         }

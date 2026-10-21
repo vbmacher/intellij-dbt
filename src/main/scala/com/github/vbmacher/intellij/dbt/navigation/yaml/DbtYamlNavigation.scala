@@ -40,9 +40,11 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
         if (!ancestry.contains("meta") && (r.supports(8) || !ancestry.contains("unit_tests"))) e match {
           case scalar: YAMLScalar if !ancestry.contains("vars") =>
             val name = scalar.getTextValue
+
             def semantic(kind: String): Vector[PsiElement] = DbtResolution.semantic(w, r, file, scalar.getTextOffset, kind, name).map(_.element)
+
             if (!name.contains("{{")) DbtYaml.key(scalar) match {
-              case key @ ("package" | "git" | "local") if Set("packages.yml", "dependencies.yml", "package-lock.yml").contains(file.getName) =>
+              case key@("package" | "git" | "local") if Set("packages.yml", "dependencies.yml", "package-lock.yml").contains(file.getName) =>
                 val declaration = DbtYaml.parentMapping(scalar)
                 val projectName = if (key == "local") {
                   Option(r.directory.findFileByRelativePath(name)).flatMap(d => DbtYaml.psiFile(w.project, d.findChild(DbtWorkspace.ProjectFileName)))
@@ -53,8 +55,9 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                 val installed = w.roots.filter(p => w.packageOwner(p).contains(r) &&
                   (projectName.contains(p.name) || installName.contains(p.directory.getName)))
                 add(scalar, installed.map(p => p.config.getContainingFile), name)
-              case key @ ("version" | "revision") if Set("packages.yml", "dependencies.yml").contains(file.getName) =>
+              case key@("version" | "revision") if Set("packages.yml", "dependencies.yml").contains(file.getName) =>
                 def identity(m: YAMLMapping): Option[String] = DbtYaml.string(m, "package").orElse(DbtYaml.string(m, "git"))
+
                 val declared = DbtYaml.parentMapping(scalar).flatMap(identity)
                 val entries = r.yaml("package-lock.yml").toVector.flatMap(DbtYaml.items(_, "packages")).filter(m => declared.exists(identity(m).contains))
                 add(scalar, entries.flatMap(DbtYaml.keyValue(_, key)), name)

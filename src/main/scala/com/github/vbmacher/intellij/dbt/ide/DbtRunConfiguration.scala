@@ -32,15 +32,22 @@ import scala.jdk.CollectionConverters._
 final class DbtConfigurationType extends ConfigurationType {
   private val factory = new ConfigurationFactory(this) {
     override def getId: String = "Dbt"
+
     override def createTemplateConfiguration(project: Project): RunConfiguration = {
       val configuration = new DbtRunConfiguration(project, this, "dbt")
-      configuration.action = "Run"; configuration
+      configuration.action = "Run";
+      configuration
     }
   }
+
   override def getId: String = "Dbt"
+
   override def getDisplayName: String = "dbt"
+
   override def getConfigurationTypeDescription: String = "Run dbt commands, previews, data and unit tests"
+
   override def getIcon: javax.swing.Icon = DbtIcons.Gutter
+
   override def getConfigurationFactories: Array[ConfigurationFactory] = Array(factory)
 }
 
@@ -63,11 +70,14 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
   // Commands launched from context actions and failed-test reruns retain their captured execution context.
   private[ide] var selectionResolved: Option[Vector[String] => Unit] = None
   private[ide] var captured: Option[DbtCommand] = None
+
   override def getConfigurationEditor: SettingsEditor[DbtRunConfiguration] = new DbtRunEditor(project)
+
   override def checkConfiguration(): Unit = {
     if (root.isEmpty) throw new RuntimeConfigurationError("Choose the owning dbt project directory.")
     if (DbtCommandAction.fromLabel(action).isEmpty) throw new RuntimeConfigurationError("Choose a dbt command.")
   }
+
   private[ide] def sourceKey(w: DbtWorkspace): Vector[String] =
     Vector(root, scope, inlineSql, action, selectors.mkString(" "), exclude.mkString(" "), namedSelector, target, executable,
       executableArguments, profilesDirectory, fullRefresh.toString, DbtProjectSettings.get(project).getModificationCount.toString) ++
@@ -79,7 +89,10 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
     w.roots.find(_.directory.getPath == root).map(w.executionRoot).toRight("The owning dbt project is unavailable.").map { owner =>
       val options = owner.runOptions.copy()
       if (target.nonEmpty) options.target = target
-      if (executable.nonEmpty) { options.executable = executable; options.executableArguments = executableArguments }
+      if (executable.nonEmpty) {
+        options.executable = executable;
+        options.executableArguments = executableArguments
+      }
       if (profilesDirectory.nonEmpty) options.profilesDirectory = profilesDirectory
       options.selection = if (namedSelector.nonEmpty) "selector:" + namedSelector else selectors.mkString(" ")
       options.exclude = exclude.mkString(" ")
@@ -91,7 +104,7 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
     for {
       owner <- configuredRoot(w)
       selected <- (if (scope.isEmpty) DbtRunSelection.all(w, owner.directory.getPath)
-        else DbtRunSelection.available(w).find(s => s.path == scope && DbtRunSelection.owner(w, s).exists(r => w.executionRoot(r).directory == owner.directory)))
+      else DbtRunSelection.available(w).find(s => s.path == scope && DbtRunSelection.owner(w, s).exists(r => w.executionRoot(r).directory == owner.directory)))
         .toRight("Choose an available model or directory in the owning dbt project.")
       definitions = DbtTestDiscovery.discover(w, Map(owner.directory.getPath -> owner.runOptions)).filter(_.root == owner.directory.getPath)
       base <- captured.map(Right(_)).getOrElse {
@@ -115,6 +128,7 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
       }
     } yield command -> definitions
   }
+
   override def getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState = new RunProfileState {
     override def execute(executor: Executor, runner: ProgramRunner[_]): ExecutionResult = {
       FileDocumentManager.getInstance.saveAllDocuments()
@@ -137,10 +151,12 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
       }
     }
   }
+
   private def prepareAsync(parent: Disposable)(done: Either[String, (DbtCommand, Vector[DbtTestDefinition])] => Unit): Unit = {
     val snapshot = clone().asInstanceOf[DbtRunConfiguration]
     DbtUi.readLater(parent, smartIn = Some(project), committedIn = Some(project))(snapshot.prepare())(done)
   }
+
   override def writeExternal(element: Element): Unit = {
     super.writeExternal(element)
     Vector("dbtRoot" -> root, "scope" -> scope, "target" -> target, "executable" -> executable, "arguments" -> executableArguments,
@@ -154,20 +170,29 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
       terms.foreach(term => element.addContent(new Element(name).setAttribute("term", term)))
     }
   }
+
   override def readExternal(element: Element): Unit = {
     super.readExternal(element)
+
     def attribute(name: String, default: String = ""): String = Option(element.getAttributeValue(name)).getOrElse(default)
+
     def terms(name: String): Vector[String] = element.getChildren(name).asScala.flatMap(e => Option(e.getAttributeValue("term"))).toVector
-    root = attribute("dbtRoot"); scope = attribute("scope")
+
+    root = attribute("dbtRoot");
+    scope = attribute("scope")
     inlineSql = Option(element.getChildText("inlineSql")).getOrElse("")
-    target = attribute("target"); executable = attribute("executable"); executableArguments = attribute("arguments")
+    target = attribute("target");
+    executable = attribute("executable");
+    executableArguments = attribute("arguments")
     profilesDirectory = attribute("profilesDirectory")
-    cliSelection = None; selectionResolved = None
+    cliSelection = None;
+    selectionResolved = None
     action = attribute("command", "Run")
     exactTests = attribute("exactTests") == "true"
     fullRefresh = attribute("fullRefresh") == "true"
     namedSelector = attribute("namedSelector")
-    exclude = terms("exclude"); selectors = terms("select")
+    exclude = terms("exclude");
+    selectors = terms("select")
     captured = None
   }
 }
@@ -175,11 +200,14 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
 private[ide] object DbtRunConfiguration {
   private[ide] def factory: ConfigurationFactory =
     ConfigurationTypeUtil.findConfigurationType(classOf[DbtConfigurationType]).getConfigurationFactories.head
+
   private[ide] def terms(text: String): Vector[String] = text.trim.split("\\s+").filter(_.nonEmpty).toVector
+
   private def create(project: Project, action: String, root: String): (RunnerAndConfigurationSettings, DbtRunConfiguration) = {
     val settings = RunManager.getInstance(project).createConfiguration("dbt " + action.toLowerCase + " · " + DbtUi.name(root), factory)
     settings -> settings.getConfiguration.asInstanceOf[DbtRunConfiguration]
   }
+
   def openEvidence(project: Project, key: String): Unit = {
     val parts = key.split("\\|", 3)
     if (parts.length >= 2) DbtUi.readLater(project) {
@@ -195,7 +223,8 @@ private[ide] object DbtRunConfiguration {
       }
     }(_.foreach { case (root, tests, execution) =>
       val configuration = new DbtRunConfiguration(project, factory, "dbt recorded results")
-      configuration.root = root; configuration.action = "Test"
+      configuration.root = root;
+      configuration.action = "Test"
       configuration.selectors = tests.map(_.selector).distinct
       configuration.exactTests = true
       val executor = DefaultRunExecutor.getRunExecutorInstance
@@ -208,12 +237,14 @@ private[ide] object DbtRunConfiguration {
 
   def edit(project: Project, root: String, action: String, selection: String = "", excluded: String = ""): Unit = {
     val (settings, configuration) = create(project, action, root)
-    configuration.root = root; configuration.action = action
+    configuration.root = root;
+    configuration.action = action
     configuration.selectors = terms(selection)
     configuration.exclude = terms(excluded)
     if (RunDialog.editConfiguration(project, settings, "dbt run configuration")) {
       val manager = RunManager.getInstance(project)
-      manager.addConfiguration(settings); manager.setSelectedConfiguration(settings)
+      manager.addConfiguration(settings);
+      manager.setSelectedConfiguration(settings)
     }
   }
 
@@ -263,12 +294,15 @@ private[ide] object DbtRunConfiguration {
 
 final class DbtRunProducer extends LazyRunConfigurationProducer[DbtRunConfiguration] {
   override def getConfigurationFactory: ConfigurationFactory = DbtRunConfiguration.factory
+
   override def setupConfigurationFromContext(configuration: DbtRunConfiguration, context: ConfigurationContext, source: Ref[PsiElement]): Boolean = {
     val tests = DbtTestRunLineMarker.testsAt(source.get()).filter(_.nonEmpty)
     tests match {
       case Some(values) if values.forall(_.selector.nonEmpty) =>
-        configuration.root = values.head.root; configuration.action = "Test"
-        configuration.selectors = values.map(_.selector).distinct; configuration.exactTests = true
+        configuration.root = values.head.root;
+        configuration.action = "Test"
+        configuration.selectors = values.map(_.selector).distinct;
+        configuration.exactTests = true
         configuration.setName(if (values.size == 1) values.head.name else "dbt tests")
         true
       case Some(_) => false
@@ -278,11 +312,15 @@ final class DbtRunProducer extends LazyRunConfigurationProducer[DbtRunConfigurat
           .orElse(Option(source.get()).flatMap(e => Option(e.getContainingFile)).map(_.getVirtualFile))
         file.flatMap(f => DbtRunSelection.available(w).find(_.path == f.getPath)).flatMap(selected =>
           DbtRunSelection.owner(w, selected).map(w.executionRoot).map(_ -> selected)).exists { case (root, selected) =>
-          configuration.root = root.directory.getPath; configuration.scope = selected.path; configuration.action = "Run"
-          configuration.setName("dbt run · " + DbtUi.name(selected.path)); true
+          configuration.root = root.directory.getPath;
+          configuration.scope = selected.path;
+          configuration.action = "Run"
+          configuration.setName("dbt run · " + DbtUi.name(selected.path));
+          true
         }
     }
   }
+
   override def isConfigurationFromContext(configuration: DbtRunConfiguration, context: ConfigurationContext): Boolean = {
     val candidate = new DbtRunConfiguration(configuration.getProject, getConfigurationFactory, "")
     val source = new Ref[PsiElement](context.getPsiLocation)
@@ -315,7 +353,8 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
     field.setToolTipText("dbt selector expression. Press Ctrl+Space for names, tags, packages and named selectors.")
     new DumbAwareAction("Complete dbt selection") {
       override def actionPerformed(event: AnActionEvent): Unit = {
-        val text = field.getText; val caret = field.getCaretPosition
+        val text = field.getText;
+        val caret = field.getCaretPosition
         val source = draft()
         DbtUi.readLater(DbtRunEditor.this) {
           val w = DbtWorkspace.get(project)
@@ -331,10 +370,13 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       }
     }.registerCustomShortcutSet(ActionManager.getInstance.getAction(IdeActions.ACTION_CODE_COMPLETION).getShortcutSet, field, this)
   }
+
   private def draft(): DbtRunConfiguration = {
     val copy = configuration.clone().asInstanceOf[DbtRunConfiguration]
-    applyEditorTo(copy); copy
+    applyEditorTo(copy);
+    copy
   }
+
   override def createEditor(): JComponent = {
     scope.getTextField.asInstanceOf[JBTextField].getEmptyText.setText("All models; or an absolute model/directory path")
     target.getEmptyText.setText("Project setting / profile default")
@@ -357,7 +399,10 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       DbtRunConfiguration.resolveSelection(resolving)
     }
     val compare = DbtUi.button("Compare baseline")(DbtStateComparison.show(draft()))
-    val buttons = new JPanel; buttons.add(review); buttons.add(resolve); buttons.add(compare)
+    val buttons = new JPanel;
+    buttons.add(review);
+    buttons.add(resolve);
+    buttons.add(compare)
     val form = FormBuilder.createFormBuilder()
       .addLabeledComponent("Owning dbt root:", root)
       .addLabeledComponent("Scope:", scope)
@@ -373,27 +418,51 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       .addLabeledComponent("Profiles directory override:", profiles)
       .addComponent(new JBLabel("Other execution defaults: Settings → dbt Workspace"))
       .getPanel
-    val panel = new JPanel(new BorderLayout); panel.add(form, BorderLayout.NORTH); panel
+    val panel = new JPanel(new BorderLayout);
+    panel.add(form, BorderLayout.NORTH);
+    panel
   }
+
   override def resetEditorFrom(value: DbtRunConfiguration): Unit = {
-    configuration = value; resolved = value.cliSelection
-    root.setText(value.root); scope.setText(value.scope); target.setText(value.target); inline.setText(value.inlineSql)
-    executable.setText(value.executable); arguments.setText(value.executableArguments); profiles.setText(value.profilesDirectory)
-    selectors.setText(value.selectors.mkString(" ")); excluded.setText(value.exclude.mkString(" ")); named.setText(value.namedSelector)
-    action.setSelectedItem(value.action); refresh.setSelected(value.fullRefresh)
+    configuration = value;
+    resolved = value.cliSelection
+    root.setText(value.root);
+    scope.setText(value.scope);
+    target.setText(value.target);
+    inline.setText(value.inlineSql)
+    executable.setText(value.executable);
+    arguments.setText(value.executableArguments);
+    profiles.setText(value.profilesDirectory)
+    selectors.setText(value.selectors.mkString(" "));
+    excluded.setText(value.exclude.mkString(" "));
+    named.setText(value.namedSelector)
+    action.setSelectedItem(value.action);
+    refresh.setSelected(value.fullRefresh)
   }
+
   override def applyEditorTo(value: DbtRunConfiguration): Unit = {
-    value.root = root.getText.trim; value.scope = scope.getText.trim; value.target = target.getText.trim; value.inlineSql = inline.getText
-    value.executable = executable.getText.trim; value.executableArguments = arguments.getText; value.profilesDirectory = profiles.getText.trim
+    value.root = root.getText.trim;
+    value.scope = scope.getText.trim;
+    value.target = target.getText.trim;
+    value.inlineSql = inline.getText
+    value.executable = executable.getText.trim;
+    value.executableArguments = arguments.getText;
+    value.profilesDirectory = profiles.getText.trim
     val terms = DbtRunConfiguration.terms(selectors.getText)
     if (terms != value.selectors || named.getText.trim.nonEmpty) value.exactTests = false
-    value.selectors = terms; value.exclude = DbtRunConfiguration.terms(excluded.getText)
-    value.namedSelector = named.getText.trim; value.action = action.getSelectedItem.toString
-    value.fullRefresh = refresh.isSelected; value.captured = None; value.cliSelection = resolved
+    value.selectors = terms;
+    value.exclude = DbtRunConfiguration.terms(excluded.getText)
+    value.namedSelector = named.getText.trim;
+    value.action = action.getSelectedItem.toString
+    value.fullRefresh = refresh.isSelected;
+    value.captured = None;
+    value.cliSelection = resolved
   }
+
   override def disposeEditor(): Unit = {
     disposed = true
-    Vector(root, scope, executable, profiles).foreach(_.dispose()); super.disposeEditor()
+    Vector(root, scope, executable, profiles).foreach(_.dispose());
+    super.disposeEditor()
   }
 }
 
@@ -403,10 +472,15 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
  */
 private[ide] final class DbtManagedProcess(stop: DbtManagedProcess => Unit) extends ProcessHandler {
   def complete(code: Int): Unit = if (!isProcessTerminated) notifyProcessTerminated(code)
+
   val output: (String, Key[_]) => Unit = (text, kind) => notifyTextAvailable(text, kind)
+
   override def getProcessInput: OutputStream = null
+
   override def detachIsDefault: Boolean = false
+
   override protected def destroyProcessImpl(): Unit = stop(this)
+
   override protected def detachProcessImpl(): Unit = destroyProcessImpl()
 }
 
@@ -422,7 +496,8 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
   private var canceled = false
   private val grid = new DbtResultGrid(project, limit => active.foreach { previous =>
     DbtUi.readLater(this) {
-      val fresh = snapshot.clone().asInstanceOf[DbtRunConfiguration]; fresh.captured = None
+      val fresh = snapshot.clone().asInstanceOf[DbtRunConfiguration];
+      fresh.captured = None
       fresh.prepare().map(_._1).flatMap { command =>
         val same = command.artifactContext == previous.artifactContext && command.environment == previous.environment &&
           command.sourceSql == previous.sourceSql && command.previewSource.map(_.text) == previous.previewSource.map(_.text) &&
@@ -437,7 +512,10 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
     }
   })
   private val evidence = new DbtPreviewEvidencePanel(project)
-  val process = new DbtManagedProcess(p => { canceled = true; if (active.nonEmpty) runner.stop() else p.complete(130) })
+  val process = new DbtManagedProcess(p => {
+    canceled = true;
+    if (active.nonEmpty) runner.stop() else p.complete(130)
+  })
   tabs.addTab("Console", console.getComponent)
   panel.add(tabs, BorderLayout.CENTER)
   console.attachToProcess(process)
@@ -455,8 +533,10 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
       event.result.foreach { result =>
         grid.showResult(result)
         val rows = new JPanel(new BorderLayout)
-        rows.add(grid, BorderLayout.CENTER); rows.add(evidence, BorderLayout.SOUTH)
-        tabs.addTab("Rows", rows); tabs.setSelectedComponent(rows)
+        rows.add(grid, BorderLayout.CENTER);
+        rows.add(evidence, BorderLayout.SOUTH)
+        tabs.addTab("Rows", rows);
+        tabs.setSelectedComponent(rows)
       }
       if (event.result.isEmpty && event.previewEvidence.nonEmpty) panel.add(evidence, BorderLayout.SOUTH)
       event.selectionOutput.foreach(raw => DbtSelectionResults.showCli(configuration, raw))
@@ -464,15 +544,24 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
       panel.revalidate()
     }
   })
+
   def start(command: DbtCommand): Unit = if (!canceled && !process.isProcessTerminated) {
     active = Some(command)
     console.print(command.commandLine + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
     if (!runner.start(command, process.output)) {
-      active = None; fail("Another dbt command is running. Stop it in Run or Debug first.")
+      active = None;
+      fail("Another dbt command is running. Stop it in Run or Debug first.")
     }
   }
-  def fail(problem: String): Unit = { console.print(problem + "\n", ConsoleViewContentType.ERROR_OUTPUT); process.complete(1) }
+
+  def fail(problem: String): Unit = {
+    console.print(problem + "\n", ConsoleViewContentType.ERROR_OUTPUT);
+    process.complete(1)
+  }
+
   override def getComponent: JComponent = panel
+
   override def getPreferredFocusableComponent: JComponent = console.getPreferredFocusableComponent
+
   override def dispose(): Unit = if (!process.isProcessTerminated) process.destroyProcess()
 }

@@ -15,7 +15,9 @@ import scala.jdk.CollectionConverters._
 final class DbtCteControllerTest extends DbtTestCase {
   private final case class Fixture(panel: DbtCteController, file: com.intellij.psi.PsiFile, root: DbtRoot, directory: Path,
     runner: DbtRunner, events: ArrayBuffer[DbtRunnerEvent])
+
   private var breakpoints = Set.empty[String]
+
   private def click(panel: DbtCteController, name: String): Unit = name match {
     case "Step" => panel.step()
     case "Stop" => panel.stop()
@@ -24,14 +26,19 @@ final class DbtCteControllerTest extends DbtTestCase {
     case "Count all rows" => panel.count()
     case "Continue to breakpoint" => panel.resume()
   }
+
   private def messages(panel: DbtCteController): String = panel.message
+
   private def rows(panel: DbtCteController): Int = panel.result.map(_.rows.size).getOrElse(0)
+
   private def controller(path: String, frames: Vector[com.github.vbmacher.intellij.dbt.navigation.DbtCte]): DbtCteController =
     new DbtCteController(getProject, path, frames, () => (), (_, _) => (), c => breakpoints(c.name))
+
   private def flushReads(): Unit = {
     com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
     PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
   }
+
   private def setup(sql: String = "with a as (select 1 as id), b as (select id from a) select * from b"): Fixture = {
     project()
     val file = configure("models/report.sql", sql + "<caret>")
@@ -39,7 +46,8 @@ final class DbtCteControllerTest extends DbtTestCase {
     val root = w.root(file).get
     val dir = tempDirectory("dbt cte session with spaces ")
     Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\n")
-    val executable = fakeTool(dir.resolve("fake dbt"), """#!/usr/bin/python3
+    val executable = fakeTool(dir.resolve("fake dbt"),
+      """#!/usr/bin/python3
 import json,os,sys,time
 args=sys.argv[1:]
 with open('calls.jsonl','a') as f: f.write(json.dumps(args)+'\n')
@@ -74,6 +82,7 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     Disposer.register(getTestRootDisposable, panel)
     Fixture(panel, file, root, dir, runner, events)
   }
+
   private def calls(f: Fixture): Vector[Vector[String]] =
     if (!Files.exists(f.directory.resolve("calls.jsonl"))) Vector.empty
     else Files.readAllLines(f.directory.resolve("calls.jsonl")).asScala.toVector
@@ -106,30 +115,41 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
       .getSelectedTextEditor.getCaretModel.getOffset)
     assertEquals(1, calls(f).size)
     click(f.panel, "Restart")
-    reportPanel.showEvidence(f.panel.evidence); assertFalse(navigate.isEnabled)
+    reportPanel.showEvidence(f.panel.evidence);
+    assertFalse(navigate.isEnabled)
     Files.delete(f.directory.resolve("fail"))
     click(f.panel, "Step")
-    await("Successful process retains its adapter-wrapped SQL") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Successful process retains its adapter-wrapped SQL") {
+      calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     val result = f.events.reverseIterator.flatMap(_.result).next()
     assertTrue(result.sql.startsWith("/* adapter query comment */"))
     assertTrue(result.sql.contains(") as preview limit " + f.root.runOptions.previewLimit))
     assertEquals(calls(f).last(calls(f).last.indexOf("--inline") + 1), f.panel.evidence.get.submitted)
     assertTrue(calls(f).last.sliding(2).exists(_ == Vector("--log-format", "json")))
     assertTrue(calls(f).last.sliding(2).exists(_ == Vector("--log-level", "debug")))
-    reportPanel.showEvidence(f.panel.evidence); assertFalse(navigate.isEnabled)
+    reportPanel.showEvidence(f.panel.evidence);
+    assertFalse(navigate.isEnabled)
   }
 
   def testStopDuringPreparationNeverLaunchesAQueryAndRestartRequiresExplicitStep(): Unit = {
     val f = setup()
-    WriteAction.run(() => { click(f.panel, "Step"); click(f.panel, "Stop") })
+    WriteAction.run(() => {
+      click(f.panel, "Step");
+      click(f.panel, "Stop")
+    })
     flushReads()
     assertEquals(Vector.empty, calls(f))
     assertFalse(f.runner.isRunning)
     assertTrue(messages(f.panel).contains("Inspection stopped"))
-    click(f.panel, "Restart"); click(f.panel, "Step")
-    await("Restarted explicit step completes") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    click(f.panel, "Restart");
+    click(f.panel, "Step")
+    await("Restarted explicit step completes") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertTrue(calls(f).head.contains("dev"))
   }
+
   def testSourceAndTargetChangesDuringPreparationDiscardCommands(): Unit = {
     val f = setup()
     WriteAction.run(() => {
@@ -137,73 +157,108 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
       myFixture.getEditor.getDocument.setText("with changed as (select 9 as id) select * from changed")
       com.intellij.psi.PsiDocumentManager.getInstance(getProject).commitAllDocuments()
     })
-    flushReads(); assertEquals(Vector.empty, calls(f))
+    flushReads();
+    assertEquals(Vector.empty, calls(f))
     WriteAction.run(() => {
       click(f.panel, "Step")
       f.root.runOptions.target = "prod"
       getProject.getMessageBus.syncPublisher(DbtProjectSettings.Changed).settingsChanged()
     })
-    flushReads(); assertEquals(Vector.empty, calls(f))
+    flushReads();
+    assertEquals(Vector.empty, calls(f))
     click(f.panel, "Step")
-    await("Fresh source and target are queried") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Fresh source and target are queried") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertTrue(calls(f).head.contains("prod"))
     assertTrue(calls(f).head(calls(f).head.indexOf("--inline") + 1).contains("with changed"))
     assertEquals("changed", f.panel.frames.head.name)
   }
+
   def testRapidStepRequestsLaunchOnlyOneQueryAndCachedBackDoesNotExecute(): Unit = {
     val f = setup()
-    WriteAction.run(() => { click(f.panel, "Step"); click(f.panel, "Step"); click(f.panel, "Step") })
-    await("Only one prepared query completes") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    WriteAction.run(() => {
+      click(f.panel, "Step");
+      click(f.panel, "Step");
+      click(f.panel, "Step")
+    })
+    await("Only one prepared query completes") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     click(f.panel, "Step")
-    await("Second frame completes") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Second frame completes") {
+      calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     click(f.panel, "Step Back")
     assertEquals(2, calls(f).size)
     assertTrue(f.panel.result.get.value(0, 0).toString.endsWith("from a"))
     assertFalse(f.panel.result.get.value(0, 0).toString.contains("b as"))
   }
+
   def testUnrelatedCommandCompletionsCannotPopulateTheSessionAndEditsCancelItsOwnQuery(): Unit = {
     val f = setup()
     Files.writeString(f.directory.resolve("hold"), "")
     click(f.panel, "Step")
-    await("Session query starts") { calls(f).nonEmpty && f.runner.isRunning }
+    await("Session query starts") {
+      calls(f).nonEmpty && f.runner.isRunning
+    }
     val command = f.events.flatMap(_.command).last
     val unrelated = DbtQueryResult.parse("{\"show\":[{\"wrong\":999}]}", "dev", 20, 1, "select wrong").toOption.get
     f.panel.onRunnerEvent(DbtRunnerEvent(running = false, "unrelated completion", result = Some(unrelated), command = Some(command.copy())))
     assertEquals(0, rows(f.panel))
     edit(f.file, "with changed as (select 2 as id) select * from changed")
-    await("Editing cancels the active session command") { !f.runner.isRunning }
+    await("Editing cancels the active session command") {
+      !f.runner.isRunning
+    }
     Files.deleteIfExists(f.directory.resolve("hold"))
     assertEquals(0, rows(f.panel))
     assertTrue(messages(f.panel).contains("changed"))
   }
+
   def testDisposalDuringPreparationAndActiveQueryPreventsResultsAndFurtherQueries(): Unit = {
     val f = setup()
-    WriteAction.run(() => { click(f.panel, "Step"); Disposer.dispose(f.panel) })
-    flushReads(); assertEquals(Vector.empty, calls(f))
+    WriteAction.run(() => {
+      click(f.panel, "Step");
+      Disposer.dispose(f.panel)
+    })
+    flushReads();
+    assertEquals(Vector.empty, calls(f))
     val next = controller(f.file.getVirtualFile.getPath, DbtSqlAnalysis.get(workspace, f.file).get.ctes)
     Disposer.register(getTestRootDisposable, next)
     Files.writeString(f.directory.resolve("hold"), "")
     click(next, "Step")
-    await("Second panel query starts") { f.runner.isRunning && calls(f).nonEmpty }
+    await("Second panel query starts") {
+      f.runner.isRunning && calls(f).nonEmpty
+    }
     Disposer.dispose(next)
-    await("Disposal cancels only the panel-owned active command") { !f.runner.isRunning }
+    await("Disposal cancels only the panel-owned active command") {
+      !f.runner.isRunning
+    }
     assertEquals(0, rows(next))
   }
+
   def testGridLimitRerunsTheSelectedFrameOnlyAfterExplicitClick(): Unit = {
     val f = setup()
     click(f.panel, "Step")
-    await("First frame preview completes") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("First frame preview completes") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertEquals(1, calls(f).size)
     f.panel.rerun(100)
-    await("Explicit limit reruns the selected frame") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Explicit limit reruns the selected frame") {
+      calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertEquals("100", calls(f).last(calls(f).last.indexOf("--limit") + 1))
     assertEquals(calls(f).head(calls(f).head.indexOf("--inline") + 1), calls(f).last(calls(f).last.indexOf("--inline") + 1))
   }
+
   def testContinueStopsAtTheSelectedBreakpoint(): Unit = {
     val f = setup()
     breakpoints = Set("a")
     click(f.panel, "Continue to breakpoint")
-    await("Continue stops after the breakpoint frame") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Continue stops after the breakpoint frame") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     flushReads()
     assertEquals(1, calls(f).size)
   }
@@ -218,7 +273,9 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     Disposer.register(getTestRootDisposable, nested)
     assertEquals(Vector("base"), nested.frames.map(_.name))
     nested.step()
-    await("Only explicit nested Step queries") { calls(f).size == 1 && !f.runner.isRunning && rows(nested) == 1 }
+    await("Only explicit nested Step queries") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(nested) == 1
+    }
     assertEquals("with base as (select 1 as id)\nselect * from base", calls(f).head(calls(f).head.indexOf("--inline") + 1))
   }
 
@@ -226,7 +283,9 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     val f = setup()
     Files.writeString(f.directory.resolve("fail"), "")
     click(f.panel, "Continue to breakpoint")
-    await("A failed frame finishes") { calls(f).size == 1 && !f.runner.isRunning }
+    await("A failed frame finishes") {
+      calls(f).size == 1 && !f.runner.isRunning
+    }
     flushReads()
     assertEquals("Continue must stop after a query error", 1, calls(f).size)
     assertEquals(0, rows(f.panel))
@@ -235,19 +294,27 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     click(f.panel, "Restart")
     assertEquals(1, calls(f).size)
     click(f.panel, "Step")
-    await("Restart explicitly retries the first frame") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Restart explicitly retries the first frame") {
+      calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertEquals(calls(f).head(calls(f).head.indexOf("--inline") + 1), calls(f).last(calls(f).last.indexOf("--inline") + 1))
   }
 
   def testCountingAFrameDoesNotReplaceItsCachedPreviewOrAdvanceTheStack(): Unit = {
     val f = setup()
     click(f.panel, "Step")
-    await("First CTE preview completes") { calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("First CTE preview completes") {
+      calls(f).size == 1 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     click(f.panel, "Count all rows")
-    await("Explicit complete count finishes") { calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Explicit complete count finishes") {
+      calls(f).size == 2 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertTrue(calls(f).last(calls(f).last.indexOf("--inline") + 1).endsWith("select count(*) as full_row_count from a"))
     click(f.panel, "Step")
-    await("Step still advances to the second CTE") { calls(f).size == 3 && !f.runner.isRunning && rows(f.panel) == 1 }
+    await("Step still advances to the second CTE") {
+      calls(f).size == 3 && !f.runner.isRunning && rows(f.panel) == 1
+    }
     assertTrue(calls(f).last(calls(f).last.indexOf("--inline") + 1).endsWith("select * from b"))
     click(f.panel, "Step Back")
     assertEquals(3, calls(f).size)
@@ -268,14 +335,17 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     assertEquals(sql, command.arguments(command.arguments.indexOf("--inline") + 1))
     assertFalse(command.arguments.contains("--select"))
   }
+
   def testLeadingSetAndConfigSetupSurviveCteExtractionWithoutOmittingUnusedSql(): Unit = {
     val setupSql = "{% set chosen = 'orders' %}\n{{ config(materialized='view') }}\n-- preserve setup\n"
     val f = setup(setupSql + "with unused as (select 0), chosen_cte as (select * from {{ ref(chosen) }}) select * from chosen_cte")
     val analysis = DbtSqlAnalysis.get(workspace, f.file).get
     val query = DbtCteInspection.sql(f.file.getText, analysis, analysis.ctes.find(_.name == "chosen_cte").get).toOption.get
     assertTrue(query.startsWith(setupSql + "with chosen_cte"))
-    assertTrue(query.contains("{{ ref(chosen) }}")); assertFalse(query.contains("unused as"))
+    assertTrue(query.contains("{{ ref(chosen) }}"));
+    assertFalse(query.contains("unused as"))
   }
+
   def testTemplateSetupBetweenCteDeclarationsIsRejectedInsteadOfSilentlyLost(): Unit = {
     val f = setup("with a as (select 1), {% set chosen = 'orders' %} b as (select * from {{ ref(chosen) }}) select * from b")
     val analysis = DbtSqlAnalysis.get(workspace, f.file).get
@@ -288,7 +358,9 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     val f = setup()
     Files.writeString(f.directory.resolve("hold"), "")
     click(f.panel, "Step")
-    await("The held CTE query occupies the runner") { calls(f).size == 1 && f.runner.isRunning }
+    await("The held CTE query occupies the runner") {
+      calls(f).size == 1 && f.runner.isRunning
+    }
     val factory = com.intellij.execution.configurations.ConfigurationTypeUtil.findConfigurationType(classOf[DbtConfigurationType]).getConfigurationFactories.head
     val config = new DbtRunConfiguration(getProject, factory, "preview")
     val console = new DbtCommandConsole(config)
@@ -299,7 +371,9 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     assertEquals(1, console.process.getExitCode.intValue())
     assertTrue("Rejected previews must not stop the running inspector", f.runner.isRunning)
     Files.delete(f.directory.resolve("hold"))
-    await("Held query finishes") { !f.runner.isRunning }
+    await("Held query finishes") {
+      !f.runner.isRunning
+    }
     assertEquals(1, calls(f).size)
   }
 

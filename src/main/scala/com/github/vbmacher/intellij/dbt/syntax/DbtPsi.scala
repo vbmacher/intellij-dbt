@@ -94,12 +94,14 @@ private[dbt] object DbtPython {
   def declarations(file: PsiFile, name: String): Vector[PsiElement] = {
     if (!isPython(file)) return Vector.empty
     val result = ArrayBuffer.empty[PsiElement]
+
     def walk(e: PsiElement): Unit = {
       ProgressManager.checkCanceled()
       if (Set("PyFunctionImpl", "PyTargetExpressionImpl").contains(e.getClass.getSimpleName) && invoke(e, "getName").contains(name))
         psi(e, "getNameIdentifier").foreach(result += _)
       e.getChildren.foreach(walk)
     }
+
     walk(file)
     result.toVector
   }

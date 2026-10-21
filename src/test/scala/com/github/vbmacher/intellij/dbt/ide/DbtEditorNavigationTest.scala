@@ -350,7 +350,9 @@ final class DbtEditorNavigationTest extends DbtTestCase {
     val symbol = DbtSymbol("model", "orders", "analytics", file, TextRange.EMPTY_RANGE).element
     val renderer = new DbtNavigationItemRenderer
     val list = new JList[DbtNavigationItem]()
+
     def labels(component: Component): Vector[JLabel] = components(component).collect { case label: JLabel => label }
+
     val reference = DbtNavigationItem(symbol, "orders.sql:1", reference = true)
     val referenceLabel = labels(renderer.getListCellRendererComponent(list, reference, 0, false, false))
       .find(_.getText == reference.text).get

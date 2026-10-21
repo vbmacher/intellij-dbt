@@ -33,6 +33,7 @@ private[ide] final case class DbtToolCommand(arguments: Vector[String], director
   def commandLine: GeneralCommandLine = new GeneralCommandLine(arguments.asJava).withWorkDirectory(directory)
     .withEnvironment(environment.asJava).withCharset(StandardCharsets.UTF_8)
 }
+
 private[ide] object DbtToolCommand {
   def create(file: PsiFile, lint: Boolean = false): Either[String, DbtToolCommand] =
     DbtWorkspace.rootForFile(file.getProject, file.getVirtualFile)
@@ -59,7 +60,12 @@ private[ide] object DbtToolCommand {
 private[ide] final class DbtToolProcess {
   private val canceled = new AtomicBoolean(false)
   @volatile private var handler: Option[CapturingProcessHandler] = None
-  def cancel(): Unit = { canceled.set(true); handler.foreach(_.destroyProcess()) }
+
+  def cancel(): Unit = {
+    canceled.set(true);
+    handler.foreach(_.destroyProcess())
+  }
+
   def run(command: DbtToolCommand, text: String, indicator: ProgressIndicator = new EmptyProgressIndicator,
     timeoutMs: Int = 60000): Either[String, ProcessOutput] = {
     if (canceled.get() || indicator.isCanceled) Left("Tool execution was canceled; source is unchanged.")
@@ -73,29 +79,40 @@ private[ide] final class DbtToolProcess {
       val writer = CompletableFuture.runAsync(() => {
         val input = process.getProcessInput
         try input.write(text.getBytes(StandardCharsets.UTF_8))
-        catch { case NonFatal(error) => inputError.set(error) }
-        finally try input.close() catch { case NonFatal(_) => () }
+        catch {
+          case NonFatal(error) => inputError.set(error)
+        }
+        finally try input.close() catch {
+          case NonFatal(_) => ()
+        }
       }, AppExecutorUtil.getAppExecutorService)
       val output = process.runProcessWithProgressIndicator(indicator, timeoutMs, true)
-      try writer.get(1, TimeUnit.SECONDS) catch { case NonFatal(_) => writer.cancel(true) }
+      try writer.get(1, TimeUnit.SECONDS) catch {
+        case NonFatal(_) => writer.cancel(true)
+      }
       if (output.isCancelled || canceled.get() || indicator.isCanceled) Left("Tool execution was canceled; source is unchanged.")
       else if (output.isTimeout) Left("Tool execution timed out after 60 seconds; source is unchanged.")
       else if (output.getExitCode == 0 && inputError.get() != null) Left("The tool did not read the SQL input; source is unchanged.")
       else Right(output)
     } catch {
       case NonFatal(error) => Left("Cannot run the configured tool. Check its executable, project configuration and environment: " + error.getMessage)
-    } finally { handler.foreach(p => if (!p.isProcessTerminated) p.destroyProcess()); handler = None }
+    } finally {
+      handler.foreach(p => if (!p.isProcessTerminated) p.destroyProcess());
+      handler = None
+    }
   }
 }
 
 final class DbtInspectSqlAction extends DbtEditorAction {
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event))
+
   override def actionPerformed(event: AnActionEvent): Unit =
     DbtEditorAction.fileContext(event).foreach { case (project, file) => inspect(project, file) }
 
   private[ide] def inspect(project: Project, file: PsiFile): Unit = {
     def report(message: String, kind: NotificationType = NotificationType.WARNING): Unit =
       DbtNotifications.show(project, "SQLFluff inspection", message, kind)
+
     val snapshot = DbtUi.read {
       val document = PsiDocumentManager.getInstance(project).getDocument(file)
       if (document == null) Left("Open the SQL source document before running SQLFluff.")
@@ -107,11 +124,12 @@ final class DbtInspectSqlAction extends DbtEditorAction {
         file.putUserData(DbtSqlFluff.Result, null)
         val failed = (error: Throwable) => report("Cannot inspect this source: " + error.getMessage)
         DbtUi.background(project, "Inspect dbt SQL with SQLFluff", Some(failed)) {
-          indicator => new DbtToolProcess().run(command, source, indicator).flatMap { output =>
-            if (output.getExitCode != 0 && output.getExitCode != 1)
-              Left("SQLFluff failed (exit " + output.getExitCode + "). Check the project configuration. " + output.getStderr.take(4000))
-            else DbtSqlFluff.parse(source, output.getStdout, file.getVirtualFile.getPath)
-          }
+          indicator =>
+            new DbtToolProcess().run(command, source, indicator).flatMap { output =>
+              if (output.getExitCode != 0 && output.getExitCode != 1)
+                Left("SQLFluff failed (exit " + output.getExitCode + "). Check the project configuration. " + output.getStderr.take(4000))
+              else DbtSqlFluff.parse(source, output.getStdout, file.getVirtualFile.getPath)
+            }
         } { result =>
           val current = DbtUi.read(file.isValid &&
             Option(PsiDocumentManager.getInstance(project).getDocument(file))
@@ -123,7 +141,7 @@ final class DbtInspectSqlAction extends DbtEditorAction {
               file.putUserData(DbtSqlFluff.Result, DbtSqlFluffResult(source, stamp, diagnostics))
               DaemonCodeAnalyzer.getInstance(project).restart(file, "SQLFluff explicit inspection completed")
               report(if (diagnostics.isEmpty) "No SQLFluff violations."
-                else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.",
+              else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.",
                 NotificationType.INFORMATION)
           }
         }
@@ -132,30 +150,41 @@ final class DbtInspectSqlAction extends DbtEditorAction {
 }
 
 private[ide] final case class DbtSqlFluffEdit(range: TextRange, replacement: String)
+
 private[ide] final case class DbtSqlFluffDiagnostic(code: String, message: String, range: TextRange,
   warning: Boolean, edits: Vector[DbtSqlFluffEdit])
+
 private[ide] final case class DbtSqlFluffResult(source: String, stamp: Long, diagnostics: Vector[DbtSqlFluffDiagnostic])
+
 private[ide] object DbtSqlFluff {
   val Result: Key[DbtSqlFluffResult] = Key.create("dbt.sqlfluff.explicit.inspection")
   private[ide] val ParseErrors = Set("PRS", "TMP", "LXR")
+
   private def string(o: JsonObject, key: String): Option[String] =
     Option(o.get(key)).filterNot(_.isJsonNull).map(_.getAsString)
+
   private def number(o: JsonObject, key: String): Option[Int] =
     Option(o.get(key)).filter(_.isJsonPrimitive).filter(_.getAsJsonPrimitive.isNumber)
       .flatMap(value => scala.util.Try(value.getAsBigDecimal.intValueExact()).toOption)
+
   private def offset(source: String, position: Int): Option[Int] =
     if (position < 0 || position > source.codePointCount(0, source.length)) None
     else Some(source.offsetByCodePoints(0, position))
+
   private def lineOffset(source: String, line: Int, column: Int): Option[Int] = {
     val starts = Vector(0) ++ source.indices.filter(source.charAt(_) == '\n').map(_ + 1)
     starts.lift(line - 1).filter(_ => line > 0 && column > 0).flatMap { start =>
-      val end = source.indexOf('\n', start) match { case -1 => source.length; case n => n }
+      val end = source.indexOf('\n', start) match {
+        case -1 => source.length;
+        case n => n
+      }
       if (column - 1 > source.codePointCount(start, end)) None else Some(source.offsetByCodePoints(start, column - 1))
     }
   }
+
   private def position(source: String, row: JsonObject, prefix: String): Option[Int] = {
     val byLine = for (line <- number(row, prefix + "_line_no"); column <- number(row, prefix + "_line_pos");
-      at <- lineOffset(source, line, column)) yield at
+                      at <- lineOffset(source, line, column)) yield at
     val byFile = number(row, prefix + "_file_pos").flatMap(offset(source, _))
     if ((row.has(prefix + "_file_pos") && byFile.isEmpty) ||
       ((row.has(prefix + "_line_no") || row.has(prefix + "_line_pos")) && byLine.isEmpty)) None
@@ -166,6 +195,7 @@ private[ide] object DbtSqlFluff {
       case _ => None
     }
   }
+
   def parse(source: String, json: String, sourcePath: String = ""): Either[String, Vector[DbtSqlFluffDiagnostic]] = try {
     val files = JsonParser.parseString(json).getAsJsonArray.asScala.toVector
     if (files.size != 1) Left("SQLFluff must return one stdin document; diagnostics were not applied.")
@@ -181,17 +211,17 @@ private[ide] object DbtSqlFluff {
           val start = position(source, row, "start")
           val hasEnd = Vector("end_line_no", "end_line_pos", "end_file_pos").exists(row.has)
           val end = if (hasEnd) position(source, row, "end")
-            else start.map(s => if (s < source.length) source.offsetByCodePoints(s, 1) else s)
+          else start.map(s => if (s < source.length) source.offsetByCodePoints(s, 1) else s)
           for (a <- start; b <- end if a <= b && b <= source.length) yield {
             val code = string(row, "code").getOrElse("SQLFluff")
             val edits = Option(row.getAsJsonArray("fixes")).toVector.flatMap(_.asScala).map { raw =>
               val fix = raw.getAsJsonObject
               for (kind <- string(fix, "type") if Set("replace", "delete", "create_before", "create_after")(kind);
-                from <- number(fix, "start_file_pos").flatMap(offset(source, _));
-                to <- number(fix, "end_file_pos").flatMap(offset(source, _)) if from <= to;
-                replacement <- string(fix, "edit") if (kind != "delete" || replacement.isEmpty) &&
-                  (!kind.startsWith("create_") || from == to))
-                yield DbtSqlFluffEdit(new TextRange(from, to), replacement)
+                   from <- number(fix, "start_file_pos").flatMap(offset(source, _));
+                   to <- number(fix, "end_file_pos").flatMap(offset(source, _)) if from <= to;
+                   replacement <- string(fix, "edit") if (kind != "delete" || replacement.isEmpty) &&
+                (!kind.startsWith("create_") || from == to))
+              yield DbtSqlFluffEdit(new TextRange(from, to), replacement)
             }
             val validEdits = if (unsafe || edits.exists(_.isEmpty)) Vector.empty else edits.flatten.toVector
             val sorted = validEdits.sortBy(_.range.getStartOffset)
@@ -205,7 +235,9 @@ private[ide] object DbtSqlFluff {
         else Right(diagnostics.flatten)
       }
     }
-  } catch { case NonFatal(_) => Left("SQLFluff returned unsupported JSON. Check the executable, SQLFluff version and project configuration.") }
+  } catch {
+    case NonFatal(_) => Left("SQLFluff returned unsupported JSON. Check the executable, SQLFluff version and project configuration.")
+  }
 
   def applyEdits(file: PsiFile, result: DbtSqlFluffResult, diagnostic: DbtSqlFluffDiagnostic): Boolean = {
     val manager = PsiDocumentManager.getInstance(file.getProject)
@@ -215,7 +247,8 @@ private[ide] object DbtSqlFluff {
       WriteCommandAction.writeCommandAction(file.getProject).withName("Apply SQLFluff " + diagnostic.code).run(new ThrowableRunnable[RuntimeException] {
         override def run(): Unit = {
           diagnostic.edits.sortBy(_.range.getStartOffset).reverse.foreach(e => document.replaceString(e.range.getStartOffset, e.range.getEndOffset, e.replacement))
-          file.putUserData(Result, null); manager.commitDocument(document)
+          file.putUserData(Result, null);
+          manager.commitDocument(document)
         }
       })
       true
@@ -226,6 +259,7 @@ private[ide] object DbtSqlFluff {
 /** Uses only results from the user's explicit Inspect dbt SQL invocation. It never launches a tool while typing. */
 final class DbtSqlFluffInspection extends LocalInspectionTool {
   override def getShortName: String = "DbtSqlFluff"
+
   override def buildVisitor(holder: ProblemsHolder, onTheFly: Boolean): PsiElementVisitor = new PsiElementVisitor {
     override def visitFile(file: PsiFile): Unit = Option(file.getUserData(DbtSqlFluff.Result))
       .filter(r => r.source == file.getText && Option(PsiDocumentManager.getInstance(file.getProject).getDocument(file)).exists(_.getModificationStamp == r.stamp))
@@ -241,9 +275,13 @@ final class DbtSqlFluffInspection extends LocalInspectionTool {
 
 final class DbtSqlFluffFix private[ide](result: DbtSqlFluffResult, diagnostic: DbtSqlFluffDiagnostic) extends LocalQuickFix {
   override def getFamilyName: String = "Apply available SQLFluff fix"
+
   override def getName: String = "Apply SQLFluff " + diagnostic.code + " fix"
+
   override def startInWriteAction(): Boolean = false
+
   override def getElementToMakeWritable(currentFile: PsiFile): PsiElement = currentFile
+
   override def applyFix(project: Project, descriptor: ProblemDescriptor): Unit = {
     DbtSqlFluff.applyEdits(descriptor.getPsiElement.getContainingFile, result, diagnostic)
     ()
@@ -263,11 +301,15 @@ private[ide] object DbtFormatting {
 
 final class DbtFormattingService extends AsyncDocumentFormattingService {
   override def getName: String = "dbt SQL formatter"
+
   override def getNotificationGroupId: String = "dbt Workspace"
+
   override def getFeatures: java.util.Set[FormattingService.Feature] = java.util.Set.of(FormattingService.Feature.AD_HOC_FORMATTING)
+
   override def canFormat(file: PsiFile): Boolean = file.getName.endsWith(".sql") && file.isWritable &&
     DbtWorkspace.rootForFile(file.getProject, file.getVirtualFile).exists(r => r.resource(file) &&
       !r.excluded(file.getVirtualFile) && r.runOptions.formatterExecutable.nonEmpty)
+
   override def createFormattingTask(request: AsyncFormattingRequest): AsyncDocumentFormattingService.FormattingTask = {
     val file = request.getContext.getContainingFile
     val before = request.getDocumentText
@@ -285,7 +327,12 @@ final class DbtFormattingService extends AsyncDocumentFormattingService {
             else request.onError("dbt formatter", "The document changed during formatting. Run Reformat Code again; source is unchanged.")
         }
       }
-      override def cancel(): Boolean = { process.cancel(); true }
+
+      override def cancel(): Boolean = {
+        process.cancel();
+        true
+      }
+
       override def isRunUnderProgress: Boolean = true
     }
   }
@@ -293,6 +340,7 @@ final class DbtFormattingService extends AsyncDocumentFormattingService {
 
 private[ide] object DbtFormatOnSave {
   private val pending = ConcurrentHashMap.newKeySet[Document]()
+
   def enabled(project: Project, file: VirtualFile): Boolean =
     file.isWritable && file.getExtension == "sql" &&
       DbtWorkspace.rootForFile(project, file).exists(r => r.kind(file).nonEmpty && !r.excluded(file) &&
@@ -332,7 +380,10 @@ final class DbtFormatOnSave extends FileDocumentManagerListener {
         if (project.isDisposed) DbtFormatOnSave.pending.remove(document)
         else DbtUi.background(project, "Format dbt SQL on save",
           Some(error => DbtNotifications.show(project, "dbt format on save", error.getMessage)),
-          () => { DbtFormatOnSave.pending.remove(document); () })(DbtFormatting.result(new DbtToolProcess, command, source, _)) {
+          () => {
+            DbtFormatOnSave.pending.remove(document);
+            ()
+          })(DbtFormatting.result(new DbtToolProcess, command, source, _)) {
           case Left(error) => DbtNotifications.show(project, "dbt format on save", error)
           case Right(after) => if (DbtFormatOnSave.applyText(project, document, source, stamp, after)) manager.saveDocument(document)
         }

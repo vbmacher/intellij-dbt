@@ -20,6 +20,7 @@ final class DbtPythonNavigationTest extends DbtTestCase {
     add("models/orders.sql", "select 1")
     add("models/schema.yml", "sources:\n- name: raw\n  tables:\n  - name: events\nmodels:\n- name: python_model\n  config:\n    region: us\n")
   }
+
   def testPythonParameterCallsConfigAndMixedReverseUsages(): Unit = {
     setupProject()
     val py = add("models/python_model.py", "def model(dbt, session):\n    orders = dbt.ref('orders')\n    source = dbt.source('raw', 'events')\n    region = dbt.config.get('region')\n    return orders\n")
@@ -49,6 +50,7 @@ final class DbtPythonNavigationTest extends DbtTestCase {
       assertEquals(Vector(new TextRange(start, start + name.length)), data.getRanges.asScala.toVector)
     }
   }
+
   def testPythonCommentsStringsShadowingAndProvedAlias(): Unit = {
     setupProject()
     val py = add("models/python_model.py", "def model(dbt, session):\n    # dbt.ref('orders')\n    text = \"dbt.ref('orders')\"\n    context = dbt\n    first = context.ref('orders')\n    return first\n\ndef helper(dbt):\n    return dbt.ref('orders')\n")
@@ -56,6 +58,7 @@ final class DbtPythonNavigationTest extends DbtTestCase {
     val shadowed = add("models/shadowed.py", "def model(dbt, session):\n    dbt = object()\n    return dbt.ref('orders')\n")
     assertTrue(DbtNavigation.inFile(shadowed).isEmpty)
   }
+
   def testPythonVersionedReferences(): Unit = {
     setupProject()
     add("models/versioned_v1.sql", "select 1")

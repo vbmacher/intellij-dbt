@@ -33,13 +33,17 @@ private[ide] object DbtRefactoring {
 
 /** Native rename drives preview/conflicts/undo; every usage is resolved by the existing reference providers. */
 final class DbtRenameProcessor extends RenamePsiElementProcessor {
-  private final class FamilyEdits(val ranges: Vector[SmartPsiFileRange]) { var applied: Boolean = false }
+  private final class FamilyEdits(val ranges: Vector[SmartPsiFileRange]) {
+    var applied: Boolean = false
+  }
+
   private val familyEdits = Key.create[FamilyEdits]("dbt.rename.family.edits")
+
   override def renameElement(element: PsiElement, name: String, usages: Array[UsageInfo], listener: RefactoringElementListener): Unit = {
     val family = Option(element.getUserData(familyEdits))
     val edits = if (family.exists(_.applied)) Map.empty[PsiFile, Vector[(PsiFile, TextRange)]]
-      else family.map(_.ranges.flatMap(pointer => for (range <- Option(pointer.getRange); file <- Option(pointer.getContainingFile))
-        yield file -> new TextRange(range.getStartOffset, range.getEndOffset))).getOrElse(usages.toVector.flatMap { usage =>
+    else family.map(_.ranges.flatMap(pointer => for (range <- Option(pointer.getRange); file <- Option(pointer.getContainingFile))
+      yield file -> new TextRange(range.getStartOffset, range.getEndOffset))).getOrElse(usages.toVector.flatMap { usage =>
       for (source <- Option(usage.getElement); file <- Option(source.getContainingFile); range <- Option(usage.getRangeInElement))
         yield (file, range.shiftRight(if (source.isInstanceOf[PsiFile]) 0 else source.getTextOffset))
     }).distinct.groupBy(_._1)
@@ -60,10 +64,12 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
     element.asInstanceOf[PsiNamedElement].setName(name)
     if (listener != null) listener.elementRenamed(element)
   }
+
   override def canProcessElement(element: PsiElement): Boolean = element match {
     case e: DbtSymbolElement => DbtRefactoring.Kinds(e.symbol.kind)
     case _ => false
   }
+
   override def findReferences(element: PsiElement, scope: SearchScope, searchInCommentsAndStrings: Boolean): java.util.Collection[PsiReference] = {
     val w = DbtWorkspace.get(element.getProject)
     val aliases = element match {
@@ -75,9 +81,11 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
     }
     DbtRefactoring.references(w, element +: aliases, Some(scope)).map(r => r: PsiReference).asJava
   }
+
   private def exported(w: DbtWorkspace, e: DbtSymbolElement) = w.codeSymbols(e.getContainingFile).filter(_.kind == "model").flatMap { model =>
     DbtSqlAnalysis.get(w, model.file).toVector.flatMap(_.columns).filter(c => c.range == e.getTextRange && c.name == e.getName).map(model -> _)
   }
+
   override def prepareRenaming(element: PsiElement, name: String, renames: java.util.Map[PsiElement, String]): Unit = element match {
     case e: DbtSymbolElement if Set("model", "macro")(e.symbol.kind) =>
       val w = DbtWorkspace.get(e.getProject)
@@ -91,8 +99,8 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
             val range = r.getRangeInElement
             val raw = range.substring(r.getElement.getText)
             val nameRange = if (raw == e.getName) Some(range)
-              else if (raw == "\"" + e.getName + "\"" || raw == "'" + e.getName + "'") Some(new TextRange(range.getStartOffset + 1, range.getEndOffset - 1))
-              else None
+            else if (raw == "\"" + e.getName + "\"" || raw == "'" + e.getName + "'") Some(new TextRange(range.getStartOffset + 1, range.getEndOffset - 1))
+            else None
             nameRange.map(SmartPointerManager.getInstance(e.getProject).createSmartPsiFileRangePointer(r.getElement, _))
           }
         val plan = new FamilyEdits(ranges)
@@ -104,7 +112,8 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
     case e: DbtSymbolElement if e.symbol.kind == "sql_projection" =>
       val w = DbtWorkspace.get(e.getProject)
       exported(w, e).foreach { case (resource, _) => w.columns(resource).filter(c => c.name == e.getName && c.mapping.nonEmpty)
-        .foreach(c => renames.put(c.element, name)) }
+        .foreach(c => renames.put(c.element, name))
+      }
     case e: DbtSymbolElement if e.symbol.kind == "column" =>
       val w = DbtWorkspace.get(e.getProject)
       DbtRefactoring.models(w, e.symbol).foreach { model =>
@@ -116,9 +125,11 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
       }
     case _ => ()
   }
+
   override def findExistingNameConflicts(element: PsiElement, name: String, conflicts: MultiMap[PsiElement, String]): Unit = element match {
     case e: DbtSymbolElement =>
-      val s = e.symbol; val w = DbtWorkspace.get(e.getProject)
+      val s = e.symbol;
+      val w = DbtWorkspace.get(e.getProject)
       if (s.kind == "column" && !DbtRefactoring.models(w, s).exists(model =>
         model.file.getVirtualFile.getExtension == "sql" && DbtSqlAnalysis.get(w, model.file).exists(a =>
           a.issues.isEmpty && a.columns.count(_.name == s.name) == 1 && a.columns.exists(c => c.name == s.name && c.complete))))
@@ -132,7 +143,9 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
       DbtSqlAnalysis.get(w, s.file).foreach { analysis =>
         if (analysis.issues.exists(_.startsWith("Explicit CTE column lists"))) conflicts.putValue(e, "Explicit CTE column lists require source editing; their complete usages cannot be proven.")
         val scope = analysis.scope(e.getTextOffset)
+
         def parents(range: TextRange) = analysis.ctes.filter(_.body.contains(range)).map(_.range).toSet
+
         val collision = s.kind match {
           case "cte" => analysis.ctes.exists(c => c.name.equalsIgnoreCase(name) && !c.range.contains(e.getTextRange) && parents(c.range) == parents(e.getTextRange))
           case "sql_alias" => scope.exists(_.relations.exists(_._1.equalsIgnoreCase(name)))
@@ -158,7 +171,9 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
 }
 
 private[ide] object DbtSafeDelete {
+
   import DbtRefactoring.Kinds
+
   /** Translate native editor/file selections before the IDE opens its deletion dialog. */
   def targets(element: PsiElement): Vector[DbtSymbolElement] = element match {
     case symbol: DbtSymbolElement if Kinds(symbol.symbol.kind) => Vector(symbol)
@@ -187,13 +202,16 @@ private[ide] object DbtSafeDelete {
 /** The native Safe Delete action requires language support before consulting processor delegates. */
 final class DbtSafeDeleteSupport extends RefactoringSupportProvider {
   override def isAvailable(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
+
   override def isSafeDeleteAvailable(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
 }
 
 final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
   override def handlesElement(element: PsiElement): Boolean = DbtSafeDelete.targets(element).nonEmpty
+
   override def getElementsToSearch(element: PsiElement, module: Module, all: java.util.Collection[_ <: PsiElement]): java.util.Collection[_ <: PsiElement] =
     DbtSafeDelete.targets(element).map(target => target: PsiElement).asJava
+
   override def getAdditionalElementsToDelete(element: PsiElement, all: java.util.Collection[_ <: PsiElement], ask: Boolean): java.util.Collection[PsiElement] = element match {
     case e: DbtSymbolElement if e.symbol.kind == "model" || e.symbol.kind == "macro" =>
       val w = DbtWorkspace.get(e.getProject)
@@ -203,10 +221,11 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
     case e: DbtSymbolElement if e.symbol.kind == "sql_projection" =>
       val w = DbtWorkspace.get(e.getProject)
       w.codeSymbols(e.getContainingFile).filter(s => s.kind == "model" && DbtSqlAnalysis.get(w, s.file).exists(_.columns
-        .exists(c => c.name == e.getName && c.range == e.getTextRange))).flatMap(w.columns).filter(c => c.name == e.getName && c.mapping.nonEmpty)
+          .exists(c => c.name == e.getName && c.range == e.getTextRange))).flatMap(w.columns).filter(c => c.name == e.getName && c.mapping.nonEmpty)
         .map(c => c.copy(attributes = c.attributes + ("properties-only-delete" -> "true")).element: PsiElement).asJava
     case _ => java.util.List.of()
   }
+
   override def findUsages(element: PsiElement, all: Array[PsiElement], usages: java.util.List[_ >: UsageInfo]): NonCodeUsageSearchInfo = {
     new DbtRenameProcessor().findReferences(element, GlobalSearchScope.projectScope(element.getProject), false)
       .asScala.filterNot { ref =>
@@ -217,14 +236,16 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
           case _ => false
         }
       }.foreach { ref =>
-      val range = ref.getRangeInElement
-      usages.add(new SafeDeleteReferenceSimpleDeleteUsageInfo(ref.getElement, element, range.getStartOffset, range.getEndOffset, false, false))
-    }
+        val range = ref.getRangeInElement
+        usages.add(new SafeDeleteReferenceSimpleDeleteUsageInfo(ref.getElement, element, range.getStartOffset, range.getEndOffset, false, false))
+      }
     null
   }
+
   override def findConflicts(element: PsiElement, all: Array[PsiElement], usages: Array[UsageInfo],
     conflicts: MultiMap[PsiElement, String]): Unit =
     conflictMessages(element).foreach(conflicts.putValue(element, _))
+
   private def conflictMessages(element: PsiElement): Vector[String] = element match {
     case e: DbtSymbolElement =>
       val w = DbtWorkspace.get(e.getProject)
@@ -241,7 +262,7 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
       if (Set("model", "macro", "column", "sql_projection")(e.symbol.kind)) {
         val localFiles = w.files.filter(f => w.root(f).exists(r => w.owner(e.symbol).exists(owner => w.executionRoot(r) == w.executionRoot(owner))))
         if (localFiles.exists(f => DbtSyntax.inFile(f).flatMap(DbtSyntax.calls).exists(c =>
-            Set("ref", "source", "builtins.ref", "builtins.source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
+          Set("ref", "source", "builtins.ref", "builtins.source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
           messages += "Dynamic consumers exist; the complete set of usages cannot be proven."
         if (DbtSymbol.ColumnKinds(e.symbol.kind) && localFiles.filter(_.getName.endsWith(".sql"))
           .exists(f => DbtSqlAnalysis.get(w, f).forall(_.issues.nonEmpty)))
@@ -250,7 +271,9 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
       messages.result()
     case _ => Vector.empty
   }
+
   override def preprocessUsages(project: Project, usages: Array[UsageInfo]): Array[UsageInfo] = usages
+
   private def sourceDeletion(element: DbtSymbolElement): Option[(PsiFile, TextRange)] = {
     val w = DbtWorkspace.get(element.getProject)
     val s = element.symbol
@@ -258,24 +281,30 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
     val direct = DbtSqlAnalysis.get(w, s.file).filter(_.issues.isEmpty).toVector.flatMap(_.deletions).find(_._1 == element.getTextRange).map(s.file -> _._2)
     direct.orElse(if (s.kind != "column") None else DbtRefactoring.models(w, s).headOption.flatMap { model =>
       DbtSqlAnalysis.get(w, model.file).filter(_.issues.isEmpty).flatMap { a =>
-        val columns = a.columns.filter(_.name == s.name)
-        if (columns.size == 1 && columns.head.complete) a.deletions.find(_._1 == columns.head.range) else None
-      }
+          val columns = a.columns.filter(_.name == s.name)
+          if (columns.size == 1 && columns.head.complete) a.deletions.find(_._1 == columns.head.range) else None
+        }
         .map(model.file -> _._2)
     })
   }
+
   override def prepareForDeletion(element: PsiElement): Unit = element match {
     case e: DbtSymbolElement => sourceDeletion(e).foreach { case (file, range) =>
       if (file == e.getContainingFile) e.prepareSourceDeletion(range)
       else {
         val manager = PsiDocumentManager.getInstance(e.getProject)
-        manager.getDocument(file).deleteString(range.getStartOffset, range.getEndOffset); manager.commitAllDocuments()
+        manager.getDocument(file).deleteString(range.getStartOffset, range.getEndOffset);
+        manager.commitAllDocuments()
       }
     }
     case _ => ()
   }
+
   override def isToSearchInComments(element: PsiElement): Boolean = false
+
   override def setToSearchInComments(element: PsiElement, value: Boolean): Unit = ()
+
   override def isToSearchForTextOccurrences(element: PsiElement): Boolean = false
+
   override def setToSearchForTextOccurrences(element: PsiElement, value: Boolean): Unit = ()
 }

@@ -6,7 +6,9 @@ import org.jetbrains.yaml.psi.YAMLMapping
 import scala.jdk.CollectionConverters._
 
 private[dbt] final case class DbtColumnData(name: String, dataType: String = "", description: String = "", declarations: Vector[String] = Vector.empty)
+
 private[dbt] final case class DbtTestData(name: String, column: String = "")
+
 private[dbt] final case class DbtResourceData(description: String = "", columns: Vector[DbtColumnData] = Vector.empty,
   tests: Vector[DbtTestData] = Vector.empty, tags: Vector[String] = Vector.empty, attributes: Map[String, String] = Map.empty,
   rawSql: Option[String] = None, compiledSql: Option[String] = None, arguments: Vector[DbtColumnData] = Vector.empty,
@@ -49,6 +51,7 @@ private[dbt] object DbtResourceData {
     val enriched = DbtDeclarationSource.EP.getExtensionList.asScala.foldLeft(source) { (data, adapter) =>
       adapter.documentation(w, s).fold(data)(data.enrich)
     }
+
     def docBody(call: DbtSyntax.Call): Option[String] = {
       val bodies = w.owner(s).toVector.flatMap(r => w.definitions(call, Set("doc"), r)).map { d =>
         DbtSyntax.tagged(DbtSyntax.inFile(d.file), "docs", d.range)
@@ -56,6 +59,7 @@ private[dbt] object DbtResourceData {
       }
       if (bodies.size == 1) bodies.headOption else None
     }
+
     // Resolve complete string concatenations only; unsupported or unresolved expressions stay intact.
     def docs(text: String): String = DbtSyntax.blocks(text).filterNot(_.tag).reverse.foldLeft(text) { (result, block) =>
       val calls = DbtSyntax.calls(block).filter(c => c.name == "doc" && c.closed)
@@ -72,6 +76,7 @@ private[dbt] object DbtResourceData {
         result.substring(0, block.range.getStartOffset) + body + result.substring(block.range.getEndOffset)
       } else result
     }
+
     enriched.copy(description = docs(enriched.description), columns = enriched.columns.map(c => c.copy(description = docs(c.description))))
   }
 

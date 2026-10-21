@@ -22,12 +22,15 @@ final class DbtNativeTestRunnerTest extends DbtTestCase {
     config.root = workspace.roots.head.directory.getPath
     config
   }
+
   private def setup(mode: String = ""): (DbtRunConfiguration, DbtCommand, Path) = {
-    project(); add("tests/check_orders.sql", "select 1")
+    project();
+    add("tests/check_orders.sql", "select 1")
     val directory = tempDirectory("dbt native tests ")
     Files.writeString(directory.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
     val script = directory.resolve("external dbt.py")
-    Files.writeString(script, """import json,os,sys,time,datetime
+    Files.writeString(script,
+      """import json,os,sys,time,datetime
 with open('invocation.json','w') as f: json.dump(sys.argv[1:],f)
 print('native raw output',flush=True)
 print(json.dumps({'info':{'invocation_id':'native-run','msg':'\x1b[32mSTART check_orders\x1b[0m','level':'info','ts':'2026-10-20T12:34:56Z'},'data':{'node_info':{'unique_id':'test.analytics.check_orders','node_status':'started'}}}),flush=True)
@@ -38,11 +41,13 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'run_results.json'),'w') as
  json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/run-results/v6.json','invocation_id':'native-run','generated_at':datetime.datetime.now(datetime.timezone.utc).isoformat()},'args':{'target':'dev'},'results':[{'unique_id':'test.analytics.check_orders','status':'fail' if '--fail' in sys.argv else 'pass','message':'3 unexpected rows','failures':3}]},f)
 sys.exit(1 if '--fail' in sys.argv else 0)
 """)
-    val w = workspace; val root = w.roots.head
+    val w = workspace;
+    val root = w.roots.head
     root.runOptions.executable = "/usr/bin/python3"
     root.runOptions.executableArguments = "\"" + script.toString + "\""
     root.runOptions.projectRoot = directory.toString
-    root.runOptions.target = "dev"; root.runOptions.notifications = false
+    root.runOptions.target = "dev";
+    root.runOptions.notifications = false
     DbtProjectSettings.get(getProject).changed()
     val updated = workspace
     val command = DbtCommand.create(updated, DbtRunSelection.all(updated, root.directory.getPath).get, "Test", fullRefresh = false).toOption.get
@@ -51,8 +56,10 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     config.captured = Some(captured)
     (config, captured, directory)
   }
+
   private def tests(view: SMTRunnerConsoleView): Vector[SMTestProxy] =
     view.getResultsViewer.getTestsRootNode.getAllTests.asScala.filterNot(_.isSuite).toVector
+
   private def session(config: DbtRunConfiguration, command: DbtCommand): DbtTestConsole = {
     val session = new DbtTestConsole(config, DefaultRunExecutor.getRunExecutorInstance)
     Disposer.register(getTestRootDisposable, session.view)
@@ -66,7 +73,10 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     getProject.getMessageBus.connect(getTestRootDisposable).subscribe(
       com.intellij.execution.testframework.sm.runner.SMTRunnerEventsListener.TEST_STATUS,
       new com.intellij.execution.testframework.sm.runner.SMTRunnerEventsAdapter {
-        override def onTestFinished(test: SMTestProxy): Unit = { nativeEvents += test.getMetainfo; () }
+        override def onTestFinished(test: SMTestProxy): Unit = {
+          nativeEvents += test.getMetainfo;
+          ()
+        }
       })
     val executor = DefaultRunExecutor.getRunExecutorInstance
     val programRunner = ProgramRunner.getRunner(executor.getId, config)
@@ -77,7 +87,9 @@ sys.exit(1 if '--fail' in sys.argv else 0)
       .getRestartActions.exists(_.isInstanceOf[com.intellij.execution.testframework.actions.AbstractRerunFailedTestsAction]))
     val view = result.getExecutionConsole.asInstanceOf[SMTRunnerConsoleView]
     Disposer.register(getTestRootDisposable, view)
-    await("Standard Run profile completes") { result.getProcessHandler.isProcessTerminated && tests(view).exists(_.isPassed) }
+    await("Standard Run profile completes") {
+      result.getProcessHandler.isProcessTerminated && tests(view).exists(_.isPassed)
+    }
     assertEquals(0, result.getProcessHandler.getExitCode.intValue())
     assertTrue(tests(view).head.isPassed)
     assertTrue("Native framework listeners receive dbt results", nativeEvents.contains("test.analytics.check_orders"))
@@ -89,16 +101,23 @@ sys.exit(1 if '--fail' in sys.argv else 0)
   def testNativeStopCancelsAndFailureRerunRetainsCapturedContextAndExactIdentity(): Unit = {
     val (config, command, directory) = setup("--hold --fail")
     val first = session(config, command)
-    await("Test streams before process exit") { tests(first.view).exists(_.isInProgress) }
+    await("Test streams before process exit") {
+      tests(first.view).exists(_.isInProgress)
+    }
     first.process.destroyProcess()
-    await("Native Stop terminates the managed process") { first.process.isProcessTerminated && tests(first.view).exists(_.wasTerminated()) }
+    await("Native Stop terminates the managed process") {
+      first.process.isProcessTerminated && tests(first.view).exists(_.wasTerminated())
+    }
     assertTrue(tests(first.view).head.wasTerminated())
     assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
     val failedCommand = command.copy(request = command.request.copy(extraArguments = Vector("--fail")))
     val second = session(config, failedCommand)
-    await("Failure appears in native results") { second.process.isProcessTerminated && tests(second.view).exists(_.isDefect) }
+    await("Failure appears in native results") {
+      second.process.isProcessTerminated && tests(second.view).exists(_.isDefect)
+    }
     val proxy = tests(second.view).head
-    assertTrue(proxy.isDefect); assertTrue(proxy.getErrorMessage.contains("unexpected rows"))
+    assertTrue(proxy.isDefect);
+    assertTrue(proxy.getErrorMessage.contains("unexpected rows"))
     val action = second.properties.createRerunFailedTestsAction(second.view)
     assertNotNull("Use IntelliJ's standard failed-test action", action)
     val executor = DefaultRunExecutor.getRunExecutorInstance
@@ -119,7 +138,9 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     val (config, command, _) = setup()
     config.action = "Build"
     val console = session(config, command.copy(request = command.request.copy(action = DbtCommandAction.Build)))
-    await("Build test result completes") { console.process.isProcessTerminated && tests(console.view).exists(_.isPassed) }
+    await("Build test result completes") {
+      console.process.isProcessTerminated && tests(console.view).exists(_.isPassed)
+    }
     console.view.getPrinter.updateOnTestSelected(console.view.getResultsViewer.getTestsRootNode)
     val view = console.view.getConsole.asInstanceOf[com.intellij.execution.impl.ConsoleViewImpl]
     await("Readable dbt output reaches the native console") {
@@ -136,11 +157,15 @@ sys.exit(1 if '--fail' in sys.argv else 0)
   def testNativeResultStatesAndMissingEvidenceNeverBecomeSuccess(): Unit = {
     val (config, command, _) = setup("--hold")
     val console = session(config, command)
-    await("Test starts") { tests(console.view).exists(_.isInProgress) }
+    await("Test starts") {
+      tests(console.view).exists(_.isInProgress)
+    }
     val results = Vector("pass" -> "passed", "fail" -> "failed", "warn" -> "warning", "error" -> "error", "skip" -> "skipped", "cancel" -> "canceled")
       .map { case (name, state) => DbtExecutionResult("test.analytics." + name, state, "detail: " + name + " 'quoted' [row] | value\nsecond line") }
     console.update(DbtExecutionRun(command.artifactContext, "dev", "native-run", Instant.now.toString, "", results, active = false))
-    await("Native events reach the tree") { tests(console.view).exists(p => p.getName == "test.analytics.pass" && p.isPassed) }
+    await("Native events reach the tree") {
+      tests(console.view).exists(p => p.getName == "test.analytics.pass" && p.isPassed)
+    }
     val nodes = tests(console.view).map(p => p.getName -> p).toMap
     assertTrue(nodes("test.analytics.pass").isPassed)
     assertTrue(nodes("test.analytics.fail").isDefect)
@@ -156,16 +181,22 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     }
     assertFalse(tests(console.view).find(_.getName == "test.analytics.unverified").get.isPassed)
     console.process.destroyProcess()
-    await("Held process stopped") { console.process.isProcessTerminated && tests(console.view).exists(p => p.getName == "test.analytics.cancel" && p.wasTerminated()) }
+    await("Held process stopped") {
+      console.process.isProcessTerminated && tests(console.view).exists(p => p.getName == "test.analytics.cancel" && p.wasTerminated())
+    }
   }
 
   def testRunConfigurationRoundTripKeepsScopeAndBuildIntent(): Unit = {
     val (config, _, _) = setup()
     config.captured = None
-    config.action = "Build"; config.selectors = Vector("fqn:analytics.check_orders")
-    config.exclude = Vector("tag:slow"); config.fullRefresh = true
-    val xml = new Element("configuration"); config.writeExternal(xml)
-    val restored = configuration(); restored.readExternal(xml)
+    config.action = "Build";
+    config.selectors = Vector("fqn:analytics.check_orders")
+    config.exclude = Vector("tag:slow");
+    config.fullRefresh = true
+    val xml = new Element("configuration");
+    config.writeExternal(xml)
+    val restored = configuration();
+    restored.readExternal(xml)
     assertEquals(config.root, restored.root)
     assertEquals(config.action, restored.action)
     assertEquals(config.selectors, restored.selectors)
@@ -174,7 +205,9 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     val prepared = restored.prepare().toOption.get._1
     assertEquals("Build", prepared.action)
     assertEquals(DbtCommandScope.Selected(config.selectors), prepared.request.scope)
-    restored.action = "Test"; restored.exactTests = true; restored.selectors = Vector("missing")
+    restored.action = "Test";
+    restored.exactTests = true;
+    restored.selectors = Vector("missing")
     assertTrue("An exact rerun must never widen to the project", restored.prepare().isLeft)
   }
 
@@ -188,20 +221,26 @@ sys.exit(1 if '--fail' in sys.argv else 0)
     assertNotNull(contributor.getSlowInfo(file.findElementAt(0)))
     assertTrue(myFixture.findAllGutters().asScala.exists(g => Option(g.getTooltipText).exists(_.contains("dbt tests:"))))
     val passed = session(config, command)
-    await("Passing test completes") { passed.process.isProcessTerminated && tests(passed.view).exists(_.isPassed) }
+    await("Passing test completes") {
+      passed.process.isProcessTerminated && tests(passed.view).exists(_.isPassed)
+    }
     assertEquals("passed", DbtTestRunLineMarker.status(file, definition))
     val failed = session(config, command.copy(request = command.request.copy(extraArguments = Vector("--fail"))))
-    await("Failing test completes") { failed.process.isProcessTerminated && tests(failed.view).exists(_.isDefect) }
+    await("Failing test completes") {
+      failed.process.isProcessTerminated && tests(failed.view).exists(_.isDefect)
+    }
     assertEquals("failed", DbtTestRunLineMarker.status(file, definition))
     edit(file, "select 2")
     assertEquals("not run", DbtTestRunLineMarker.status(file, definition))
   }
 
   def testYamlUnitAndGenericTestGuttersUseExactDeclarationLines(): Unit = {
-    project(); add("models/orders.sql", "select 1 as id")
+    project();
+    add("models/orders.sql", "select 1 as id")
     val file = configure("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n    data_tests: [unique, not_null]\nunit_tests:\n- name: <caret>example\n  model: orders\n  given: []\n  expect: {rows: []}\n")
     val unit = DbtTestRunLineMarker.testsAt(file.findElementAt(myFixture.getCaretOffset)).get
-    assertEquals(1, unit.size); assertEquals("Unit tests", unit.head.kind)
+    assertEquals(1, unit.size);
+    assertEquals("Unit tests", unit.head.kind)
     val generic = DbtTestRunLineMarker.testsAt(file.findElementAt(file.getText.indexOf("unique"))).get
     assertEquals(2, generic.size)
     assertTrue("Generic hashes require manifest identities", generic.head.selector.isEmpty)

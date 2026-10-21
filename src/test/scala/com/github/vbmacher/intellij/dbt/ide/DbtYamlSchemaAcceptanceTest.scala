@@ -17,11 +17,14 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
     val resolved = resources.flatMap(_.getPropertyNames.asScala).distinct
     s"resourceProperties=$resolved; service=${service.getClass.getName}; applicable=${service.isApplicableToFile(file.getVirtualFile)}; providers=${providers(file)}; schemas=${service.getSchemaFilesForFile(file.getVirtualFile)}; schemaLoaded=${service.getSchemaObject(file) != null}; source=${file.getText}"
   }
+
   private def suggestions(): Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet
+
   private def profile(version: String, engine: String = "core"): Unit = {
     add(".dbt-navigation.yml", s"dbt-version: '$version'\nengine: $engine\n")
     ()
   }
+
   private def providers(file: com.intellij.psi.PsiFile): Vector[String] = new DbtYamlSchemaProvider().getProviders(getProject).asScala
     .filter(_.isAvailable(file.getVirtualFile)).map(_.getName).toVector
 
@@ -77,7 +80,8 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
   }
 
   def testNativeDiagnosticsRejectUnsupportedUnitTestsBefore18(): Unit = {
-    project(); profile("1.7")
+    project();
+    profile("1.7")
     val file = configure("models/units.yml", "models: []\nunit_tests: []<caret>\n")
     myFixture.enableInspections(new YamlJsonSchemaHighlightingInspection)
     val problems = myFixture.doHighlighting().asScala.filter(h => h.getSeverity.compareTo(HighlightSeverity.WARNING) >= 0 && h.getDescription != null)
@@ -86,7 +90,8 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
   }
 
   def testForeignAndExcludedYamlDoNotReceiveDbtSchemaDiagnostics(): Unit = {
-    project(); add(".dbtignore", "models/ignored.yml\n")
+    project();
+    add(".dbtignore", "models/ignored.yml\n")
     val foreign = configure("services/service.yml", "models: wrong<caret>\n")
     assertTrue(providers(foreign).isEmpty)
     myFixture.enableInspections(new YamlJsonSchemaHighlightingInspection)
@@ -97,6 +102,7 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
     val unrelated = configure("models/service.yml", "services: {http: {port: 8080}}<caret>\n")
     assertTrue(providers(unrelated).isEmpty)
   }
+
   def testNativeInlineExposureKeysProvideNestedSuggestions(): Unit = {
     project()
     configure("models/exposure.yml", "exposures:\n  - name: finance\n    <caret>\n")

@@ -32,8 +32,10 @@ private[ide] final case class DbtTestDefinition(id: String, name: String, kind: 
 
 /** Source definitions remain browsable offline. Manifest identities enrich generated generic tests without guessing their hashes. */
 private[ide] object DbtTestDiscovery {
+
   import DbtExecutionEvidence.obj
   import DbtJson.string
+
   def discover(w: DbtWorkspace, executionOptions: Map[String, DbtRunOptions] = Map.empty): Vector[DbtTestDefinition] = {
     lazy val sourceDependencies = DbtLineage.edges(w).filter(e => !e.ambiguous && DbtSymbol.RelationKinds(e.to.kind))
       .groupMap(_.from.id)(_.to.uniqueId)
@@ -48,30 +50,32 @@ private[ide] object DbtTestDiscovery {
         val fqn = Vector(s.namespace) ++ owner.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2) ++ Vector(s.name)
         val dependencies = if (s.kind == "unit_test") w.declarations(Set("model"), group.split("\\.").last, owner,
           if (group.contains(".")) group.split("\\.").headOption else None).map(_.uniqueId)
-          else (DbtResourceData.get(w, s).dependencies ++ sourceDependencies.getOrElse(s.id, Vector.empty)).distinct
+        else (DbtResourceData.get(w, s).dependencies ++ sourceDependencies.getOrElse(s.id, Vector.empty)).distinct
         DbtTestDefinition(s.uniqueId, s.presentableText, if (s.kind == "unit_test") "Unit tests" else "Data tests", group,
           root.directory.getPath, s.file.getVirtualFile, s.range.getStartOffset,
           if (s.kind == "unit_test") "fqn:" + (Vector(s.namespace) ++ owner.resourceFolders(s.file.getVirtualFile).toVector.flatMap(_._2) ++ Vector(group, s.name)).mkString(".") + ",test_type:unit" else "fqn:" + fqn.mkString("."), dependencies, fixtures, packageName = owner.name, projectName = root.name, description = DbtResourceData.get(w, s).description)
       }
     }
     val attached = w.symbols.filter(s => s.mapping.nonEmpty && (DbtSymbol.RefKinds(s.kind) || s.kind == "column" || s.kind == "source_table")).flatMap { s =>
-      w.owner(s).toVector.flatMap { owner => s.mapping.toVector.flatMap { m =>
-        Vector("tests", "data_tests").flatMap(k => DbtYaml.value(m, k).toVector.collect { case seq: YAMLSequence => seq }.flatMap(_.getItems.asScala)).flatMap { item =>
-          val value = Option(item.getValue)
-          val declaration = value.flatMap {
-            case scalar: YAMLScalar => Some((scalar.getTextValue, scalar.getTextOffset, Option.empty[YAMLMapping]))
-            case mapping: YAMLMapping => mapping.getKeyValues.asScala.headOption.map(k => (k.getKeyText, k.getTextOffset, Option(k.getValue).collect { case m: YAMLMapping => m }))
-            case _ => None
-          }
-          declaration.map { case (name, offset, config) =>
-            val customName = config.flatMap(DbtYaml.string(_, "name"))
-            val resource = if (s.kind == "column") w.relations(s).headOption else Some(s)
-            DbtTestDefinition("declaration:" + s.id + ":" + offset, customName.getOrElse(name) + (if (s.kind == "column") " (" + s.name + ")" else ""),
-              "Data tests", resource.map(_.presentableText).getOrElse(s.owner), w.executionRoot(owner).directory.getPath,
-              s.file.getVirtualFile, offset, customName.map(n => "fqn:" + s.namespace + "." + n).getOrElse(""), resource.map(_.uniqueId).toVector, packageName = owner.name, projectName = w.executionRoot(owner).name)
+      w.owner(s).toVector.flatMap { owner =>
+        s.mapping.toVector.flatMap { m =>
+          Vector("tests", "data_tests").flatMap(k => DbtYaml.value(m, k).toVector.collect { case seq: YAMLSequence => seq }.flatMap(_.getItems.asScala)).flatMap { item =>
+            val value = Option(item.getValue)
+            val declaration = value.flatMap {
+              case scalar: YAMLScalar => Some((scalar.getTextValue, scalar.getTextOffset, Option.empty[YAMLMapping]))
+              case mapping: YAMLMapping => mapping.getKeyValues.asScala.headOption.map(k => (k.getKeyText, k.getTextOffset, Option(k.getValue).collect { case m: YAMLMapping => m }))
+              case _ => None
+            }
+            declaration.map { case (name, offset, config) =>
+              val customName = config.flatMap(DbtYaml.string(_, "name"))
+              val resource = if (s.kind == "column") w.relations(s).headOption else Some(s)
+              DbtTestDefinition("declaration:" + s.id + ":" + offset, customName.getOrElse(name) + (if (s.kind == "column") " (" + s.name + ")" else ""),
+                "Data tests", resource.map(_.presentableText).getOrElse(s.owner), w.executionRoot(owner).directory.getPath,
+                s.file.getVirtualFile, offset, customName.map(n => "fqn:" + s.namespace + "." + n).getOrElse(""), resource.map(_.uniqueId).toVector, packageName = owner.name, projectName = w.executionRoot(owner).name)
+            }
           }
         }
-      }}
+      }
     }.distinctBy(t => (t.root, t.file.getPath, t.offset, t.dependencies))
     val declarations = source ++ attached
     val manifest = w.roots.map(w.executionRoot).distinct.map(r => executionOptions.get(r.directory.getPath).fold(r)(r.withRunOptions)).flatMap { root =>
@@ -79,7 +83,9 @@ private[ide] object DbtTestDiscovery {
         .read(root, p, DbtManifestPolicy.TestDiscovery).toOption).toVector.flatMap { top =>
         top.in("nodes", "unit_tests").map(_.data).filter(n => Set("test", "unit_test")(string(n, "resource_type")) && string(obj(n, "config"), "enabled") != "false").flatMap { n =>
           ProgressManager.checkCanceled()
-          val id = string(n, "unique_id"); val name = string(n, "name"); val pkg = string(n, "package_name")
+          val id = string(n, "unique_id");
+          val name = string(n, "name");
+          val pkg = string(n, "package_name")
           val path = string(n, "original_file_path")
           val deps = Option(obj(n, "depends_on").get("nodes")).filter(_.isJsonArray).toVector.flatMap(_.getAsJsonArray.asScala.map(_.getAsString))
           val fqn = Option(n.get("fqn")).filter(_.isJsonArray).toVector.flatMap(_.getAsJsonArray.asScala.map(_.getAsString)).mkString(".")
@@ -145,10 +151,15 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
   private var definitions = Vector.empty[DbtTestDefinition]
   private var started = Set.empty[String]
   private var finished = Set.empty[String]
-  val process = new DbtManagedProcess(p => { canceled = true; if (observing) runner.stop() else p.complete(130) })
+  val process = new DbtManagedProcess(p => {
+    canceled = true;
+    if (observing) runner.stop() else p.complete(130)
+  })
   private[ide] val properties = new SMTRunnerConsoleProperties(configuration, "dbt", executor) {
     setIdBasedTestTree(true)
+
     override def getTestLocator: SMTestLocator = DbtTestConsole.Locator
+
     override def createRerunFailedTestsAction(console: ConsoleView): AbstractRerunFailedTestsAction = {
       val action = new AbstractRerunFailedTestsAction(console) {
         override def getRunProfile(environment: ExecutionEnvironment): AbstractRerunFailedTestsAction.MyRunProfile = {
@@ -156,12 +167,16 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
           val selected = definitions.filter(t => failed(t.id))
           val rerun = configuration.clone().asInstanceOf[DbtRunConfiguration]
           rerun.selectors = selected.map(_.selector).distinct
-          rerun.action = "Test"; rerun.fullRefresh = false; rerun.exactTests = true; rerun.namedSelector = ""
+          rerun.action = "Test";
+          rerun.fullRefresh = false;
+          rerun.exactTests = true;
+          rerun.namedSelector = ""
           // An unavailable identity must fail closed rather than rerunning the entire project.
           if (selected.isEmpty || selected.exists(_.selector.isEmpty) || failed.exists(id => !selected.exists(_.id == id))) rerun.selectors = Vector.empty
           rerun.captured = command.map(c => c.copy(request = c.request.copy(action = DbtCommandAction.Test, fullRefresh = false)))
           new AbstractRerunFailedTestsAction.MyRunProfile(rerun) {
             override def getModules: Array[Module] = Array.empty
+
             override def getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState = rerun.getState(executor, environment)
           }
         }
@@ -194,16 +209,20 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
     val text = "\n##teamcity[" + kind + fields.map { case (key, value) => s" $key='${DbtTestConsole.escape(value)}'" }.mkString + "]\n"
     process.notifyTextAvailable(text, ProcessOutputTypes.STDOUT)
   }
+
   def start(value: DbtCommand, tests: Vector[DbtTestDefinition]): Unit = {
     if (!canceled && !process.isProcessTerminated) {
-      command = Some(value); definitions = tests
+      command = Some(value);
+      definitions = tests
       view.print(value.commandLine + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
       observing = true
       if (!runner.start(value, process.output)) {
-        observing = false; fail("Another dbt command is running. Stop it before starting tests.")
+        observing = false;
+        fail("Another dbt command is running. Stop it before starting tests.")
       }
     }
   }
+
   def showEvidence(execution: DbtExecutionRun, tests: Vector[DbtTestDefinition]): Unit = {
     definitions = tests
     view.print(s"Target: ${execution.target} · Run: ${execution.invocation} · ${execution.timestamp}\n${execution.artifact}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
@@ -214,10 +233,12 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
     update(compatible.copy(active = false))
     process.complete(if (execution.problem.nonEmpty || execution.results.exists(_.failed)) 1 else 0)
   }
+
   def fail(problem: String): Unit = {
     message("message", "text" -> problem, "status" -> "ERROR")
     process.complete(1)
   }
+
   private[ide] def update(execution: DbtExecutionRun): Unit = {
     execution.results.filter(_.test).foreach { result =>
       val test = definitions.find(_.id == result.id)
@@ -254,7 +275,9 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
 private[ide] object DbtTestConsole {
   def escape(value: String): String = value.replace("|", "||").replace("'", "|'").replace("\n", "|n")
     .replace("\r", "|r").replace("[", "|[").replace("]", "|]")
+
   def url(test: DbtTestDefinition): String = "dbt-test://" + test.file.getUrl + "#" + test.offset
+
   val Locator: SMTestLocator = new SMTestLocator {
     override def getLocation(protocol: String, path: String, project: Project, scope: GlobalSearchScope): java.util.List[Location[_]] = {
       val at = path.lastIndexOf('#')
@@ -270,6 +293,7 @@ private[ide] object DbtTestConsole {
 
 final class DbtTestRunLineMarker extends RunLineMarkerContributor {
   override def getInfo(element: PsiElement): RunLineMarkerContributor.Info = null
+
   override def getSlowInfo(element: PsiElement): RunLineMarkerContributor.Info = {
     if (element.getFirstChild != null || element.isInstanceOf[PsiFile]) null
     else DbtTestRunLineMarker.testsAt(element).filter(tests => tests.minByOption(_.offset).exists { test =>
@@ -292,18 +316,22 @@ final class DbtTestRunLineMarker extends RunLineMarkerContributor {
 
 private[ide] object DbtTestRunLineMarker {
   def firstCode(file: PsiFile): Int = file.getText.indexWhere(c => !c.isWhitespace)
+
   /** Run gutter entry offering the standard executors; `tooltip` is evaluated when the gutter is hovered. */
   def info(icon: Icon, tooltip: => String): RunLineMarkerContributor.Info =
     new RunLineMarkerContributor.Info(icon, ExecutorAction.getActions(0), new java.util.function.Function[PsiElement, String] {
       override def apply(value: PsiElement): String = tooltip
     })
+
   private val Definitions = Key.create[CachedValue[Vector[DbtTestDefinition]]]("dbt.test.definitions")
+
   def definitions(file: PsiFile): Vector[DbtTestDefinition] = {
     val project = file.getProject
     CachedValuesManager.getManager(project).getCachedValue(project, Definitions,
       () => CachedValueProvider.Result.create(DbtTestDiscovery.discover(DbtWorkspace.get(project)),
         PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)), false)
   }
+
   def testsAt(element: PsiElement): Option[Vector[DbtTestDefinition]] = Option(element).flatMap(e => Option(e.getContainingFile)).filter(_.isPhysical).map { file =>
     val tests = definitions(file).filter(_.file == file.getVirtualFile)
     if (element.isInstanceOf[PsiFile] || tests.size == 1 && tests.head.offset == 0) tests
@@ -312,6 +340,7 @@ private[ide] object DbtTestRunLineMarker {
       tests.filter(t => t.offset < document.getTextLength && document.getLineNumber(t.offset) == line)
     }
   }
+
   def status(file: PsiFile, tests: Vector[DbtTestDefinition]): String = {
     val w = DbtWorkspace.get(file.getProject)
     val runs = w.roots.filter(r => tests.exists(_.root == r.directory.getPath))
@@ -326,6 +355,7 @@ private[ide] object DbtTestRunLineMarker {
 
 final class DbtModelRunLineMarker extends RunLineMarkerContributor {
   override def getInfo(element: PsiElement): RunLineMarkerContributor.Info = null
+
   override def getSlowInfo(element: PsiElement): RunLineMarkerContributor.Info = {
     val file = element.getContainingFile
     if (element.getFirstChild != null || element.isInstanceOf[PsiFile] || file == null ||

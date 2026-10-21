@@ -10,6 +10,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.{PsiElement, PsiFile}
 
 private[ide] final case class DbtSuggestion(text: String, detail: String, kind: String = "", description: String = "")
+
 private[ide] final case class DbtMacroSignature(name: String, parameters: Vector[(String, String)])
 
 private[ide] object DbtCompletion {
@@ -17,6 +18,7 @@ private[ide] object DbtCompletion {
     "incremental_strategy", "on_schema_change", "contract", "persist_docs", "pre_hook", "post_hook")
   /** The qualifier of a dotted name being typed at the end of a prefix. */
   private val Qualifier = "([A-Za-z_][A-Za-z_0-9]*)\\.[A-Za-z_0-9]*$".r
+
   def callAt(file: PsiFile, offset: Int): Option[DbtSyntax.Call] = DbtSyntax.inFile(file)
     .filter(b => b.range.getStartOffset <= offset && b.range.getEndOffset >= offset).flatMap(DbtSyntax.calls)
     .filter(c => c.range.getEndOffset < offset && (c.expressionRange.getEndOffset >= offset || !c.closed))
@@ -26,19 +28,24 @@ private[ide] object DbtCompletion {
     val w = DbtWorkspace.get(file.getProject)
     val root = w.root(file).filter(r => !r.excluded(file.getVirtualFile) && (r.resource(file) || r.isSelectionFile(file) || file.getName == "selectors.yml"))
       .getOrElse(return Vector.empty)
+
     def resources(kinds: Set[String], namespace: Option[String] = None): Vector[DbtSymbol] =
       w.symbols.filter(s => kinds(s.kind)).map(_.name).distinct.flatMap { name =>
         ProgressManager.checkCanceled(); w.declarations(kinds, name, root, namespace)
       }.distinctBy(s => (s.uniqueId, w.owner(s)))
+
     def suggestion(s: DbtSymbol): DbtSuggestion = DbtSuggestion(s.name,
       s.kind + " · " + s.namespace + s.version.map(" v" + _).getOrElse(""), s.kind, s.attributes.getOrElse("description", ""))
+
     val blocks = DbtSyntax.inFile(file)
     val block = blocks.find(b => b.range.getStartOffset <= offset && b.range.getEndOffset >= offset)
     val call = callAt(file, offset)
     val argument = call.flatMap(c => c.arguments.zipWithIndex.find { case (a, _) => a.tokens.exists(t =>
-      t.range.getStartOffset <= offset && t.range.getEndOffset >= offset) })
+      t.range.getStartOffset <= offset && t.range.getEndOffset >= offset)
+    })
     val unfinishedQuote = call.exists { c =>
-      var quote = Option.empty[Char]; var escaped = false
+      var quote = Option.empty[Char];
+      var escaped = false
       file.getText.substring(c.range.getEndOffset, offset).foreach { char =>
         if (escaped) escaped = false
         else if (char == '\\') escaped = true
@@ -56,7 +63,8 @@ private[ide] object DbtCompletion {
           val defs = resources(DbtSymbol.RefKinds, namespace)
           if (argument.exists(_._1.keyword.exists(Set("v", "version")))) {
             c.qualifiedName.toVector.flatMap { case (packageName, name) => resources(DbtSymbol.RefKinds, packageName).filter(_.name == name)
-              .flatMap(_.version).distinct.map(v => DbtSuggestion(v, "model version", "model")) }
+              .flatMap(_.version).distinct.map(v => DbtSuggestion(v, "model version", "model"))
+            }
           } else if (index == 0 && c.positional.size >= 2) defs.map(_.namespace).distinct.map(p => DbtSuggestion(p, "package", "package"))
           else if (c.version.contains(None)) Vector.empty
           else defs.groupBy(_.name).toVector.sortBy(_._1).flatMap { case (_, candidates) => DbtResolution.versioned(candidates, c.version.flatten).map(suggestion) }
@@ -140,14 +148,18 @@ final class DbtParameterInfoHandler extends ParameterInfoHandler[PsiElement, Dbt
       w.root(file).map(r => w.macros(call, r)).filter(_.size == 1).map { macros =>
         val m = macros.head
         val signature = DbtMacroSignature(m.name, DbtCompletion.parameters(w, m))
-        context.setItemsToShow(Array[AnyRef](signature)); file: PsiElement
+        context.setItemsToShow(Array[AnyRef](signature));
+        file: PsiElement
       }
     }.orNull
   }
+
   override def showParameterInfo(element: PsiElement, context: CreateParameterInfoContext): Unit =
     DbtCompletion.callAt(context.getFile, context.getOffset).foreach(c => context.showHint(element, c.range.getEndOffset, this))
+
   override def findElementForUpdatingParameterInfo(context: UpdateParameterInfoContext): PsiElement =
     if (DbtCompletion.callAt(context.getFile, context.getOffset).nonEmpty) context.getFile else null
+
   override def updateParameterInfo(element: PsiElement, context: UpdateParameterInfoContext): Unit =
     if (element == null) context.removeHint() else DbtCompletion.callAt(context.getFile, context.getOffset).foreach { call =>
       val signatures = context.getObjectsToView.toVector.collect { case s: DbtMacroSignature => s }
@@ -155,6 +167,7 @@ final class DbtParameterInfoHandler extends ParameterInfoHandler[PsiElement, Dbt
       val named = current.flatMap(_.keyword).flatMap(name => signatures.headOption.map(_.parameters.indexWhere(_._1 == name)))
       context.setCurrentParameter(named.getOrElse(call.arguments.count(_.range.exists(_.getEndOffset < context.getOffset))))
     }
+
   override def updateUI(signature: DbtMacroSignature, context: ParameterInfoUIContext): Unit = {
     val text = signature.name + signature.parameters.map(_._2).mkString("(", ", ", ")")
     val index = context.getCurrentParameterIndex

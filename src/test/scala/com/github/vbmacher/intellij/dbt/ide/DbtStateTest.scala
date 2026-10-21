@@ -8,9 +8,12 @@ import scala.jdk.CollectionConverters._
 
 final class DbtStateTest extends DbtTestCase {
   private def json(text: String): JsonObject = JsonParser.parseString(text).getAsJsonObject
+
   private def parse(text: String): Either[String, DbtManifest] = DbtManifestReader.get(getProject).parse(text, DbtManifestPolicy.Baseline)
+
   private def manifest(nodes: String, extra: String = ""): String =
     """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":""" + nodes + extra + "}"
+
   private def baseline(text: String): Unit = {
     add("baseline/manifest.json", text)
     root.runOptions.stateDirectory = "baseline"
@@ -124,16 +127,23 @@ final class DbtStateTest extends DbtTestCase {
     val original = Files.readString(stateFile)
     val profiles = Files.createDirectory(directory.resolve("profiles with spaces"))
     val target = directory.resolve("active target")
-    val executable = fakeTool(directory.resolve("fake dbt"), """#!/usr/bin/python3
+    val executable = fakeTool(directory.resolve("fake dbt"),
+      """#!/usr/bin/python3
 import json,os,sys
 with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'profiles':os.environ['DBT_PROFILES_DIR'],'target':os.environ['DBT_TARGET_PATH']},f)
 os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
 with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f: json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/manifest/v12.json'},'nodes':{}},f)
 """)
     val options = root.runOptions
-    options.projectRoot = directory.toString; options.executable = executable.toString; options.target = "dev"
-    options.profilesDirectory = profiles.toString; options.artifactDirectory = target.toString
-    options.stateDirectory = state.toString; options.defer = true; options.favorState = true; options.notifications = false
+    options.projectRoot = directory.toString;
+    options.executable = executable.toString;
+    options.target = "dev"
+    options.profilesDirectory = profiles.toString;
+    options.artifactDirectory = target.toString
+    options.stateDirectory = state.toString;
+    options.defer = true;
+    options.favorState = true;
+    options.notifications = false
     val w = workspace
     val selection = DbtRunSelection.available(w).find(_.path == code.getVirtualFile.getPath).get
     val command = DbtCommand.create(w, selection, "Build", fullRefresh = false).toOption.get
@@ -145,7 +155,8 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
     val arguments = invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector
     assertTrue(arguments.sliding(2).exists(_ == Vector("--state", state.toRealPath().toString)))
     assertTrue(arguments.sliding(2).exists(_ == Vector("--target", "dev")))
-    assertTrue(arguments.contains("--defer")); assertTrue(arguments.contains("--favor-state"))
+    assertTrue(arguments.contains("--defer"));
+    assertTrue(arguments.contains("--favor-state"))
     assertEquals(profiles.toString, invocation.get("profiles").getAsString)
     assertEquals(target.toString, invocation.get("target").getAsString)
     assertTrue(Files.isRegularFile(target.resolve("manifest.json")))
@@ -192,8 +203,10 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
     val preview = DbtState.preview(workspace, root, "report").toOption.get
     assertEquals(Vector("model.analytics.report"), preview.selected.map(_.uniqueId))
     val deferred = preview.dependencies.find(_.id == "model.analytics.staging").get
-    assertEquals("candidate", deferred.resolution); assertEquals("PROD.FINANCE.STAGING", deferred.relation)
-    assertTrue(deferred.reason.contains("was not queried")); assertTrue(deferred.evidence.contains("manifest.json"))
+    assertEquals("candidate", deferred.resolution);
+    assertEquals("PROD.FINANCE.STAGING", deferred.relation)
+    assertTrue(deferred.reason.contains("was not queried"));
+    assertTrue(deferred.evidence.contains("manifest.json"))
     assertEquals("source", preview.dependencies.find(_.id == "source.analytics.raw.orders").get.resolution)
     root.runOptions.favorState = true
     assertEquals("deferred", DbtState.preview(workspace, root, "report").toOption.get.dependencies.find(_.id == "model.analytics.staging").get.resolution)

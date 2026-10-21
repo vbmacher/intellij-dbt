@@ -111,7 +111,7 @@ private object DbtJinjaNavigation {
     }
 
     private def builtinCall(call: DbtSyntax.Call, constants: Map[String, Vector[String]]): Unit = call.name.stripPrefix("builtins.") match {
-      case base @ ("ref" | "function") =>
+      case base@("ref" | "function") =>
         static(call, constants, call.positional.filter(_.literal.isEmpty))
         val targets = call.version match {
           case Some(None) => Vector.empty
@@ -129,19 +129,18 @@ private object DbtJinjaNavigation {
           add(range, sources, source, missing = if (complete(call) && call.literal(1).nonEmpty && sources.isEmpty)
             Some(s"Unresolved source: '$source'") else None)
         }
-        for (table <- call.literal(1); range <- call.argumentRange(1))
-          {
-            val targets = call.literal(0).toVector.flatMap(DbtResolution.sourceTables(workspace, r, _, table)).map(_.element)
-            val knownSource = call.literal(0).exists(s => lookup(Set("source"), s).nonEmpty)
-            add(range, targets, table, missing = if (complete(call) && knownSource && targets.isEmpty)
-              Some(s"Unresolved source table: '${call.literal(0).getOrElse("")}.$table'") else None)
-          }
+        for (table <- call.literal(1); range <- call.argumentRange(1)) {
+          val targets = call.literal(0).toVector.flatMap(DbtResolution.sourceTables(workspace, r, _, table)).map(_.element)
+          val knownSource = call.literal(0).exists(s => lookup(Set("source"), s).nonEmpty)
+          add(range, targets, table, missing = if (complete(call) && knownSource && targets.isEmpty)
+            Some(s"Unresolved source table: '${call.literal(0).getOrElse("")}.$table'") else None)
+        }
       case "var" =>
         val offset = call.range.getStartOffset
         call.positional.take(1).filter(_.literal.isEmpty).foreach(a => a.range.foreach(add(_,
           DbtStaticCalls.value(a.tokens, constants).flatMap(variableTargets(workspace, file, r, offset, _)), StaticReference)))
         first(call)((name, range) => add(range, variableTargets(workspace, file, r, offset, name), name))
-      case base @ ("Dimension" | "TimeDimension" | "Entity" | "Metric") => first(call) { (name, range) =>
+      case base@("Dimension" | "TimeDimension" | "Entity" | "Metric") => first(call) { (name, range) =>
         add(range, DbtResolution.semantic(workspace, r, file, range.getStartOffset, base, name).map(_.element), name)
         if (name.contains("__") && range.substring(file.getText) == name) {
           var start = range.getStartOffset
@@ -201,7 +200,7 @@ private object DbtJinjaNavigation {
           .flatMap(_.mapping.toVector.flatMap(DbtYaml.string(_, "model")))
         workspace.codeSymbols(file).map(_.element) ++ tested.flatMap(lookup(Set("model"), _))
       case "project_name" => DbtYaml.keyValue(r.config, "name").toVector
-      case name @ ("results" | "schemas" | "selected_resources") => builtin(name, "on-run-end-context")
+      case name@("results" | "schemas" | "selected_resources") => builtin(name, "on-run-end-context")
       case name => builtin(name, name.replace('_', '-'))
     }
   }
@@ -254,17 +253,23 @@ private object DbtJinjaNavigation {
     val result = ArrayBuffer.empty[DbtNavigationReference]
     var scopes = List(Map.empty[String, DbtSymbol])
     var captures = List.empty[DbtSyntax.Token]
+
     def bind(t: DbtSyntax.Token): Unit = if (!t.string && DbtSyntax.isIdentifier(t.image)) {
       val parameter = workspace.symbols.find(s => s.file == file && s.kind == "parameter" && s.range == t.range)
       scopes = (scopes.head + (t.image -> parameter.getOrElse(DbtSymbol("local", t.image, "jinja", file, t.range)))) :: scopes.tail
     }
+
     def reference(range: TextRange, name: String): Unit =
       scopes.iterator.flatMap(_.get(name)).take(1).foreach(s => result += new DbtNavigationReference(file, range, Vector(s.element), name))
+
     blocks.foreach { b =>
       val ts = b.tokens
       val tag = b.tagName.getOrElse("")
       if (DbtSyntax.ScopeEndTags(tag) && scopes.size > 1) scopes = scopes.tail
-      if (tag == "endset" && captures.nonEmpty) { bind(captures.head); captures = captures.tail }
+      if (tag == "endset" && captures.nonEmpty) {
+        bind(captures.head);
+        captures = captures.tail
+      }
       val attributeAssignment = tag == "set" && ts.lift(2).exists(_.image == ".")
       val setTargets = if (tag == "set" && !attributeAssignment) ts.drop(1).takeWhile(t => t.image != "=" && t.image != "|")
         .filter(t => !t.string && DbtSyntax.isIdentifier(t.image)) else Vector.empty

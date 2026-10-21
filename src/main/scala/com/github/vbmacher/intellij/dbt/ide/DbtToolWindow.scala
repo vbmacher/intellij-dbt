@@ -67,12 +67,16 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   private var followPending = false
   private val browser = try {
     if (!JBCefApp.isSupported()) None else Some(new DbtLineageBrowser(this, handleMessage))
-  } catch { case NonFatal(_) => None }
+  } catch {
+    case NonFatal(_) => None
+  }
   browser match {
     case Some(view) => lineagePanel.add(view.component, BorderLayout.CENTER)
     case None =>
       val unavailable = new JBTextArea("The graph requires the IDE's embedded JCEF browser. Use Call Hierarchy for dependencies, Documentation for resource details, and Run configurations for dbt commands.")
-      unavailable.setEditable(false); unavailable.setLineWrap(true); unavailable.setWrapStyleWord(true)
+      unavailable.setEditable(false);
+      unavailable.setLineWrap(true);
+      unavailable.setWrapStyleWord(true)
       lineagePanel.add(unavailable, BorderLayout.CENTER)
   }
   runner.listen(this, event => {
@@ -91,6 +95,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   })
   connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, new FileEditorManagerListener {
     override def fileOpened(source: FileEditorManager, file: VirtualFile): Unit = schedule(follow = false)
+
     override def selectionChanged(event: FileEditorManagerEvent): Unit = schedule(follow = true)
   })
   connection.subscribe(PsiModificationTracker.TOPIC, new PsiModificationTracker.Listener {
@@ -105,11 +110,17 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
   connection.subscribe(EditorColorsManager.TOPIC, new com.intellij.openapi.editor.colors.EditorColorsListener {
     override def globalSchemeChange(scheme: com.intellij.openapi.editor.colors.EditorColorsScheme): Unit = schedule(follow = false)
   })
+
   private def schedule(follow: Boolean): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed) {
     followPending ||= follow
     alarm.cancelAllRequests()
-    alarm.addRequest(() => { val next = followPending; followPending = false; refresh(next) }, 180)
+    alarm.addRequest(() => {
+      val next = followPending;
+      followPending = false;
+      refresh(next)
+    }, 180)
   })
+
   def refresh(follow: Boolean): Unit = {
     if (disposed) return
     val request = generation.incrementAndGet()
@@ -133,14 +144,19 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         executionRoot = root
         val payload = snapshot.payload
         val next = Option(payload.get("focus")).map(_.getAsString).filter(_.nonEmpty)
-        if (next != focus) { upstreamExtra = 0; downstreamExtra = 0 }
+        if (next != focus) {
+          upstreamExtra = 0;
+          downstreamExtra = 0
+        }
         focus = next
         payload.addProperty("direction", state.direction)
         payload.addProperty("running", runner.isRunning)
         payload.addProperty("pinned", state.pinnedFocus.nonEmpty)
         payload.addProperty("canGenerateDocs", root.nonEmpty)
         payload.addProperty("status", if (runner.isRunning) "dbt command running…" else "Select a resource for native Documentation; double-click to open its definition.")
+
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
+
         val scheme = EditorColorsManager.getInstance().getGlobalScheme
         payload.add("theme", obj("bg" -> color(scheme.getDefaultBackground), "fg" -> color(scheme.getDefaultForeground),
           "panel" -> color(javax.swing.UIManager.getColor("Panel.background"))))
@@ -148,6 +164,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       }
     }
   }
+
   private[ide] def showSelectionInLineage(expression: String, excluded: String,
     fromConfiguration: Boolean = false): Unit = {
     val rootPath = executionRoot
@@ -160,10 +177,13 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         "diagnostics" -> strings(selection.toVector.flatMap(_.problems)))
     }(data => browser.foreach(_.showFilter(data)))
   }
+
   private[ide] def handleMessage(raw: String): Unit = {
     if (disposed) return
     val message = JsonParser.parseString(raw).getAsJsonObject
+
     def field(name: String): String = Option(message.get(name)).map(_.getAsString).getOrElse("")
+
     val id = field("id")
     field("type") match {
       case "ready" => refresh(follow = true)
@@ -172,8 +192,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         DbtUi.readLater(this, smartIn = Some(project))(DbtGraphData.build(DbtWorkspace.get(project), None, 1, 1).targets.get(id)) {
           _.foreach { element =>
             if (kind == "focus") {
-              focus = Some(id); if (settings.getState.pinnedFocus.nonEmpty) settings.getState.pinnedFocus = id
-              upstreamExtra = 0; downstreamExtra = 0; element.navigate(true); refresh(follow = false)
+              focus = Some(id);
+              if (settings.getState.pinnedFocus.nonEmpty) settings.getState.pinnedFocus = id
+              upstreamExtra = 0;
+              downstreamExtra = 0;
+              element.navigate(true);
+              refresh(follow = false)
             } else if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), element.symbol)
             else DbtDocumentation.show(project, element.symbol)
           }
@@ -188,7 +212,12 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case _ => ()
     }
   }
-  override def dispose(): Unit = { disposed = true; generation.incrementAndGet(); () }
+
+  override def dispose(): Unit = {
+    disposed = true;
+    generation.incrementAndGet();
+    ()
+  }
 }
 
 private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String => Unit) {
@@ -248,9 +277,11 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
 private[ide] trait DbtLineageSelectionListener {
   def showSelection(root: String, expression: String, excluded: String): Unit
 }
+
 private[ide] object DbtLineageSelection {
   val Topic: com.intellij.util.messages.Topic[DbtLineageSelectionListener] =
     com.intellij.util.messages.Topic.create("dbt lineage selection", classOf[DbtLineageSelectionListener])
+
   def show(project: Project, root: String, expression: String, excluded: String): Unit = {
     val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
     if (window != null) window.activate(() => project.getMessageBus.syncPublisher(Topic).showSelection(root, expression, excluded))
@@ -258,6 +289,7 @@ private[ide] object DbtLineageSelection {
 }
 
 private[ide] final case class DbtGraphSnapshot(payload: JsonObject, targets: Map[String, DbtSymbolElement])
+
 private[ide] object DbtGraphData {
   private val gson = new Gson
 
@@ -271,15 +303,20 @@ private[ide] object DbtGraphData {
       }
     // Resource ids include the declaration location when there are genuinely ambiguous declarations.
     val groups = resources.groupBy(DbtResourceIdentity.key(w, _))
+
     def id(s: DbtSymbol): String = {
       val k = DbtResourceIdentity.key(w, s)
       if (groups.getOrElse(k, Vector.empty).size > 1) k + "|" + s.id else k
     }
+
     val byId = resources.map(s => id(s) -> s).toMap
+
     def canonical(s: DbtSymbol): Vector[String] = groups.getOrElse(DbtResourceIdentity.key(w, s), Vector.empty).map(id)
+
     val edges = DbtLineage.edges(w).filter(e => DbtResourceData.GraphKinds(e.from.kind) && DbtResourceData.GraphKinds(e.to.kind))
       .flatMap(e => for (from <- canonical(e.to); to <- canonical(e.from) if from != to) yield (from, to, e.ambiguous)).distinct
     val start = focus.filter(byId.contains).orElse(focus.flatMap(k => resources.find(s => DbtResourceIdentity.key(w, s) == k).map(id)))
+
     def walk(down: Boolean, depth: Int): Set[String] = {
       val adjacency = edges.groupMap(e => if (down) e._1 else e._2)(e => if (down) e._2 else e._1)
       val seen = mutable.Set.empty[String] ++ start
@@ -292,6 +329,7 @@ private[ide] object DbtGraphData {
       }
       seen.toSet
     }
+
     val visible = if (start.isEmpty) byId.keySet else walk(down = false, upstream) ++ walk(down = true, downstream)
     val evidence = w.project.getService(classOf[DbtExecutionEvidence])
     val testDefinitions = DbtTestDiscovery.discover(w)
@@ -355,16 +393,20 @@ private[ide] object DbtGraphExport {
   private[ide] def copyPng(bytes: Array[Byte], publish: Transferable => Unit): Unit =
     Option(ImageIO.read(new ByteArrayInputStream(bytes))).foreach { image =>
       val png = bytes.clone()
+
       def content(withImage: Boolean): Transferable = new Transferable {
         override def getTransferDataFlavors: Array[DataFlavor] =
           if (withImage) Array(PngFlavor, DataFlavor.imageFlavor) else Array(PngFlavor)
+
         override def isDataFlavorSupported(flavor: DataFlavor): Boolean =
           flavor == PngFlavor || withImage && flavor == DataFlavor.imageFlavor
+
         override def getTransferData(flavor: DataFlavor): AnyRef =
           if (flavor == PngFlavor) new ByteArrayInputStream(png)
           else if (withImage && flavor == DataFlavor.imageFlavor) image
           else throw new UnsupportedFlavorException(flavor)
       }
+
       try publish(content(withImage = true))
       catch {
         // Some native image mappings fail while enumerating unrelated ImageIO writers.

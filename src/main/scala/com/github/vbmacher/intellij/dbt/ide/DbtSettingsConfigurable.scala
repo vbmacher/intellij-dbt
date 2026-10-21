@@ -204,7 +204,9 @@ object DbtSettingsConfigurable {
   def showIntegrations(project: Project): Unit = {
     val configurable = new DbtSettingsConfigurable(project)
     ShowSettingsUtil.getInstance().editConfigurable(project, configurable,
-      new Runnable { override def run(): Unit = configurable.tabs.setSelectedIndex(1) })
+      new Runnable {
+        override def run(): Unit = configurable.tabs.setSelectedIndex(1)
+      })
   }
 }
 
@@ -219,13 +221,19 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
   private val airflow = new JPanel(new GridBagLayout)
   private val panel = new JPanel(new GridBagLayout)
   private val metabase = new JPanel(new GridBagLayout)
+
   private def stack(target: JPanel, rows: Vector[JComponent]): Unit = rows.zipWithIndex.foreach { case (field, row) =>
     val c = new GridBagConstraints
-    c.gridx = 0; c.gridy = row; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL
-    c.anchor = GridBagConstraints.NORTHWEST; c.insets = new Insets(3, 4, 3, 4)
+    c.gridx = 0;
+    c.gridy = row;
+    c.weightx = 1;
+    c.fill = GridBagConstraints.HORIZONTAL
+    c.anchor = GridBagConstraints.NORTHWEST;
+    c.insets = new Insets(3, 4, 3, 4)
     if (field == airflow) c.weighty = 1
     target.add(field, c)
   }
+
   metabase.setBorder(BorderFactory.createTitledBorder("Metabase"))
   stack(metabase, Vector(new JLabel("Metabase URL (optional)"), url, new JLabel("Metabase API key (stored in IDE Password Safe)"), secret))
   secret.setToolTipText("Stored in IDE Password Safe. Clear this field and click Apply to remove the saved API key.")
@@ -240,17 +248,28 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
       FileChooser.chooseFiles(FileChooserDescriptorFactory.multiDirs().withTitle("Select local Airflow DAG folders or projects"),
         project, null).foreach(f => if (!airflowPaths.contains(f.getPath)) airflowPaths.addElement(f.getPath))
     },
-    DbtUi.button("Remove") { airflowFolders.getSelectedIndices.reverse.foreach(airflowPaths.remove) }), BorderLayout.SOUTH)
+    DbtUi.button("Remove") {
+      airflowFolders.getSelectedIndices.reverse.foreach(airflowPaths.remove)
+    }), BorderLayout.SOUTH)
   DbtUi.labeledRows(airflow, new Insets(3, 5, 3, 8), Vector("DAG projects" -> folderPanel, "Airflow URL (optional)" -> airflowUrl))
   stack(panel, Vector(metabase, agent, airflow))
 
   private def settings = project.getService(classOf[DbtConsumersSettings]).getState
+
   private def service = project.getService(classOf[DbtConsumers])
+
   private def folderValues: Vector[String] = (0 until airflowPaths.size()).map(airflowPaths.get).toVector
+
   override def getDisplayName: String = "Integrations"
-  override def createComponent(): JComponent = { reset(); panel }
+
+  override def createComponent(): JComponent = {
+    reset();
+    panel
+  }
+
   override def isModified: Boolean = url.getText != settings.metabaseUrl || agent.isSelected != settings.agentEnabled ||
     new String(secret.getPassword) != service.apiKey || folderValues != settings.airflowPaths.asScala.toVector || airflowUrl.getText.trim != settings.airflowUrl
+
   override def apply(): Unit = {
     val value = url.getText.trim
     if (value.nonEmpty && DbtAirflow.safeUrl(value).isEmpty) throw new ConfigurationException("Use an http(s) Metabase URL without embedded credentials.")
@@ -258,18 +277,27 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     if (airflowLink.nonEmpty && DbtAirflow.safeUrl(airflowLink).isEmpty)
       throw new ConfigurationException("Use an http(s) Airflow URL without embedded credentials.")
     try folderValues.foreach(Paths.get(_))
-    catch { case _: InvalidPathException => throw new ConfigurationException("Use valid local Airflow directory paths.") }
+    catch {
+      case _: InvalidPathException => throw new ConfigurationException("Use valid local Airflow directory paths.")
+    }
     settings.airflowPaths = new java.util.ArrayList[String](folderValues.asJava)
     settings.airflowUrl = airflowLink
     DbtProjectSettings.get(project).changed()
-    settings.metabaseUrl = value; settings.agentEnabled = agent.isSelected
+    settings.metabaseUrl = value;
+    settings.agentEnabled = agent.isSelected
     service.setSecret(new String(secret.getPassword))
-    service.clear(); if (!agent.isSelected) project.getService(classOf[DbtAgent]).stop()
+    service.clear();
+    if (!agent.isSelected) project.getService(classOf[DbtAgent]).stop()
   }
+
   override def reset(): Unit = {
-    url.setText(settings.metabaseUrl); agent.setSelected(settings.agentEnabled); secret.setText(service.apiKey)
-    airflowPaths.clear(); settings.airflowPaths.asScala.foreach(airflowPaths.addElement)
+    url.setText(settings.metabaseUrl);
+    agent.setSelected(settings.agentEnabled);
+    secret.setText(service.apiKey)
+    airflowPaths.clear();
+    settings.airflowPaths.asScala.foreach(airflowPaths.addElement)
     airflowUrl.setText(settings.airflowUrl)
   }
+
   override def disposeUIResources(): Unit = secret.setText("")
 }

@@ -44,10 +44,12 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def isTestOnlyProperty: Boolean = isProperty && DbtSymbol.RefKinds(kind) && mapping.exists { m =>
     def onlyKeys(mapping: YAMLMapping, keys: Set[String]): Boolean =
       mapping.getKeyValues.asScala.forall(k => keys(k.getKeyText))
+
     def hasTests(mapping: YAMLMapping): Boolean = DbtSymbol.TestKeys.exists(key => DbtYaml.value(mapping, key).exists {
       case sequence: YAMLSequence => !sequence.getItems.isEmpty
       case _ => false
     })
+
     val columns = DbtYaml.items(m, "columns")
     onlyKeys(m, DbtSymbol.TestKeys ++ Set("name", "columns")) &&
       columns.forall(c => onlyKeys(c, DbtSymbol.TestKeys + "name") && hasTests(c)) && (hasTests(m) || columns.nonEmpty)
@@ -77,13 +79,17 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
 }
 
 /** A source declaration with a stable identity, including declarations in plain-text Community files. */
-final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
+final class DbtSymbolElement private[project](val symbol: DbtSymbol)
   extends LightElement(symbol.file.getManager, DbtSymbolElement.Language) with PsiNamedElement {
   private val pointer = SmartPointerManager.getInstance(symbol.file.getProject)
     .createSmartPsiFileRangePointer(symbol.file, symbol.range)
   private var deletion = Option.empty[com.intellij.psi.SmartPsiFileRange]
   private var insertOutputAlias = false
-  private[dbt] def prepareOutputAliasRename(): Unit = { insertOutputAlias = true }
+
+  private[dbt] def prepareOutputAliasRename(): Unit = {
+    insertOutputAlias = true
+  }
+
   private[dbt] def prepareSourceDeletion(range: TextRange): Unit =
     deletion = Some(SmartPointerManager.getInstance(getProject).createSmartPsiFileRangePointer(symbol.file, range))
 
