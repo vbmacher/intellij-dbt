@@ -154,7 +154,7 @@ private object DbtJinjaNavigation {
       case "doc" if call.argumentRange(0).exists(x => DbtYamlContexts.description(file, r, x.getStartOffset)) =>
         static(call, constants, dynamic(call))
         nameArgument(call).foreach(add(_, workspace.definitions(call, Set("doc"), r).map(_.element), "doc"))
-      case "env_var" => first(call)((name, range) => add(range, DbtEnvironment(r, name).map(_.element), name))
+      case "env_var" => first(call)((name, range) => add(range, DbtEnvironment(workspace, r, name).map(_.element), name))
       case "config" => call.keywords.foreach { case (key, a) =>
         a.keywordRange.foreach(add(_, DbtResolution.configuration(workspace, file, key), key))
         for (name <- a.literal; range <- a.range) key match {
@@ -206,7 +206,7 @@ private object DbtJinjaNavigation {
   }
 
   private def variableTargets(w: DbtWorkspace, file: PsiFile, root: DbtRoot, offset: Int, name: String): Vector[PsiElement] = {
-    val overridden = DbtResolution.overriddenVariable(root, name).toVector
+    val overridden = DbtResolution.overriddenVariable(w, root, name).toVector
     if (DbtYamlContexts.profile(file, root) || root.isFile(file, "packages.yml")) overridden
     else if (DbtYamlContexts.projectConfiguration(file, root, offset) && overridden.isEmpty &&
       (!root.supports(12) || w.rootFile(root, "vars.yml").isEmpty)) Vector.empty
@@ -331,7 +331,7 @@ private object DbtYamlContexts {
     val relative = root.relative(file.getVirtualFile)
     val unsupported = keys.lastOption.flatMap(DbtDeclarations.ResourceKeys.get).exists(!root.supportsKind(_))
     if (unsupported || keys.contains("vars") || relative.contains("dependencies.yml") || relative.contains("package-lock.yml") ||
-      relative.contains("vars.yml") || relative == root.setting("run-config")) "none"
+      relative.contains("vars.yml")) "none"
     else if (relative.contains(root.profilesFile) || relative.contains("packages.yml")) "profile"
     else if (relative.contains("selectors.yml")) if (keys.headOption.contains("default")) "project" else "none"
     else if (relative.contains("dbt_project.yml")) if (keys.exists(hooks)) "runtime" else "project"

@@ -72,7 +72,7 @@ final class DbtReferencesSearch extends QueryExecutorBase[PsiReference, Referenc
     }
     if (!supported) return
     val scope = parameters.getEffectiveSearchScope
-    val files = workspace.files ++ workspace.roots.flatMap(r => DbtEnvironment(r, declaration.getText).map(_.file))
+    val files = workspace.files ++ workspace.roots.flatMap(r => DbtEnvironment(workspace, r, declaration.getText).map(_.file))
     files.distinct.iterator.filter { file =>
         ProgressManager.checkCanceled()
         PsiSearchScopeUtil.isInScope(scope, file)

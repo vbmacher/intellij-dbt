@@ -158,8 +158,8 @@ macros use the calling node's project variables. `builtins.var`, `builtins.ref` 
 
 In Core 1.12+, variables can also be defined in a top-level `vars` mapping in
 `vars.yml`; nonempty mappings in both files leave conflicting names unresolved.
-To navigate run-specific values, see
-[run-specific variables](configuration.md#run-specific-variables-and-selections).
+To navigate configured overrides, see
+[Variable overrides](configuration.md#variable-overrides).
 
 ## Documentation blocks
 
@@ -277,8 +277,7 @@ Selector references open matching resources; wildcards can offer several targets
 Named selectors, nested unions, intersections, exclusions and graph operators expose
 individual references. Inheritance uses YAML `method: selector`, or string
 `selector:nightly` terms in Core 1.12+. YAML aliases are not expanded into
-selections. [Selection files](configuration.md#run-specific-variables-and-selections)
-support the same navigation; `state:` terms need a
+selections. `state:` terms need a
 [state manifest](configuration.md#local-metadata).
 
 ## Python models

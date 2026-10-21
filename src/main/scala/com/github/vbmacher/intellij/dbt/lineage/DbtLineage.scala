@@ -352,9 +352,7 @@ private[dbt] object DbtSelectors {
   }
 
   private[lineage] def references(file: PsiFile, w: DbtWorkspace, root: DbtRoot, includeGraph: Boolean): Vector[DbtNavigationReference] = {
-    val selectionFile = root.isSelectionFile(file)
-    if (file.getName != "selectors.yml" && !selectionFile) return Vector.empty
-    val selectorFile = if (file.getName == "selectors.yml") Some(file) else root.psiFile("selectors.yml")
+    if (file.getName != "selectors.yml") return Vector.empty
     val result = ArrayBuffer.empty[DbtNavigationReference]
     file.accept(new PsiRecursiveElementWalkingVisitor {
       override def visitElement(e: PsiElement): Unit = {
@@ -363,14 +361,12 @@ private[dbt] object DbtSelectors {
             val ancestors = DbtYaml.ancestors(scalar)
             val key = DbtYaml.key(scalar)
             val method = DbtYaml.parentMapping(scalar).flatMap(DbtYaml.string(_, "method"))
-            val selectionContext = (if (selectionFile) ancestors.exists(Set("select", "exclude", "selector"))
-            else ancestors.contains("definition")) && !ancestors.exists(Set("vars", "env", "description"))
+            val selectionContext = ancestors.contains("definition") && !ancestors.exists(Set("vars", "env", "description"))
             val named = selectionContext && (key == "selector" || (key == "value" && method.contains("selector")))
-            val expression = if (!selectionContext) None else if (selectionFile && Set("select", "exclude").contains(key)) Some(scalar.getTextValue)
-            else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
+            val expression = if (!selectionContext) None else if (key == "value") method.map(_ + ":" + scalar.getTextValue)
             else if (MethodKeys(key)) Some(key + ":" + scalar.getTextValue)
             else if (key == "definition" || scalar.getParent.isInstanceOf[YAMLSequenceItem]) Some(scalar.getTextValue) else None
-            lazy val targets = if (named) w.symbols.filter(s => s.kind == "selector" && selectorFile.contains(s.file) && s.name == scalar.getTextValue)
+            lazy val targets = if (named) w.symbols.filter(s => s.kind == "selector" && s.file == file && s.name == scalar.getTextValue)
               .map(_.element)
             else expression.toVector.flatMap(select(w, root, _, includeGraph))
             if (selectionContext && expression.contains(scalar.getTextValue) && !named) {

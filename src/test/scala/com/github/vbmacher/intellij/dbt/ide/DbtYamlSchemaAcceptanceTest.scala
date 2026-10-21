@@ -21,7 +21,7 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
   private def suggestions(): Set[String] = Option(myFixture.completeBasic()).toVector.flatMap(_.toVector).map(_.getLookupString).toSet
 
   private def profile(version: String, engine: String = "core"): Unit = {
-    add(".dbt-navigation.yml", s"dbt-version: '$version'\nengine: $engine\n")
+    configureSettings { o => o.dbtVersion = version; o.engine = engine }
     ()
   }
 
@@ -68,9 +68,9 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
       ("1.8", "core", Set("semantic_models", "saved_queries", "unit_tests"), Set("functions")),
       ("1.11", "core", Set("semantic_models", "saved_queries", "unit_tests", "functions"), Set.empty[String]),
       ("1.10", "v2", Set("semantic_models", "saved_queries", "unit_tests", "functions"), Set.empty[String]))
-    val configuration = add(".dbt-navigation.yml", "dbt-version: '1.5'\n")
+    configureSettings(_.dbtVersion = "1.5")
     cases.zipWithIndex.foreach { case ((version, engine, expected, absent), index) =>
-      edit(configuration, s"dbt-version: '$version'\nengine: $engine\n")
+      profile(version, engine)
       configure(s"models/profile_$index.yml", "models: []\n<caret>\n")
       val choices = suggestions()
       assertTrue(s"$engine $version suggestions: $choices", expected.subsetOf(choices))
@@ -112,11 +112,11 @@ final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
 
   def testEveryProfileResolvesNestedResourceAndSourceColumnKeys(): Unit = {
     project()
-    val configuration = add(".dbt-navigation.yml", "dbt-version: '1.4'\n")
+    configureSettings(_.dbtVersion = "1.4")
     val cases = Vector("1.4" -> "core", "1.5" -> "core", "1.6" -> "core", "1.7" -> "core",
       "1.8" -> "core", "1.10" -> "core", "1.11" -> "core", "1.10" -> "v2")
     cases.zipWithIndex.foreach { case ((version, engine), index) =>
-      edit(configuration, s"dbt-version: '$version'\nengine: $engine\n")
+      profile(version, engine)
       configure(s"models/nested_$index.yml", "models:\n  - name: orders\n    <caret>\n")
       val resourceKeys = suggestions()
       assertTrue(s"$engine $version resource keys: $resourceKeys; $details", Set("columns", "config", "description").subsetOf(resourceKeys))

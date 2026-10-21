@@ -63,7 +63,7 @@ private[metadata] final class DbtArtifactSource extends DbtDeclarationSource wit
   }
 
   override def canReportMissing(workspace: DbtWorkspace, root: DbtRoot): Boolean = {
-    val explicit = root.settings.flatMap(DbtYaml.string(_, "manifest")).nonEmpty
+    val explicit = root.runOptions.manifestPath.nonEmpty
     (!explicit && root.setting("manifest").flatMap(root.psiFile).isEmpty) || top(root, "manifest").nonEmpty
   }
 
@@ -97,7 +97,7 @@ private[metadata] final class DbtArtifactSource extends DbtDeclarationSource wit
             text(c, "name").map(n => DbtColumnData(n, text(c, "data_type").orElse(text(c, "type")).getOrElse(""),
               text(c, "description").orElse(text(c, "comment")).getOrElse(""), objects(c, "constraints").flatMap(text(_, "type"))))
           }, tests, strings(entry, "tags"), attrs ++ Map("artifact-project" -> root.directory.getPath,
-            "artifact-target" -> root.runtimeSetting("target").getOrElse("")),
+            "artifact-target" -> root.selectedTarget.getOrElse("")),
           text(entry, "raw_code").orElse(text(entry, "raw_sql")), text(entry, "compiled_code").orElse(text(entry, "compiled_sql")),
           objects(entry, "arguments").flatMap(a => text(a, "name").map(n => DbtColumnData(n,
             text(a, "type").getOrElse(""), text(a, "description").getOrElse("")))), deps))

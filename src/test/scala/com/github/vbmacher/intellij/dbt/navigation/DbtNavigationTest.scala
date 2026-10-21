@@ -118,7 +118,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testDispatchAdapterAndDefaults(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "adapter: postgres\n")
+    configureSettings(_.adapter = "postgres")
     add("macros/adapters.sql", "{% macro default__hash(x) %}{{ x }}{% endmacro %}\n{% macro postgres__hash(x) %}{{ x }}{% endmacro %}")
     val file = add("models/use.sql", "{{ adapter.dispatch('hash')(1) }}")
     assertEquals("postgres__hash", target(file, "hash").asInstanceOf[DbtSymbolElement].getName)
@@ -157,7 +157,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testFunctionAndChecksVersionGates(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "engine: v2\ndbt-version: '2.0'\n")
+    configureSettings { o => o.engine = "v2"; o.dbtVersion = "2.0" }
     add("functions/hash.sql", "select 1")
     val check = add("checks/missing.sql", "select name from {{ info_schema('models') }} where name = {{ function('hash') }}")
     assertTrue(path(target(check, "hash")).endsWith("hash.sql"))
@@ -220,7 +220,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testVarsFileConflictAndPackageDefaults(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     add("vars.yml", "vars:\n  color: root\n  util:\n    scoped: override\n")
     add("dbt_packages/util/dbt_project.yml", "name: util\nvars:\n  fallback: package\n  scoped: package\n")
     val file = add("dbt_packages/util/models/use.sql", "{{ builtins.var('color') }} {{ var('scoped') }} {{ var('fallback') }}")
@@ -243,7 +243,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testEmbeddedSemanticsAndTypedExpressions(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     add("models/orders.sql", "select 1")
     val file = add("models/schema.yml", "models:\n- name: orders\n  semantic_model:\n    name: sales\n    enabled: true\n  agg_time_dimension: ordered_at\n  columns:\n  - name: customer_id\n    entity:\n      name: customer\n      type: primary\n  - name: ordered_at\n    dimension:\n      type: time\n  - name: country\n    dimension:\n      type: categorical\n  metrics:\n  - name: revenue\n    type: simple\nmetrics:\n- name: ratio\n  type: derived\n  filter: \"{{ Dimension('customer__country') }} = 'US'\"\n")
     assertEquals("dimension", target(file, "ordered_at").asInstanceOf[DbtSymbolElement].symbol.kind)
@@ -254,7 +254,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testFunctionOverloadsAndProperties(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     add("functions/hash.sql", "select 1")
     add("functions/hash_numeric.sql", "select 2")
     val props = add("functions/hash.yml", "functions:\n- name: hash\n  arguments:\n  - name: input\n  returns:\n    data_type: string\n  overloads:\n  - defined_in: hash_numeric\n    arguments:\n    - name: numeric_input\n")
@@ -265,7 +265,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testOptionalManifestMetadataAndLocalSourceAuthority(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    configureSettings(_.manifestPath = "target/manifest.json")
     val manifest = add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql"}}}""")
     val file = add("models/use.sql", "{{ ref('remote') }}")
     val metadata = target(file, "remote").asInstanceOf[DbtSymbolElement]
@@ -278,7 +278,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testUnsupportedManifestSchemaDoesNotCreateDeclarations(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    configureSettings(_.manifestPath = "target/manifest.json")
     add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v999.json"},"nodes":{"model.analytics.remote":{"resource_type":"model","name":"remote"}}}""")
     val file = add("models/use.sql", "{{ ref('remote') }}")
     assertTrue(referencesAt(file, "remote").forall(_.candidates.isEmpty))
@@ -367,7 +367,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testFunctionBodyArgumentsUseLibraryExpressionParser(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     val props = add("functions/is_positive.yml", "functions:\n- name: is_positive\n  arguments:\n  - name: input_value\n  returns:\n    data_type: boolean\n")
     val body = add("functions/is_positive.sql", "input_value > 0")
     assertEquals(path(props), path(target(body, "input_value")))
@@ -427,7 +427,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testInfoSchemaColumnsAndProvedResourceNamePredicates(): Unit = {
     bareProject("info_schema:\n  version: 1\n")
-    add(".dbt-navigation.yml", "engine: v2\ndbt-version: '2.0'\n")
+    configureSettings { o => o.engine = "v2"; o.dbtVersion = "2.0" }
     val model = add("models/orders.sql", "select 1")
     val check = add("checks/descriptions.sql", "select name from {{ info_schema('models') }} where name = 'orders' and description <> 'orders'")
     assertEquals("documentation", target(check, "name").asInstanceOf[DbtSymbolElement].symbol.kind)
@@ -454,15 +454,18 @@ final class DbtNavigationTest extends DbtTestCase {
     assertEquals(3, uses(target(file, "total", 3)))
   }
 
-  def testExplicitRunConfigurationOverridesWithoutReadingEnvironmentValues(): Unit = {
+  def testIntelliJOverridesWithoutReadingEnvironmentValues(): Unit = {
     bareProject("vars:\n  color: default\n")
-    add(".dbt-navigation.yml", "run-config: run/dev.yml\n")
-    val run = add("run/dev.yml", "vars:\n  color: selected\nenv:\n  DBT_ENV_SECRET_TOKEN: secret-value\n")
+    configureSettings { o =>
+      o.variables = "{\"color\":\"selected\"}"
+      o.environmentVariables.put("DBT_ENV_SECRET_TOKEN", "secret-value")
+    }
     add(".env", "DBT_ENV_SECRET_TOKEN=another-secret\n")
     val file = add("models/use.sql", "{{ var('color') }} {{ env_var('DBT_ENV_SECRET_TOKEN') }}")
-    assertEquals(path(run), path(target(file, "color")))
+    assertTrue(target(file, "color").asInstanceOf[DbtSymbolElement].symbol.attributes.contains("settings"))
     val env = target(file, "DBT_ENV_SECRET_TOKEN")
-    assertEquals(path(run), path(env))
+    assertTrue(env.asInstanceOf[DbtSymbolElement].symbol.attributes.contains("settings"))
+    assertFalse(env.getContainingFile.getText.contains("secret-value"))
     assertFalse(env.toString.contains("secret-value"))
     assertEquals("DBT_ENV_SECRET_TOKEN", env.getText)
     assertEquals(1, uses(target(file, "color")))
@@ -480,13 +483,13 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testMaterializationAdapterSelectionAndIndirectUsages(): Unit = {
     bareProject()
-    val settings = add(".dbt-navigation.yml", "adapter: redshift\n")
+    configureSettings(_.adapter = "redshift")
     add("macros/table.sql", "{% materialization audit, adapter='default' %}select 1{% endmaterialization %}{% materialization audit, adapter='postgres' %}select 2{% endmaterialization %}")
     val file = add("models/use.sql", "{{ config(materialized='audit') }} select 1")
     val selected = target(file, "audit").asInstanceOf[DbtSymbolElement]
     assertEquals("postgres", selected.symbol.attributes("adapter"))
     assertEquals(1, uses(selected))
-    edit(settings, "adapter: bigquery\n")
+    configureSettings(_.adapter = "bigquery")
     assertEquals("default", target(file, "audit").asInstanceOf[DbtSymbolElement].symbol.attributes("adapter"))
   }
 
@@ -508,15 +511,12 @@ final class DbtNavigationTest extends DbtTestCase {
     assertEquals(1, uses(target(test, "color")))
   }
 
-  def testSelectorsRespectResourceIdentityAndExplicitRunSelection(): Unit = {
+  def testRunYamlDoesNotProvideSelectionNavigation(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "run-config: run.yml\n")
     add("models/orders.sql", "select 1 as id")
     add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n")
     val run = add("run.yml", "select: orders\n")
-    assertEquals("model", target(run, "orders").asInstanceOf[DbtSymbolElement].symbol.kind)
-    assertTrue(path(target(run, "orders")).endsWith("orders.sql"))
-    assertEquals(2, uses(target(run, "orders")))
+    assertTrue(DbtNavigation.inFile(run).isEmpty)
   }
 
   def testUnsupportedTemplateLoaderDoesNotInventImports(): Unit = {
@@ -547,7 +547,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testCatalogUsesLogicalResourceIdsAndKeepsSourceColumnsAuthoritative(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "catalog: target/catalog.json\n")
+    configureSettings(_.catalogPath = "target/catalog.json")
     add("models/orders.sql", "select * from physical_table")
     add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\n")
     add("target/catalog.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/catalog/v1.json","generated_at":"2099-01-01T00:00:00Z"},"nodes":{"model.analytics.orders":{"unique_id":"model.analytics.orders","metadata":{"name":"warehouse_alias"},"columns":{"id":{"name":"id"},"total":{"name":"total"}}}}}""")
@@ -559,7 +559,7 @@ final class DbtNavigationTest extends DbtTestCase {
 
   def testMetadataDependenciesMapToLocalSource(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "state-manifest: state/manifest.json\n")
+    configureSettings(_.stateManifestPath = "state/manifest.json")
     add("models/orders.sql", "select 1")
     add("state/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql","depends_on":{"nodes":["model.analytics.orders"]}}}}""")
     val w = workspace
@@ -677,12 +677,11 @@ final class DbtNavigationTest extends DbtTestCase {
     assertEquals(1, uses(parameter))
   }
 
-  def testRunSelectionTermsKeepExactRangesAndIgnoreVariableValues(): Unit = {
+  def testSelectorTermsKeepExactRangesAndIgnoreVariableValues(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "run-config: run.yml\n")
     add("models/orders.sql", "select 1")
     add("models/customers.sql", "select 1")
-    val file = add("run.yml", "select: 'orders customers,orders'\nvars:\n  names: [orders]\n")
+    val file = add("selectors.yml", "selectors:\n- name: nightly\n  definition: 'orders customers,orders'\nvars:\n  names: [orders]\n")
     assertTrue(path(target(file, "orders")).endsWith("orders.sql"))
     assertTrue(path(target(file, "customers")).endsWith("customers.sql"))
     assertEquals(2, uses(target(file, "orders")))

@@ -164,7 +164,7 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
     options.defer = false
     assertTrue(DbtCommand.create(w, selection, "Build", fullRefresh = false).isLeft)
     options.defer = true
-    add(".dbt-navigation.yml", "engine: v2\n")
+    configureSettings(_.engine = "v2")
     assertTrue(DbtCommand.create(workspace, selection, "Build", fullRefresh = false).left.toOption.get.contains("Core"))
   }
 

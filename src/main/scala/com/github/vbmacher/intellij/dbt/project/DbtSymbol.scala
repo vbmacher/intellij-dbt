@@ -73,7 +73,7 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
     kind == other.kind && namespace == other.namespace && name == other.name && version == other.version &&
       (!Set("source_table", "column")(kind) || owner == other.owner)
 
-  def metadataSuffix: String = if (isStale) " (stale metadata)" else if (metadata) " (metadata)" else ""
+  def metadataSuffix: String = if (attributes.contains("settings")) " (IntelliJ settings)" else if (isStale) " (stale metadata)" else if (metadata) " (metadata)" else ""
 
   def presentableText: String = s"$namespace.$name${version.map(" v" + _).getOrElse("")}$metadataSuffix"
 }

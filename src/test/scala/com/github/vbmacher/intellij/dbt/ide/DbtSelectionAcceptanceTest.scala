@@ -142,7 +142,7 @@ final class DbtSelectionAcceptanceTest extends DbtTestCase {
   def testFavorStateRequiresConfiguredCoreVersionEvenWithAValidManifest(): Unit = {
     project()
     val code = add("models/orders.sql", "select 1")
-    add(".dbt-navigation.yml", "engine: core\ndbt-version: '1.3'\n")
+    configureSettings { o => o.engine = "core"; o.dbtVersion = "1.3" }
     add("baseline/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"nodes":{}}""")
     val w = workspace
     root.runOptions.stateDirectory = "baseline";

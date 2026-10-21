@@ -11,7 +11,7 @@ Enable these plugins in **Settings → Plugins**:
 | **TextMate Bundles** (bundled) | dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja [highlighting](editing.md#syntax-highlighting). No bundle import or SQL file association is needed. Navigation works without it. |
 | **Test Runner** (bundled) | Required; provides the dbt [test tree](workspace.md#tests). |
 | **Web Browser (JCEF)** (bundled, with the bundled JetBrains Runtime) | The [Lineage](workspace.md#lineage) graph. Without JCEF the graph cannot open; commands and navigation still work. |
-| **Python Community Edition** (free, from Marketplace) | [Python model](navigation.md#python-models) navigation and Python `builtin-sources`. |
+| **Python Community Edition** (free, from Marketplace) | [Python model](navigation.md#python-models) navigation and [local Python builtin definitions](configuration.md#local-builtin-definitions). |
 
 Use a full IntelliJ installation so the bundled components are present.
 

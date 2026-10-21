@@ -46,5 +46,5 @@ files without running dbt. For requirements, see [Installation](installation.md)
 
 ## Reference
 
-- [Configuration](configuration.md): [`.dbt-navigation.yml`](configuration.md#dbt-navigationyml) and [**Settings → dbt Workspace**](configuration.md#settings--dbt-workspace), including [environment files](configuration.md#environment-files).
+- [Configuration](configuration.md): [**Settings → dbt Workspace**](configuration.md#settings--dbt-workspace), including [environment files](configuration.md#environment-files).
 - [Icons](icons.md): icon meanings and where they appear.

@@ -91,7 +91,7 @@ final class DbtPythonNavigationTest extends DbtTestCase {
 
   def testExplicitPythonBuiltinSourceWithoutExecutingIt(): Unit = {
     setupProject()
-    add(".dbt-navigation.yml", "builtin-sources:\n  adapter.get_relation: vendor/adapter.py\n")
+    configureSettings { o => o.builtinSources.put("adapter.get_relation", "vendor/adapter.py") }
     val source = add("vendor/adapter.py", "class Adapter:\n    def get_relation(self, database, schema, identifier):\n        raise RuntimeError('must never execute')\n")
     val sql = add("models/use.sql", "{{ adapter.get_relation('db', 'schema', 'table') }}")
     val reference = DbtNavigation.at(sql, sql.getText.indexOf("get_relation") + 1).head

@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions}
+import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions, DbtVariableOverrides}
 import com.intellij.openapi.fileChooser.{FileChooser, FileChooserDescriptorFactory}
 import com.intellij.openapi.options.{Configurable, ConfigurationException, ShowSettingsUtil}
 import com.intellij.openapi.project.Project
@@ -10,6 +10,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.{BorderLayout, Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
 import java.nio.file.{InvalidPathException, Paths}
 import javax.swing._
+import javax.swing.table.DefaultTableModel
 import scala.jdk.CollectionConverters._
 
 final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin with Configurable.NoScroll {
@@ -22,6 +23,51 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   }
   private val executableArguments = new JBTextField
   private val environmentFiles = new TextFieldWithBrowseButton
+  private val loadEnvironmentFiles = new JBCheckBox("Load environment files")
+  private val engine = new JComboBox[String](Array("core", "v2"))
+  private val dbtVersion = new JBTextField
+  private val profilesFile = new TextFieldWithBrowseButton
+  private val adapter = new JBTextField
+  private val variables = new JTextArea(3, 20)
+  private val variablesPane = new JBScrollPane(variables)
+  private val environmentModel = new DefaultTableModel(Array[AnyRef]("Variable name", "Value"), 0)
+  private val environmentVariables = new JTable(environmentModel)
+  private val catalog = new TextFieldWithBrowseButton
+  private val stateManifest = new TextFieldWithBrowseButton
+  private val infoSchema = new TextFieldWithBrowseButton
+  private val builtinModel = new DefaultTableModel(Array[AnyRef]("Builtin name", "Local source file"), 0)
+  private val builtinSources = new JTable(builtinModel)
+
+  private def mappings(table: JTable, model: DefaultTableModel): JPanel = {
+    val panel = new JPanel(new BorderLayout(4, 4))
+    table.setPreferredScrollableViewportSize(new Dimension(300, 65))
+    table.putClientProperty("terminateEditOnFocusLost", java.lang.Boolean.TRUE)
+    val scroll = new JBScrollPane(table)
+    scroll.setMinimumSize(new Dimension(0, 85))
+    scroll.setPreferredSize(new Dimension(300, 100))
+    panel.add(scroll, BorderLayout.CENTER)
+    panel.add(DbtUi.buttons(
+      DbtUi.button("Add") { model.addRow(Array[AnyRef]("", "")) },
+      DbtUi.button("Remove") { table.getSelectedRows.reverse.foreach(model.removeRow) }), BorderLayout.SOUTH)
+    panel
+  }
+
+  private def fillMappings(model: DefaultTableModel, values: java.util.Map[String, String]): Unit = {
+    model.setRowCount(0)
+    values.asScala.toVector.sortBy(_._1).foreach { case (name, value) => model.addRow(Array[AnyRef](name, value)) }
+  }
+
+  private def readMappings(table: JTable, model: DefaultTableModel, allowEmpty: Boolean): java.util.Map[String, String] = {
+    if (table.isEditing) table.getCellEditor.stopCellEditing()
+    val values = new java.util.TreeMap[String, String]()
+    (0 until model.getRowCount).foreach { row =>
+      val name = Option(model.getValueAt(row, 0)).fold("")(_.toString.trim)
+      val value = Option(model.getValueAt(row, 1)).fold("")(_.toString)
+      if (name.nonEmpty && (allowEmpty || value.trim.nonEmpty)) values.put(name, if (allowEmpty) value else value.trim)
+    }
+    values
+  }
+
   private val projectRoot = new TextFieldWithBrowseButton {
     override protected def getIconTooltip: String = "Choose a dbt project root directory"
   }
@@ -76,19 +122,47 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     environmentFiles.setName("dbt.environmentFiles")
     environmentFiles.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile()
       .withTitle("Select environment file").withShowHiddenFiles(true))
-    environmentFiles.setToolTipText("Environment files separated by semicolons, relative to the owning dbt root or absolute. Later files override earlier files. Blank uses env-files from .dbt-navigation.yml, or .env. Run-config env values override files.")
+    environmentFiles.setToolTipText("Environment files separated by semicolons, relative to the owning dbt root or absolute. Later files override earlier files. Blank uses .env. Environment variables from IntelliJ settings override files.")
+    Vector("engine" -> engine, "dbtVersion" -> dbtVersion, "profilesFile" -> profilesFile, "adapter" -> adapter,
+      "variables" -> variables, "environmentVariables" -> environmentVariables, "catalogPath" -> catalog,
+      "stateManifestPath" -> stateManifest, "infoSchemaDirectory" -> infoSchema, "builtinSources" -> builtinSources,
+      "loadEnvironmentFiles" -> loadEnvironmentFiles).foreach { case (name, field) => field.setName("dbt." + name) }
+    Vector(profilesFile -> "Select profiles YAML",
+      catalog -> "Select catalog JSON", stateManifest -> "Select state manifest JSON").foreach { case (field, title) =>
+      field.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle(title))
+    }
+    infoSchema.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir().withTitle("Select Information Schema v1 directory"))
+    dbtVersion.getEmptyText.setText("From require-dbt-version, or 1.10")
+    profilesFile.setToolTipText("Optional profiles file for editor navigation, relative to the owning dbt root or absolute. Commands use Profiles directory.")
+    adapter.setToolTipText("Optional adapter for editor navigation. Blank uses the selected profile output type.")
+    variables.setToolTipText("JSON object of dbt variable overrides, for example {\"start_date\": \"2026-03-01\"}. Passed to dbt as --vars and used by editor navigation.")
+    variablesPane.setMinimumSize(new Dimension(0, 60))
+    variablesPane.setPreferredSize(new Dimension(300, 65))
+    variables.setLineWrap(true)
+    variables.setWrapStyleWord(true)
+    environmentVariables.setToolTipText("Override inherited environment and environment files for dbt commands and formatters. Empty values are allowed.")
+    catalog.setToolTipText("Optional catalog JSON, relative to the owning dbt root or absolute. Blank uses catalog.json in the artifact directory.")
+    stateManifest.setToolTipText("Optional manifest for navigation to state resources, relative to the owning dbt root or absolute. Commands use Baseline state directory.")
+    infoSchema.setToolTipText("Information Schema v1 directory, relative to the owning dbt root or absolute. Requires engine v2.")
+    loadEnvironmentFiles.addActionListener(_ => environmentFiles.setEnabled(loadEnvironmentFiles.isSelected))
     stateDirectory.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir()
       .withTitle("Select baseline state directory").withDescription("Choose a separate directory containing manifest.json."))
     manifest.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle("Select dbt manifest JSON"))
-    manifest.setToolTipText("Optional manifest file, absolute or relative to the execution project. Blank uses manifest.json in the artifact directory. A manifest entry in .dbt-navigation.yml takes precedence.")
+    manifest.setToolTipText("Optional manifest file, absolute or relative to the execution project. Blank uses manifest.json in the artifact directory.")
     formatterExecutable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle("Select SQL formatter executable"))
     executable.setToolTipText("dbt, a wrapper script, or a tool such as uv, poetry, bash or zsh. Runs in the execution project directory.")
     executableArguments.getEmptyText.setText("For uv: run dbt; for zsh: scripts/run_dbt.zsh")
     executableArguments.setToolTipText("Passed before every dbt command. Example: uv + run dbt → uv run dbt test. Quote paths with spaces; shell expressions are not evaluated.")
     upstream.setToolTipText("How many dependency levels to show before the focused resource in Lineage. 1 shows its direct inputs; 2 also shows their inputs. Accepts 1–20.")
     downstream.setToolTipText("How many dependent levels to show after the focused resource in Lineage. 1 shows resources that use it directly; 2 also shows resources that use those. Accepts 1–20.")
-    val rows = Vector("Owning dbt root" -> root, "Executable or external tool" -> executable, "Arguments before dbt command" -> executableArguments, "Project root override" -> projectRoot,
-      "Environment files" -> environmentFiles, "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Manifest file (optional)" -> manifest, "Active target (blank uses profile default)" -> target,
+    val rows = Vector("Owning dbt root" -> root,
+      "Engine" -> engine, "dbt version (optional)" -> dbtVersion, "Adapter (optional)" -> adapter,
+      "Profiles file for navigation (optional)" -> profilesFile, "Variables (JSON)" -> variablesPane,
+      "Environment variables" -> mappings(environmentVariables, environmentModel),
+      "Local builtin definitions" -> mappings(builtinSources, builtinModel),
+      "Catalog file (optional)" -> catalog, "State manifest for navigation (optional)" -> stateManifest,
+      "Information Schema v1 directory (optional)" -> infoSchema, "Executable or external tool" -> executable, "Arguments before dbt command" -> executableArguments, "Project root override" -> projectRoot,
+      "" -> loadEnvironmentFiles, "Environment files" -> environmentFiles, "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Manifest file (optional)" -> manifest, "Active target (blank uses profile default)" -> target,
       "Baseline state directory" -> stateDirectory, "" -> defer, "" -> favorState,
       "SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> formatOnSave,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream levels to show" -> upstream,
@@ -114,6 +188,18 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     executable.setText(o.executable)
     executableArguments.setText(o.executableArguments)
     environmentFiles.setText(o.environmentFiles)
+    loadEnvironmentFiles.setSelected(o.loadEnvironmentFiles)
+    environmentFiles.setEnabled(o.loadEnvironmentFiles)
+    engine.setSelectedItem(o.engine)
+    dbtVersion.setText(o.dbtVersion)
+    profilesFile.setText(o.profilesFile)
+    adapter.setText(o.adapter)
+    variables.setText(o.variables)
+    fillMappings(environmentModel, o.environmentVariables)
+    catalog.setText(o.catalogPath)
+    stateManifest.setText(o.stateManifestPath)
+    infoSchema.setText(o.infoSchemaDirectory)
+    fillMappings(builtinModel, o.builtinSources)
     projectRoot.setText(o.projectRoot)
     profiles.setText(o.profilesDirectory)
     artifacts.setText(o.artifactDirectory)
@@ -135,6 +221,17 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     o.executable = executable.getText.trim
     o.executableArguments = executableArguments.getText.trim
     o.environmentFiles = environmentFiles.getText.trim
+    o.loadEnvironmentFiles = loadEnvironmentFiles.isSelected
+    o.engine = engine.getSelectedItem.toString
+    o.dbtVersion = dbtVersion.getText.trim
+    o.profilesFile = profilesFile.getText.trim
+    o.adapter = adapter.getText.trim
+    o.variables = variables.getText.trim
+    o.environmentVariables = readMappings(environmentVariables, environmentModel, allowEmpty = true)
+    o.catalogPath = catalog.getText.trim
+    o.stateManifestPath = stateManifest.getText.trim
+    o.infoSchemaDirectory = infoSchema.getText.trim
+    o.builtinSources = readMappings(builtinSources, builtinModel, allowEmpty = false)
     o.projectRoot = projectRoot.getText.trim
     o.profilesDirectory = profiles.getText.trim
     o.artifactDirectory = artifacts.getText.trim
@@ -179,6 +276,10 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   override def disposeUIResources(): Unit = {
     executable.dispose()
     environmentFiles.dispose()
+    profilesFile.dispose()
+    catalog.dispose()
+    stateManifest.dispose()
+    infoSchema.dispose()
     projectRoot.dispose()
     profiles.dispose()
     stateDirectory.dispose()
@@ -189,8 +290,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
 
   override def apply(): Unit = {
     if (executable.getText.trim.isEmpty || artifacts.getText.trim.isEmpty) throw new ConfigurationException("Executable and artifact directory must not be blank.")
-    if (integrations.isModified) integrations.apply()
     drafts += selectedRoot -> readOptions()
+    drafts.values.foreach { options =>
+      DbtVariableOverrides.parse(options.variables).left.foreach(message => throw new ConfigurationException(message))
+      if (options.environmentVariables.keySet().asScala.exists(!_.matches("[A-Za-z_][A-Za-z_0-9]*")))
+        throw new ConfigurationException("Environment variable names must start with a letter or underscore and contain only letters, digits or underscores.")
+    }
+    if (integrations.isModified) integrations.apply()
     settings.getState.projects = new java.util.TreeMap[String, DbtRunOptions](drafts.asJava)
     settings.getState.upstreamDepth = upstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.downstreamDepth = downstream.getValue.asInstanceOf[Number].intValue()

@@ -107,7 +107,7 @@ final class DbtFindUsagesActionTest extends DbtTestCase {
 
   def testEnvironmentUsagesHighlightTheKeyWithoutItsValueOrFallback(): Unit = {
     project()
-    add(".dbt-navigation.yml", "env-files: [.env]\n")
+    configureSettings(_.environmentFiles = ".env")
     val env = configure(".env", "DBT_<caret>SCHEMA=private_schema\n")
     val caller = add("models/report.sql", "{{ env_var('DBT_SCHEMA') }} {{ env_var('DBT_SCHEMA', 'private_schema') }}")
 

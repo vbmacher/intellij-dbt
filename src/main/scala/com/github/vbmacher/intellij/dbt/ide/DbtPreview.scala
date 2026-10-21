@@ -167,10 +167,10 @@ private[ide] object DbtCteInspection {
     val source = document.map(_.getText).getOrElse(model.file.getText)
     val execution = root.runOptions.values.map(value => String.valueOf(value)) ++ Vector(root.directory.getPath, root.executionDirectory.toString,
       DbtExecutionContext.activeTarget(root).getOrElse(""), DbtExecutionContext.profiles(root).directory.toString,
-      root.config.getContainingFile.getText, root.settings.map(_.getText).getOrElse(""),
+      root.config.getContainingFile.getText,
       root.psiFile(root.profilesFile).map(f => DbtHash.sha256(f.getText)).getOrElse(""))
     val dependencies = w.files.filter(f => w.root(f).exists(r => w.executionRoot(r) == root &&
-        (r.resource(f) || f.getName == "dbt_project.yml" || f.getName == "profiles.yml" || f.getName == ".dbt-navigation.yml")))
+        (r.resource(f) || f.getName == "dbt_project.yml" || f.getName == "profiles.yml")))
       .map(f => f.getVirtualFile.getPath -> Option(manager.getCachedDocument(f.getVirtualFile)).map(_.getModificationStamp).getOrElse(f.getModificationStamp))
       .sortBy(_._1)
     DbtCteContext(source, document.map(_.getModificationStamp).getOrElse(model.file.getModificationStamp), execution, dependencies)

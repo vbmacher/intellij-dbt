@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtNavigationReference}
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRoot, DbtSettingsState, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions, DbtRoot, DbtSettingsState, DbtWorkspace}
 import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.json.JsonFileType
 import com.intellij.model.psi.impl.TargetsKt
@@ -40,6 +40,12 @@ abstract class DbtTestCase extends BasePlatformTestCase {
 
   /** A minimal project file containing only the project name. */
   protected def bareProject(config: String = "", path: String = ""): PsiFile = add(path + "dbt_project.yml", "name: analytics\n" + config)
+
+  protected def configureSettings(update: DbtRunOptions => Unit): Unit = {
+    val settings = DbtProjectSettings.get(getProject)
+    update(settings.options(myFixture.findFileInTempDir("dbt_project.yml").getParent.getPath))
+    settings.changed()
+  }
 
   protected def workspace: DbtWorkspace = DbtWorkspace.get(getProject)
 

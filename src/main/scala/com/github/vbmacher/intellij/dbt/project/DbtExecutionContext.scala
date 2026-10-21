@@ -2,12 +2,14 @@ package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.components.{PersistentStateComponent, Service, State, Storage}
+import com.google.gson.{JsonObject, JsonParser}
+import com.intellij.openapi.fileTypes.PlainTextFileType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.{SimpleModificationTracker, TextRange}
 import com.intellij.util.EnvironmentUtil
 import com.intellij.util.messages.Topic
 import com.intellij.util.xmlb.XmlSerializerUtil
-import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLScalar}
+import com.intellij.testFramework.LightVirtualFile
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
@@ -20,6 +22,17 @@ final class DbtRunOptions {
   @BeanProperty var executable: String = "dbt"
   @BeanProperty var executableArguments: String = ""
   @BeanProperty var environmentFiles: String = ""
+  @BeanProperty var loadEnvironmentFiles: Boolean = true
+  @BeanProperty var engine: String = "core"
+  @BeanProperty var dbtVersion: String = ""
+  @BeanProperty var profilesFile: String = ""
+  @BeanProperty var adapter: String = ""
+  @BeanProperty var variables: String = ""
+  @BeanProperty var environmentVariables: java.util.Map[String, String] = new java.util.TreeMap[String, String]()
+  @BeanProperty var builtinSources: java.util.Map[String, String] = new java.util.TreeMap[String, String]()
+  @BeanProperty var catalogPath: String = ""
+  @BeanProperty var stateManifestPath: String = ""
+  @BeanProperty var infoSchemaDirectory: String = ""
   @BeanProperty var projectRoot: String = ""
   @BeanProperty var profilesDirectory: String = ""
   @BeanProperty var artifactDirectory: String = "target"
@@ -39,7 +52,8 @@ final class DbtRunOptions {
 
   def values: Vector[Any] = Vector(executable, executableArguments, environmentFiles, projectRoot, profilesDirectory, artifactDirectory,
     manifestPath, target, previewLimit, colors, notifications, selection, exclude, stateDirectory, defer, favorState, formatter,
-    formatterExecutable, formatOnSave)
+    formatterExecutable, formatOnSave, loadEnvironmentFiles, engine, dbtVersion, profilesFile, adapter, variables,
+    environmentVariables, builtinSources, catalogPath, stateManifestPath, infoSchemaDirectory)
 
   def copy(): DbtRunOptions = XmlSerializerUtil.createCopy(this)
 }
@@ -90,7 +104,7 @@ private[dbt] trait DbtSettingsListener {
   def settingsChanged(): Unit
 }
 
-/** Environment variables declared by `.env` files and the `env` section of a run configuration. */
+/** Environment variables declared by `.env` files and IntelliJ settings. */
 private[dbt] object DbtEnvironment {
   private val Assignment = """\s*(?:export\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.*)""".r
   private val DoubleQuoted = """"((?:\\.|[^"\\])*)"\s*(?:#.*)?""".r
@@ -116,33 +130,67 @@ private[dbt] object DbtEnvironment {
     case _ => None
   }.toMap
 
-  private def overrideEntries(r: DbtRoot): Vector[YAMLKeyValue] =
-    r.runConfiguration.flatMap(DbtYaml.map(_, "env")).toVector.flatMap(_.getKeyValues.asScala)
-
   def values(r: DbtRoot): Map[String, String] = {
     val files = r.envFiles.foldLeft(Map.empty[String, String])((values, file) => values ++ parse(file.getText))
-    files ++ overrideEntries(r).flatMap(k => Option(k.getValue).collect { case scalar: YAMLScalar => k.getKeyText -> scalar.getTextValue })
+    files ++ r.runOptions.environmentVariables.asScala
   }
-
-  private def overrides(r: DbtRoot): Vector[DbtSymbol] = overrideEntries(r)
-    .flatMap(k => Option(k.getKey).map(e => DbtSymbol("environment", k.getKeyText, r.name, e.getContainingFile, e.getTextRange)))
 
   private def files(r: DbtRoot, namePattern: String): Vector[DbtSymbol] = r.envFiles.flatMap { file =>
     s"(?m)^\\s*(?:export\\s+)?($namePattern)\\s*=".r.findAllMatchIn(file.getText)
       .map(m => DbtSymbol("environment", m.group(1), r.name, file, new TextRange(m.start(1), m.end(1))))
   }
 
-  /** Run configuration overrides of an environment variable take precedence over `.env` files. */
-  def apply(r: DbtRoot, name: String): Vector[DbtSymbol] = {
-    val found = overrides(r).filter(_.name == name).take(1)
+  /** IntelliJ overrides take precedence over `.env` files. */
+  def apply(w: DbtWorkspace, r: DbtRoot, name: String): Vector[DbtSymbol] = {
+    val found = w.symbols.filter(s => s.kind == "environment" && s.name == name &&
+      s.attributes.contains("settings") && w.owner(s).contains(r))
     if (found.nonEmpty) found else files(r, Pattern.quote(name))
   }
 
-  def declarations(r: DbtRoot): Vector[DbtSymbol] = overrides(r) ++ files(r, "[A-Za-z_][A-Za-z_0-9]*")
+  def declarations(r: DbtRoot): Vector[DbtSymbol] =
+    DbtSettingsDeclarations.names(r, "environment", r.runOptions.environmentVariables.keySet().asScala.toVector) ++
+      files(r, "[A-Za-z_][A-Za-z_0-9]*")
+}
+
+/** Variable values are JSON so nested objects, lists, booleans and null retain their dbt types. */
+private[dbt] object DbtVariableOverrides {
+  def parse(text: String): Either[String, JsonObject] = {
+    val message = "Variables must be a JSON object, for example {\"start_date\": \"2026-03-01\"}."
+    if (text.trim.isEmpty) Right(new JsonObject)
+    else Try(JsonParser.parseString(text)).toEither.left.map(_ => message)
+      .flatMap(value => Either.cond(value.isJsonObject, value.getAsJsonObject, message))
+  }
+}
+
+/** Read-only name lists let navigation and Find Usages identify settings without exposing their values. */
+private[project] object DbtSettingsDeclarations {
+  def names(root: DbtRoot, kind: String, names: Vector[String]): Vector[DbtSymbol] = {
+    if (names.isEmpty) Vector.empty
+    else {
+      val header = "Configure these values in Settings → dbt Workspace.\n\n"
+      val sorted = names.sorted
+      val text = header + sorted.mkString("\n")
+      val virtual = new LightVirtualFile(s"dbt.$kind.${DbtHash.sha256(root.directory.getPath).take(12)}.settings.txt",
+        PlainTextFileType.INSTANCE, text)
+      virtual.setWritable(false)
+      DbtYaml.psiFile(root.config.getProject, virtual).toVector.flatMap { file =>
+        var offset = header.length
+        sorted.map { name =>
+          val range = new TextRange(offset, offset + name.length)
+          offset += name.length + 1
+          DbtSymbol(kind, name, root.name, file, range, metadata = true,
+            attributes = Map("resource-root" -> root.directory.getPath, "settings" -> "true"))
+        }
+      }
+    }
+  }
 }
 
 private[project] final class DbtEnvironmentSource extends DbtDeclarationSource {
-  override def declarations(workspace: DbtWorkspace): Vector[DbtSymbol] = workspace.roots.flatMap(DbtEnvironment.declarations)
+  override def declarations(workspace: DbtWorkspace): Vector[DbtSymbol] = workspace.roots.flatMap { root =>
+    DbtEnvironment.declarations(root) ++ DbtVariableOverrides.parse(root.runOptions.variables).toOption.toVector.flatMap(values =>
+      DbtSettingsDeclarations.names(root, "var", values.keySet().asScala.toVector))
+  }
 }
 
 /** The profiles directory used to run dbt and the default target of the project's profile. */
@@ -207,7 +255,7 @@ private[dbt] object DbtArtifactContext {
     val directory = root.executionDirectory
     val profiles = DbtExecutionContext.profiles(root).directory.normalize()
     val inputs = Vector(profiles.resolve("profiles.yml").toString, directory.resolve("dbt_project.yml").toString,
-      directory.resolve("vars.yml").toString) ++ root.setting("run-config")
+      directory.resolve("vars.yml").toString)
     val state = root.runOptions.stateDirectory.trim
     val baseline = if (state.isEmpty) Vector.empty else {
       val path = directory.resolve(state).resolve("manifest.json").normalize().toString
@@ -215,7 +263,8 @@ private[dbt] object DbtArtifactContext {
     }
     val configuration = inputs.flatMap(path => Vector(path, root.psiFile(path).map(_.getText).getOrElse(""))) ++
       root.envFiles.flatMap(file => Vector(file.getVirtualFile.getPath, file.getText)) ++
-      Vector(root.runOptions.executable, root.runOptions.executableArguments, state, root.runOptions.defer.toString,
+      Vector(root.runOptions.executable, root.runOptions.executableArguments, root.runOptions.variables,
+        root.runOptions.environmentVariables.toString, state, root.runOptions.defer.toString,
         root.runOptions.favorState.toString) ++ baseline
     Vector(directory.toString, DbtExecutionContext.activeTarget(root).getOrElse(""), textDigest(configuration.mkString("\u0000")))
   }

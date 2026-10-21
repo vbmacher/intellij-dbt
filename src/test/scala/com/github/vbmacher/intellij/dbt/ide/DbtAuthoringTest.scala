@@ -121,7 +121,7 @@ final class DbtAuthoringTest extends DbtTestCase {
     assertEquals(Vector("dbt properties (current)"), selected.map(_.getName).toVector)
     assertNotNull(selected.head.getSchemaFile)
     assertTrue(providers.forall(!_.isAvailable(unrelated.getVirtualFile)))
-    add(".dbt-navigation.yml", "dbt-version: '1.7'\n")
+    configureSettings(_.dbtVersion = "1.7")
     assertEquals(Vector("dbt properties (queries)"), providers.filter(_.isAvailable(properties.getVirtualFile)).map(_.getName).toVector)
   }
 

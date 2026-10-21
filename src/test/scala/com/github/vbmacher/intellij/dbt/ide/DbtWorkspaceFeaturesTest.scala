@@ -306,7 +306,7 @@ select * from {{ source('raw', 'missing_table') }}
 
   def testMissingConfiguredOrMalformedArtifactsSuppressMissingResourceClaims(): Unit = {
     project()
-    add(".dbt-navigation.yml", "manifest: unavailable/manifest.json\n")
+    configureSettings(_.manifestPath = "unavailable/manifest.json")
     val file = configure("models/report.sql", "{{ ref('mis<caret>sing') }}")
     val annotator = new DbtUnresolvedAnnotator
 

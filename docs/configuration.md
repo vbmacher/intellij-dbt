@@ -2,35 +2,35 @@
 
 [User guide](getting_started.md)
 
-The plugin has two places for settings:
+Configure the plugin in **Settings → dbt Workspace**. Settings are saved with the
+IntelliJ project. Most navigation needs no settings.
 
-- **`.dbt-navigation.yml`** at a dbt project root configures navigation and editor
-  features for that project. Paths are relative to that root. The file is read only
-  by the plugin and is not passed to dbt.
-- **Settings → dbt Workspace** configures execution, formatting, lineage and
-  integrations. It is saved with the IDE project.
+## Settings → dbt Workspace
 
-Most navigation needs no settings.
+The page has two tabs: **General** for navigation, execution, formatting and lineage,
+and **Integrations** for Metabase, Airflow and the local MCP server. **Apply** saves
+both tabs. On **General**, choose **Owning dbt root** first: navigation, execution,
+environment, formatter and baseline settings apply to that dbt project only.
 
-## .dbt-navigation.yml
+![Per-root navigation settings in dbt Workspace.](screenshots/configuration.png)
 
-Include only the settings you use.
+### Navigation settings
 
-| Setting | Purpose | Details |
-| --- | --- | --- |
-| `engine` | `core` or `v2` | [Engine and version](#engine-and-version) |
-| `dbt-version` | dbt version used for navigation | [Engine and version](#engine-and-version) |
-| `profiles-file` | Local profiles YAML file | [Profiles and adapters](#profiles-and-adapters) |
-| `target` | Profile output, such as `dev` | [Profiles and adapters](#profiles-and-adapters) |
-| `adapter` | Adapter, such as `postgres` | [Profiles and adapters](#profiles-and-adapters) |
-| `env-files` | Local environment files | [Environment files](#environment-files) |
-| `run-config` | YAML file with variable/environment overrides and run selections | [Run-specific variables and selections](#run-specific-variables-and-selections) |
-| `selection-files` | Additional YAML files with `select`, `exclude` or `selector` fields | [Run-specific variables and selections](#run-specific-variables-and-selections) |
-| `builtin-sources` | Builtin names mapped to local definitions | [Local builtin definitions](#local-builtin-definitions) |
-| `manifest` | Local manifest JSON file | [Local metadata](#local-metadata) |
-| `catalog` | Local catalog JSON file | [Local metadata](#local-metadata) |
-| `state-manifest` | Local state manifest | [Local metadata](#local-metadata) |
-| `info-schema-dir` | dbt v2 Information Schema `v1/` directory | [dbt v2 Information Schema](#dbt-v2-information-schema) |
+Paths below are absolute or relative to the owning dbt root, except **Manifest file
+(optional)**, which resolves relative to the execution project.
+
+| Setting | Default and effect |
+| --- | --- |
+| **Engine** | `core` or `v2`; defaults to `core`. See [Engine and version](#engine-and-version). |
+| **dbt version (optional)** | Blank uses `require-dbt-version` from `dbt_project.yml`, or Core 1.10. |
+| **Adapter (optional)** | Blank uses the selected profile output type. See [Profiles and adapters](#profiles-and-adapters). |
+| **Profiles file for navigation (optional)** | Blank uses `profiles.yml` in the resolved profiles directory. Commands use **Profiles directory**. |
+| **Variables (JSON)** | JSON object of dbt variable overrides. Blank uses project defaults. See [Variable overrides](#variable-overrides). |
+| **Environment variables** | Name/value overrides for dbt commands and formatters. Empty values are allowed. See [Environment files](#environment-files). |
+| **Local builtin definitions** | Maps builtin names to local SQL or Python source files. See [Local builtin definitions](#local-builtin-definitions). |
+| **Catalog file (optional)** | Blank uses `catalog.json` in **Artifact directory**. |
+| **State manifest for navigation (optional)** | Manifest used for state-related navigation. Commands use **Baseline state directory**. |
+| **Information Schema v1 directory (optional)** | Selected dbt v2 `v1/` directory. See [dbt v2 Information Schema](#dbt-v2-information-schema). |
 
 ### Engine and version
 
@@ -39,16 +39,11 @@ the plugin uses the lowest stable version allowed by all its bounds, including t
 patch number. Bounds can be a comma-separated string or a list, in any order.
 Invalid, contradictory or prerelease bounds leave version-dependent features
 disabled. A range with only upper bounds establishes no minimum feature support.
-Set `dbt-version` to override this:
+Set **dbt version (optional)** to override this; for example, enter `1.12`
+and choose `core` in **Engine**.
 
-```yaml
-# .dbt-navigation.yml
-engine: core
-dbt-version: '1.12'
-```
-
-A minor version such as `'1.10'` uses that series' supported patch level. Set a full
-version such as `'1.10.5'` for patch-specific behavior.
+A minor version such as `1.10` uses that series' supported patch level. Set a full
+version such as `1.10.5` for patch-specific behavior.
 
 | Feature | Required version or setting |
 | --- | --- |
@@ -59,16 +54,13 @@ version such as `'1.10.5'` for patch-specific behavior.
 | Generic-test `arguments` mapping | Core 1.10.5+ |
 | UDF resources | Core 1.11+ |
 | `vars.yml`, model-embedded semantics, UDF overloads, JavaScript UDFs and string `selector:` terms | Core 1.12+ |
-| Checks and Information Schema v1 | `engine: v2` |
+| Checks and Information Schema v1 | **Engine** set to `v2` |
 
 ### Profiles and adapters
 
-```yaml
-# .dbt-navigation.yml
-profiles-file: profiles.yml
-target: dev
-adapter: postgres
-```
+For example, set **Profiles file for navigation (optional)** to `profiles.yml`,
+**Active target (blank uses profile default)** to `dev`, and **Adapter (optional)**
+to `postgres`. Click **Apply**.
 
 The selected profile output defines fields such as `target.schema`. The adapter
 narrows dispatch and function targets; without it, navigation can offer several
@@ -81,42 +73,40 @@ candidates.
 
 UDF overloads are supported on Snowflake and Postgres.
 
-### Run-specific variables and selections
+### Variable overrides
 
-```yaml
-# .dbt-navigation.yml
-run-config: run/dev.yml
-selection-files: [run/selection.yml]
+In **Variables (JSON)**, enter a JSON object and click **Apply**. For example:
+
+```json
+{"start_date": "2026-03-01", "regions": ["US", "CA"], "include_archived": false}
 ```
 
-```yaml
-# run/dev.yml
-vars:
-  start_date: '2026-03-01'
-env:
-  DBT_SCHEMA: analytics
-target: dev
-select: orders
-```
+The plugin passes these values to dbt commands with `--vars`, preserving strings,
+numbers, booleans, lists, objects and `null`. They override project defaults for
+editor navigation. **Apply** requires an object; lists and scalar values are rejected.
+Blank uses project defaults. Each owning dbt root has its own overrides.
 
-For editor navigation, run-config `vars` override project defaults. Shell values,
-`dbt --vars` and IDE Run configurations do not supply editor declarations. The
-run-config `env` mapping overrides [environment files](#environment-files) for dbt
-commands and accepts scalar values, including quoted empty strings. Run-config and
-selection files support `select`, `exclude` and `selector`
-[navigation](navigation.md#selectors).
+Go to Declaration for an overridden variable or environment name opens a read-only
+list of names labeled **IntelliJ settings**. Values are edited only in this settings
+page and are not included in that list.
+
+Select the active target through **Active target (blank uses profile default)**.
+Use the [Runner and native Run configuration controls](workspace.md#run-configurations)
+for selection, exclusion and named selectors. Standard `selectors.yml` definitions
+support [selector navigation](navigation.md#selectors).
 
 ### Local builtin definitions
 
-Use `builtin-sources` to open local definitions instead of the selected dbt version's
-reference documentation:
+In **Local builtin definitions**, click **Add** and enter a **Builtin name** and
+**Local source file**, then click **Apply**. For example:
 
-```yaml
-# .dbt-navigation.yml
-builtin-sources:
-  adapter.get_relation: vendor/adapter.py
-  run_query: vendor/core_macros.sql
-```
+| Builtin name | Local source file |
+| --- | --- |
+| `adapter.get_relation` | `vendor/adapter.py` |
+| `run_query` | `vendor/core_macros.sql` |
+
+Navigation opens the local definition instead of the selected dbt version's
+reference documentation. Select a row and click **Remove** to delete a mapping.
 
 SQL mappings name files containing macros; Python mappings name files containing
 functions and need [Python support](installation.md#requirements). Missing
@@ -131,17 +121,14 @@ ones, and open read-only.
 
 | Metadata | Setting | Supported selection |
 | --- | --- | --- |
-| Manifest JSON | `manifest` | Schema versions 9–12 |
-| Catalog JSON | `catalog` | Schema version 1; fresh column metadata |
-| State manifest | `state-manifest` | Manifest for state-related resource references |
-| Information Schema Parquet | `info-schema-dir` | dbt v2 `v1/` directory; resource, column and dependency metadata |
+| Manifest JSON | **Manifest file (optional)** | Schema versions 9–12 |
+| Catalog JSON | **Catalog file (optional)** | Schema version 1; fresh column metadata |
+| State manifest | **State manifest for navigation (optional)** | Manifest for state-related resource references |
+| Information Schema Parquet | **Information Schema v1 directory (optional)** | dbt v2 `v1/` directory; resource, column and dependency metadata |
 
-```yaml
-# .dbt-navigation.yml
-manifest: target/manifest.json
-catalog: target/catalog.json
-state-manifest: state/manifest.json
-```
+For example, enter `target/manifest.json` in **Manifest file (optional)**,
+`target/catalog.json` in **Catalog file (optional)**, and `state/manifest.json` in
+**State manifest for navigation (optional)**, then click **Apply**.
 
 The manifest and `catalog.json` in the [Artifact directory](#execution-settings)
 load automatically. If metadata seems missing, check the paths, the supported
@@ -150,13 +137,10 @@ target.
 
 ### dbt v2 Information Schema
 
-Requires `engine: v2` and, if set in `dbt_project.yml`, `info_schema.version: 1`.
+Requires **Engine** set to `v2` and, if set in `dbt_project.yml`, `info_schema.version: 1`.
 
-```yaml
-# .dbt-navigation.yml
-engine: v2
-info-schema-dir: target/info_schema/v1
-```
+Choose `v2` in **Engine** and enter `target/info_schema/v1` in
+**Information Schema v1 directory (optional)**, then click **Apply**.
 
 Files include resources (`dbt.models.parquet`), columns (`dbt.node_columns.parquet`)
 and dependencies (`dbt.edges.parquet`). Each file is limited to 100,000 rows and
@@ -167,24 +151,18 @@ dependencies are ignored, as are those of resources with unsaved source edits.
 See dbt's [Information Schema file layout](https://docs.getdbt.com/docs/build/dbt-information-schema)
 and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2).
 
-## Settings → dbt Workspace
-
-The page has two tabs: **General** for execution, formatting and lineage, and
-**Integrations** for Metabase, Airflow and the local MCP server. **Apply** saves
-both tabs. On **General**, choose **Owning dbt root** first: execution,
-environment, formatter and baseline settings apply to that dbt project only.
-
 ### Execution settings
 
 | Setting | Default and effect |
 | --- | --- |
 | **Executable or external tool** | `dbt`; a project `.venv` or `venv` is discovered first. A command name, executable or wrapper script is accepted. See [Executables and wrapper scripts](#executables-and-wrapper-scripts). |
 | **Arguments before dbt command** | Empty. Arguments placed before the dbt command; quote arguments containing spaces. |
-| **Environment files** | Blank uses `env-files` from `.dbt-navigation.yml`, or `.env`. See [Environment files](#environment-files). |
+| **Load environment files** | Enabled. Clear to skip environment files. |
+| **Environment files** | Blank uses `.env` when **Load environment files** is enabled. See [Environment files](#environment-files). |
 | **Project root override** | Blank uses the owning directory containing `dbt_project.yml`. Commands run in this directory. |
 | **Profiles directory** | Blank uses `DBT_PROFILES_DIR`, a project-local `profiles.yml`, then `~/.dbt`. Choose the directory containing `profiles.yml`. |
 | **Artifact directory** | `target`. Commands write artifacts here. |
-| **Manifest file (optional)** | Blank uses `manifest.json` in the artifact directory. Choose a file, or enter a path relative to the execution project. A `manifest` entry in `.dbt-navigation.yml` takes precedence. |
+| **Manifest file (optional)** | Blank uses `manifest.json` in the artifact directory. Choose a file, or enter a path relative to the execution project. |
 | **Active target (blank uses profile default)** | Blank uses the selected profile's default target. |
 | **Preview row limit** | 10; accepts 1–1000. |
 | **Colored output** | Enabled. |
@@ -242,19 +220,19 @@ work_group: "{{ env_var('ATHENA_WORK_GROUP', 'primary') }}"
 To use other files, enter semicolon-separated paths in **Environment files**, such as
 `.env; .env.local`, or choose a file with the browse button, then click **Apply**.
 Paths are absolute or relative to the owning dbt root, even when **Project root
-override** points elsewhere. A nonempty setting replaces `env-files`:
+override** points elsewhere. A nonempty **Environment files** setting replaces
+`.env`. Clear **Load environment files** and click **Apply** to disable loading.
 
-```yaml
-# .dbt-navigation.yml
-env-files: [.env, .env.local]
-```
-
-Use `env-files: []` with a blank **Environment files** setting to disable loading.
+To set an override directly, click **Add** in **Environment variables**, enter a
+**Variable name** and **Value**, then click **Apply**. For example, use
+`ATHENA_WORK_GROUP` and `my-workgroup`. An empty value is passed as an empty string;
+select the row and click **Remove** to stop overriding it. Values are saved with
+the IntelliJ project settings.
 
 Commands inherit the IDE's environment. Files override inherited values in their
-listed order; the last assignment wins, and the run-config `env` mapping overrides
-files. Each command reads the current file contents. Missing files and invalid
-assignments are skipped.
+listed order; the last assignment wins. Values in **Environment variables** override files.
+Each command reads the current file contents. Missing files and invalid assignments
+are skipped.
 
 Supported syntax: `export KEY=value`, empty values, single or double quotes, and
 comments. An unquoted inline comment starts with whitespace followed by `#`; quoted
@@ -267,14 +245,14 @@ Set **Baseline state directory** to a separate directory containing `manifest.js
 (schema versions 9–12). It supplies [baseline comparison](workspace.md#review-a-selection-and-compare-a-baseline)
 and command state. It must not overlap **Artifact directory**, including through
 symbolic links. Baselines larger than 50 MB or 50,000 resources cannot be compared.
-The `state-manifest` file setting is separate and only supplies navigation targets.
+**State manifest for navigation (optional)** is separate and only supplies navigation targets.
 
 | Option | Effect and prerequisite |
 | --- | --- |
 | **Defer unselected upstream resources to baseline state** | Adds `--defer --state <directory>`. Requires a valid baseline and dbt Core. |
 | **Favor baseline relations (dbt Core 1.4+)** | Adds `--favor-state`. Requires deferral and Core 1.4+. Without it, dbt uses a relation that already exists in the active target instead of the baseline one. |
 
-Both options are off by default and unavailable for `engine: v2`. Set the
+Both options are off by default and unavailable for **Engine** set to `v2`. Set the
 [engine and version](#engine-and-version) to match your executable.
 
 ### SQL formatter

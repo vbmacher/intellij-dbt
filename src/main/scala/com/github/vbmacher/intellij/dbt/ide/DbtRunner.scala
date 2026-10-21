@@ -206,12 +206,16 @@ private[ide] object DbtCommand {
           val incremental = DbtRunSelection.selectedModels(w, selection).exists(DbtCommand.incremental(w, _))
           val profiles = DbtExecutionContext.profiles(root).directory.toString
           val artifact = root.artifactDirectory
-          state.map { baseline =>
+          for {
+            baseline <- state
+            variables <- DbtVariableOverrides.parse(options.variables)
+          } yield {
             val request = DbtCommandRequest(action,
               if (action == DbtCommandAction.GenerateDocs || all) DbtCommandScope.All else DbtCommandScope.Selected(selectors),
               fullRefresh = fullRefresh && incremental && Set(DbtCommandAction.Run, DbtCommandAction.Build)(action),
               limit = DbtCommandRequest.limit(options.previewLimit), state = baseline,
-              defer = action.usesState && options.defer, favorState = action.usesState && options.favorState)
+              defer = action.usesState && options.defer, favorState = action.usesState && options.favorState,
+              extraArguments = if (variables.size() == 0) Vector.empty else Vector("--vars", variables.toString))
             DbtCommand(prefix.toVector, request, directory.toString,
               DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
               target, options.notifications, artifact.toString, DbtArtifactContext.identity(root), options.colors, root.directory.getPath,

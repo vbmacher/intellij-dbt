@@ -1,11 +1,11 @@
 package com.github.vbmacher.intellij.dbt.navigation
 
-import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtDeclarationSource, DbtRoot, DbtSymbol, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtDeclarationSource, DbtRoot, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.{DbtPython, DbtSyntax, DbtYaml}
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.{PsiElement, PsiFile}
-import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping, YAMLScalar}
+import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
@@ -22,10 +22,11 @@ private[dbt] object DbtResolution {
   private def varsIn(m: YAMLMapping, project: String, name: String): Option[YAMLKeyValue] =
     DbtYaml.map(m, project).flatMap(DbtYaml.keyValue(_, name)).orElse(DbtYaml.keyValue(m, name))
 
-  def overriddenVariable(r: DbtRoot, name: String): Option[YAMLKeyValue] =
-    r.runConfiguration.flatMap(DbtYaml.map(_, "vars")).flatMap(DbtYaml.keyValue(_, name))
+  def overriddenVariable(w: DbtWorkspace, r: DbtRoot, name: String): Option[DbtSymbolElement] =
+    w.symbols.find(s => s.kind == "var" && s.name == name && s.attributes.contains("settings") &&
+      w.owner(s).contains(r)).map(_.element)
 
-  /** A project variable as seen by a project, honouring run configuration overrides and `vars.yml`. */
+  /** A project variable as seen by a project, honouring IntelliJ overrides and `vars.yml`. */
   def variable(w: DbtWorkspace, r: DbtRoot, name: String): Vector[PsiElement] = {
     val consumer = w.packageOwner(r).getOrElse(r)
     val external = if (consumer.supports(12)) w.rootFile(consumer, "vars.yml").flatMap(DbtYaml.mapping).flatMap(DbtYaml.map(_, "vars")) else None
@@ -33,7 +34,7 @@ private[dbt] object DbtResolution {
 
     def nonEmpty(m: Option[YAMLMapping]): Boolean = m.exists(_.getKeyValues.size() > 0)
 
-    overriddenVariable(consumer, name) match {
+    overriddenVariable(w, consumer, name) match {
       case Some(definition) => Vector(definition)
       case None if nonEmpty(external) && nonEmpty(original) => Vector.empty
       case None => external.orElse(original).flatMap(varsIn(_, r.name, name))
@@ -116,9 +117,8 @@ private[dbt] object DbtResolution {
 /** Only explicitly selected local source files can replace builtin documentation targets. */
 private[navigation] final class DbtBuiltinSources extends DbtDeclarationSource {
   override def declarations(w: DbtWorkspace): Vector[DbtSymbol] = w.roots.flatMap { root =>
-    root.settings.flatMap(DbtYaml.map(_, "builtin-sources")).toVector.flatMap(_.getKeyValues.asScala).flatMap { entry =>
-      val name = entry.getKeyText
-      Option(entry.getValue).collect { case s: YAMLScalar => s.getTextValue }.toVector.flatMap(root.psiFile).flatMap { file =>
+    root.runOptions.builtinSources.asScala.toVector.flatMap { case (name, path) =>
+      root.psiFile(path).toVector.flatMap { file =>
         val identifier = name.split("\\.").last
         val ranges = if (file.getVirtualFile.getExtension == "py") DbtPython.declarations(file, identifier).map(_.getTextRange)
         else if (file.getVirtualFile.getExtension == "sql") DbtSyntax.inFile(file)

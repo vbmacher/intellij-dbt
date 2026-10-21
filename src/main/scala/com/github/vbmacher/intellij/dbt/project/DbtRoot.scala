@@ -8,8 +8,8 @@ import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping, YAMLScalar}
 import java.nio.file.{FileSystems, Path, PathMatcher, Paths}
 import scala.util.Try
 
-/** A dbt project directory with its `dbt_project.yml` and optional `.dbt-navigation.yml` settings. */
-private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping, settings: Option[YAMLMapping]) {
+/** A dbt project directory with its `dbt_project.yml` and per-root IntelliJ settings. */
+private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping) {
   val name: String = DbtYaml.string(config, "name").getOrElse(directory.getName)
 
   private def base: Path = Paths.get(directory.getPath)
@@ -42,30 +42,30 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     (if (path.isAbsolute) path else executionDirectory.resolve(path)).normalize()
   }
 
-  def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key)).orElse(key match {
+  def setting(key: String): Option[String] = key match {
     case "manifest" => Some(Option(runOptions.manifestPath).filter(_.nonEmpty)
       .map(p => executionDirectory.resolve(p).normalize()).getOrElse(artifactDirectory.resolve("manifest.json")).toString)
-    case "catalog" => Some(artifactDirectory.resolve("catalog.json").toString)
+    case "catalog" => Some(Option(runOptions.catalogPath).filter(_.nonEmpty)
+      .getOrElse(artifactDirectory.resolve("catalog.json").toString))
+    case "engine" => Some(runOptions.engine)
+    case "dbt-version" => Option(runOptions.dbtVersion).filter(_.nonEmpty)
+    case "profiles-file" => Option(runOptions.profilesFile).filter(_.nonEmpty)
+    case "adapter" => Option(runOptions.adapter).filter(_.nonEmpty)
+    case "state-manifest" => Option(runOptions.stateManifestPath).filter(_.nonEmpty)
+    case "info-schema-dir" => Option(runOptions.infoSchemaDirectory).filter(_.nonEmpty)
     case "target" => Option(runOptions.target).filter(_.nonEmpty)
     case _ => None
-  })
+  }
 
-  def runConfiguration: Option[YAMLMapping] = setting("run-config").flatMap(yaml)
+  /** The target chosen in IntelliJ settings, before the profile default. */
+  def selectedTarget: Option[String] = setting("target")
 
-  def runtimeSetting(key: String): Option[String] = setting(key).orElse(runConfiguration.flatMap(DbtYaml.string(_, key)))
-
-  /** The target chosen in the IDE or the run configuration, before the profile default. */
-  def selectedTarget: Option[String] = Option(runOptions.target).filter(_.nonEmpty).orElse(runtimeSetting("target"))
-
-  def profilesFile: String = runtimeSetting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
+  def profilesFile: String = setting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
-    (if (runOptions.environmentFiles.trim.nonEmpty) runOptions.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
-    else settings.map(DbtYaml.strings(_, "env-files", Vector(".env"))).getOrElse(Vector(".env"))).flatMap(psiFile)
-
-  /** Whether a file holds node selection expressions, in addition to `selectors.yml`. */
-  def isSelectionFile(file: PsiFile): Boolean = relative(file.getVirtualFile)
-    .exists((settings.toVector.flatMap(DbtYaml.strings(_, "selection-files")) ++ setting("run-config")).contains)
+    (if (!runOptions.loadEnvironmentFiles) Vector.empty
+    else if (runOptions.environmentFiles.trim.nonEmpty) runOptions.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
+    else Vector(".env")).flatMap(psiFile)
 
   def profile: Option[YAMLMapping] = DbtYaml.string(config, "profile").flatMap(p => yaml(profilesFile).flatMap(DbtYaml.map(_, p)))
 
@@ -73,14 +73,13 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def target(key: String): Vector[YAMLKeyValue] = profile.toVector.flatMap { p =>
     if (key == "name") {
       if (runOptions.target.nonEmpty) DbtYaml.map(p, "outputs").flatMap(DbtYaml.keyValue(_, runOptions.target)).toVector
-      else settings.flatMap(DbtYaml.keyValue(_, "target")).orElse(runConfiguration.flatMap(DbtYaml.keyValue(_, "target")))
-        .orElse(DbtYaml.keyValue(p, "target")).toVector
+      else DbtYaml.keyValue(p, "target").toVector
     }
     else selectedTarget.orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
       .flatMap(t => DbtYaml.map(p, "outputs").flatMap(DbtYaml.map(_, t)).flatMap(DbtYaml.keyValue(_, key)))
   }
 
-  def adapter: Option[String] = runtimeSetting("adapter").orElse(target("type").headOption
+  def adapter: Option[String] = setting("adapter").orElse(target("type").headOption
     .flatMap(k => Option(k.getValue)).collect { case s: YAMLScalar => s.getTextValue })
 
   /** Adapters whose implementations apply, most specific first. */

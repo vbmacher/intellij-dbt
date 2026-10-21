@@ -123,7 +123,7 @@ final class DbtLineMarkerProviderTest extends DbtTestCase {
 
   def testMetadataStatusShowsStalenessAndYieldsToLocalSource(): Unit = {
     project()
-    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    configureSettings(_.manifestPath = "target/manifest.json")
     val content = """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","generated_at":"2000-01-01T00:00:00Z"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql"}}}"""
     val manifest = add("target/manifest.json", content)
     configure("models/report.sql", "select * from {{ ref('re<caret>mote') }}")
@@ -141,7 +141,7 @@ final class DbtLineMarkerProviderTest extends DbtTestCase {
 
   def testUdfAndPythonModelFilesOfferYamlProperties(): Unit = {
     project()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.12"; o.adapter = "snowflake" }
     val schema = add("functions/schema.yml", "functions:\n- name: hash_customer\n")
     configure("functions/hash_customer.js", "<caret>return customer_id;")
     assertEquals(1, gutters.size)
@@ -154,7 +154,7 @@ final class DbtLineMarkerProviderTest extends DbtTestCase {
 
   def testUnsupportedAndDisabledResourcesHaveNoMarkers(): Unit = {
     project()
-    add(".dbt-navigation.yml", "dbt-version: '1.11'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.11"; o.adapter = "snowflake" }
     val schema = add("functions/schema.yml", "functions:\n- name: hash_customer\n  language: javascript\n")
     configure("functions/hash_customer.js", "<caret>return customer_id;")
     assertEquals("JavaScript UDF navigation requires Core 1.12", 0, gutters.size)

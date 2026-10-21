@@ -242,7 +242,7 @@ final class DbtEditorNavigationTest extends DbtTestCase {
 
   def testInformationSchemaNamePredicateRespectsEnabledConfiguration(): Unit = {
     project("models:\n  analytics:\n    +enabled: false\n")
-    add(".dbt-navigation.yml", "engine: v2\n")
+    configureSettings(_.engine = "v2")
     val orders = add("models/orders.sql", "select 1")
     configure("checks/exists.sql", "select name from {{ info_schema('models') }} where name = 'or<caret>ders'")
 

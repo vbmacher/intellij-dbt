@@ -26,7 +26,7 @@ private[ide] object DbtCompletion {
 
   def suggestions(file: PsiFile, offset: Int): Vector[DbtSuggestion] = {
     val w = DbtWorkspace.get(file.getProject)
-    val root = w.root(file).filter(r => !r.excluded(file.getVirtualFile) && (r.resource(file) || r.isSelectionFile(file) || file.getName == "selectors.yml"))
+    val root = w.root(file).filter(r => !r.excluded(file.getVirtualFile) && (r.resource(file) || file.getName == "selectors.yml"))
       .getOrElse(return Vector.empty)
 
     def resources(kinds: Set[String], namespace: Option[String] = None): Vector[DbtSymbol] =
@@ -89,7 +89,7 @@ private[ide] object DbtCompletion {
       val config = if (call.exists(_.name == "config")) ConfigKeys.map(k => DbtSuggestion(k + "=", "configuration", "config")) else Vector.empty
       val builtins = if (namespace.isEmpty && call.isEmpty) Vector("ref", "source", "doc", "var", "config").map(k => DbtSuggestion(k, "dbt", "builtin")) else Vector.empty
       (named ++ config ++ builtins ++ resources(Set("macro"), namespace).map(suggestion)).distinctBy(_.text)
-    } else if (root.isSelectionFile(file) || file.getName == "selectors.yml") {
+    } else if (file.getName == "selectors.yml") {
       (w.symbols.filter(s => w.owner(s).exists(r => w.namespaceVisible(root, r, qualified = true))).flatMap { s =>
         Vector(DbtSuggestion("package:" + s.namespace, "selector", "selector")) ++
           s.attributes.get("tags").toVector.flatMap(_.split(",")).map(tag => DbtSuggestion("tag:" + tag, "selector", "selector")) ++

@@ -145,7 +145,6 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
 
 private[dbt] object DbtWorkspace {
   val ProjectFileName = "dbt_project.yml"
-  private val SettingsFileName = ".dbt-navigation.yml"
   private val FileIndex = Key.create[CachedValue[Vector[DbtSymbol]]]("dbt.file.declarations")
 
   def get(project: Project): DbtWorkspace = CachedValuesManager.getManager(project).getCachedValue(project, () => {
@@ -160,7 +159,7 @@ private[dbt] object DbtWorkspace {
 
   private def loadRoot(project: Project, directory: VirtualFile): Option[DbtRoot] =
     child(project, directory, ProjectFileName).flatMap(DbtYaml.mapping)
-      .map(DbtRoot(directory, _, child(project, directory, SettingsFileName).flatMap(DbtYaml.mapping)))
+      .map(DbtRoot(directory, _))
 
   /** Nearest project configuration, without parsing the file or scanning all workspace resources. */
   def rootForFile(project: Project, file: VirtualFile): Option[DbtRoot] =
@@ -211,8 +210,8 @@ private[dbt] object DbtWorkspace {
   /** Declarations of a single file, cached until the file or its project configuration changes. */
   private def fileSymbols(project: Project, file: PsiFile, directory: VirtualFile): Vector[DbtSymbol] =
     CachedValuesManager.getManager(project).getCachedValue(file, FileIndex, () => {
-      val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++
-        child(project, directory, ProjectFileName) ++ child(project, directory, SettingsFileName)
+      val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)) ++
+        child(project, directory, ProjectFileName)
       CachedValueProvider.Result.create(loadRoot(project, directory).map(DbtDeclarations.inFile(file, _))
         .getOrElse(Vector.empty), dependencies: _*)
     }, false)

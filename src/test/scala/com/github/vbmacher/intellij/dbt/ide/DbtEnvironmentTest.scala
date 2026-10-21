@@ -56,17 +56,25 @@ BROKEN="unterminated
       "REPEATED" -> "last"), DbtEnvironment.parse(text))
   }
 
-  def testFilesAndRunConfigComposeForEveryCommandAndFormatter(): Unit = {
+  def testFilesAndIntelliJOverridesComposeForEveryCommandAndFormatter(): Unit = {
     val root = setupRoot()
-    add(".dbt-navigation.yml", "env-files: [.env, .env.local, missing.env]\nrun-config: run/dev.yml\n")
+    configureSettings { o =>
+      o.environmentFiles = ".env; .env.local; missing.env"
+      o.variables = "{\"start_date\":\"2026-03-01\",\"nested\":{\"list\":[1,true,null]}}"
+      Map("ATHENA_WORK_GROUP" -> "from-settings", "NUMBER" -> "123", "FLAG" -> "false",
+        "RUN_EMPTY" -> "", "DBT_PROFILES_DIR" -> "profiles").foreach { case (name, value) => o.environmentVariables.put(name, value) }
+    }
     add(".env", "ATHENA_WORK_GROUP=base\nBASE_ONLY=base\nEMPTY=value\nPATH=/configured/bin\nDBT_TARGET_PATH=ignored\n")
     val local = add(".env.local", "ATHENA_WORK_GROUP=local\nEMPTY=\nLOCAL_ONLY=local\n")
-    add("run/dev.yml", "env:\n  ATHENA_WORK_GROUP: from-run-config\n  NUMBER: 123\n  FLAG: false\n  RUN_EMPTY: ''\n  DBT_PROFILES_DIR: profiles\n")
     add("profiles/profiles.yml", "analytics: {target: athena, outputs: {athena: {type: athena}}}\n")
     add(".venv/bin/dbt", "")
     for (action <- Vector("Run", "Build", "Compile", "Test", "Preview", "Generate Docs", "Source Freshness", "Resolve Selection")) {
-      val env = command(root, action).environment
-      assertEquals("from-run-config", env("ATHENA_WORK_GROUP"))
+      val cmd = command(root, action)
+      val index = cmd.arguments.indexOf("--vars")
+      assertTrue(action + " includes configured variables", index >= 0)
+      assertEquals(JsonParser.parseString(root.runOptions.variables), JsonParser.parseString(cmd.arguments(index + 1)))
+      val env = cmd.environment
+      assertEquals("from-settings", env("ATHENA_WORK_GROUP"))
       assertEquals("base", env("BASE_ONLY"))
       assertEquals("local", env("LOCAL_ONLY"))
       assertEquals("", env("EMPTY"))
@@ -79,16 +87,16 @@ BROKEN="unterminated
       assertEquals("athena", command(root, action).target)
     }
     root.runOptions.formatterExecutable = "sqlfmt"
-    assertEquals("from-run-config", DbtToolCommand.create(root.psiFile("models/orders.sql").get).toOption.get.environment("ATHENA_WORK_GROUP"))
+    assertEquals("from-settings", DbtToolCommand.create(root.psiFile("models/orders.sql").get).toOption.get.environment("ATHENA_WORK_GROUP"))
     edit(local, "LOCAL_ONLY=changed\n")
     assertEquals("changed", command(root).environment("LOCAL_ONLY"))
     root.runOptions.profilesDirectory = root.directory.getPath
     assertEquals("dev", command(root).target)
   }
 
-  def testSettingsOverrideConfiguredFilesAndKeepRootsAndSavedPreferencesIndependent(): Unit = {
+  def testEnvironmentSettingsKeepRootsAndSavedPreferencesIndependent(): Unit = {
     val root = setupRoot()
-    add(".dbt-navigation.yml", "env-files: [configured.env]\n")
+    configureSettings(_.environmentFiles = "configured.env")
     add("configured.env", "ATHENA_WORK_GROUP=configured\n")
     add("custom env", "ATHENA_WORK_GROUP=custom\n")
     val last = add("last.env", "ATHENA_WORK_GROUP=last\n")
@@ -103,7 +111,7 @@ BROKEN="unterminated
       val roots = form.getComponents.collectFirst { case combo: JComboBox[_] => combo.asInstanceOf[JComboBox[String]] }.get
       val field = form.getComponents.collectFirst { case field: TextFieldWithBrowseButton if field.getName == "dbt.environmentFiles" => field }.get
       roots.setSelectedItem(root.directory.getPath)
-      assertEquals("", field.getText)
+      assertEquals("configured.env", field.getText)
       field.setText("custom env; " + last.getVirtualFile.getPath)
       assertTrue(configurable.isModified)
       roots.setSelectedItem(other.directory.getPath)
@@ -157,9 +165,9 @@ with open('environment.json', 'w') as f:
     add("execution/.env", "ATHENA_WORK_GROUP=execution\n")
     root.runOptions.projectRoot = config.getVirtualFile.getParent.getPath
     assertEquals("owner", command(root).environment("ATHENA_WORK_GROUP"))
-    val navigation = add(".dbt-navigation.yml", "env-files: []\n")
+    configureSettings(_.loadEnvironmentFiles = false)
     assertFalse(command(root).environment.contains("ATHENA_WORK_GROUP"))
-    edit(navigation, "env-files: [missing.env]\n")
+    configureSettings { o => o.loadEnvironmentFiles = true; o.environmentFiles = "missing.env" }
     assertFalse(command(root).environment.contains("ATHENA_WORK_GROUP"))
   }
 }

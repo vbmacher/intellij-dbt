@@ -91,7 +91,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
     val config = bareProject()
     assertEquals("1.10", workspace.roots.head.version)
     edit(config, "name: analytics\nrequire-dbt-version: [\">=1.5.0\", \"<1.6.0\"]\n")
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     val from = workspace.roots.head
     assertEquals("1.12", from.version)
     assertTrue(from.supportsKind("function"))
@@ -158,12 +158,11 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testProfileRuntimeVarsAndCustomProfilesPath(): Unit = {
     bareProject("profile: analytics\nvars: {color: default}\n")
-    add(".dbt-navigation.yml", "profiles-file: config/profiles.yml\nrun-config: run/dev.yml\ntarget: dev\n")
-    val run = add("run/dev.yml", "vars: {color: explicit}\n")
+    configureSettings { o => o.profilesFile = "config/profiles.yml"; o.variables = "{\"color\":\"explicit\"}"; o.target = "dev" }
     val profile = add("config/profiles.yml", "analytics:\n  target: prod\n  outputs:\n    dev:\n      type: postgres\n      schema: \"{{ var('color') }}\"\n")
-    assertEquals(Vector(run), targetsAt(profile, "color").map(_.getContainingFile))
+    assertTrue(targetsAt(profile, "color").head.asInstanceOf[DbtSymbolElement].symbol.attributes.contains("settings"))
     val use = add("models/use.sql", "{{ target.name }}")
-    assertTrue(targetsAt(use, "name").forall(_.getContainingFile.getName == ".dbt-navigation.yml"))
+    assertEquals(Vector(profile), targetsAt(use, "name").map(_.getContainingFile))
     assertEquals(1, targetsAt(use, "name").size)
   }
 
@@ -181,12 +180,12 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testLegacyTestArgumentsGateAndDisabledChecks(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.9'\n")
+    configureSettings(_.dbtVersion = "1.9")
     add("macros/test.sql", "{% test positive(model, minimum) %}{% endtest %}")
     val props = add("models/tests.yml", "models:\n- name: orders\n  tests:\n  - positive: {minimum: 0}\n  - positive: {arguments: {minimum: 0}}\n")
     assertEquals(1, targetsAt(props, "minimum").size)
     assertTrue(targetsAt(props, "minimum", 1).isEmpty)
-    edit(projectFile(".dbt-navigation.yml"), "engine: v2\n")
+    configureSettings(_.engine = "v2")
     val check = add("checks/off.sql", "{{ config(enabled=false) }}select name from {{ info_schema('models') }}")
     assertTrue(targetsAt(check, "models").isEmpty)
   }
@@ -231,7 +230,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
     val r = w.roots.head
     assertEquals(1, targetsAt(selectors, "nightly", 1).size)
     assertTrue(targetsAt(selectors, "selector:nightly").isEmpty)
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     assertEquals(1, targetsAt(selectors, "nightly", 2).size)
     assertTrue(targetsAt(selectors, "orders").isEmpty)
     assertEquals(1, targetsAt(selectors, "orders", 1).size)
@@ -242,7 +241,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testDefaultDispatchPrefersRootOverrideAndProfileTypeIsDecoded(): Unit = {
     bareProject("profile: analytics\n")
-    add(".dbt-navigation.yml", "target: dev\n")
+    configureSettings(_.target = "dev")
     add("profiles.yml", "analytics:\n  outputs:\n    dev:\n      type: 'redshift'\n")
     add("dbt_packages/util/dbt_project.yml", "name: util\n")
     add("dbt_packages/util/macros/format.sql", "{% macro default__format() %}{% endmacro %}")
@@ -253,7 +252,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testManifestSourceArgumentsAndMissingVersionStayDistinct(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    configureSettings(_.manifestPath = "target/manifest.json")
     add("models/orders_v1.sql", "select 1")
     add("models/versions.yml", "models:\n- name: orders\n  versions:\n  - v: 1\n")
     add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json"},"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","resource_type":"source","name":"events","source_name":"raw","package_name":"analytics"}},"nodes":{"model.analytics.orders.v2":{"unique_id":"model.analytics.orders.v2","resource_type":"model","name":"orders","version":2,"package_name":"analytics","original_file_path":"models/orders_v2.sql"}}}""")
@@ -283,18 +282,18 @@ final class DbtAcceptanceTest extends DbtTestCase {
     assertEquals(Vector(model), targetsAt(unit, "util.orders").map(_.getContainingFile))
     assertEquals(2, targetsAt(unit, "input", 1).size)
     assertTrue(targetsAt(unit, "missing").isEmpty)
-    add(".dbt-navigation.yml", "dbt-version: '1.7'\n")
+    configureSettings(_.dbtVersion = "1.7")
     assertTrue(targetsAt(unit, "util.orders").isEmpty)
     assertTrue(targetsAt(unit, "input", 1).isEmpty)
   }
 
   def testVersionSpecificTestArguments(): Unit = {
     bareProject()
-    val settings = add(".dbt-navigation.yml", "dbt-version: '1.10.4'\n")
+    configureSettings(_.dbtVersion = "1.10.4")
     add("macros/test.sql", "{% test positive(model, minimum) %}{% endtest %}")
     val props = add("models/tests.yml", "models:\n- name: orders\n  data_tests:\n  - positive: {arguments: {minimum: 0}}\n")
     assertTrue(targetsAt(props, "minimum").isEmpty)
-    edit(settings, "dbt-version: '1.10.5'\n")
+    configureSettings(_.dbtVersion = "1.10.5")
     assertEquals(1, targetsAt(props, "minimum").size)
   }
 
@@ -319,13 +318,13 @@ final class DbtAcceptanceTest extends DbtTestCase {
     assertTrue(targetsAt(use, "raw").isEmpty)
     assertTrue(targetsAt(use, "events").isEmpty)
     assertTrue(targetsAt(config, "hash").isEmpty)
-    add(".dbt-navigation.yml", "dbt-version: '1.11'\n")
+    configureSettings(_.dbtVersion = "1.11")
     assertEquals(1, targetsAt(config, "hash").size)
   }
 
   def testBuiltinSourceAndDocumentationTargetsFindOnlyLocalUsages(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "builtin-sources:\n  adapter.get_relation: vendor/adapter.sql\n")
+    configureSettings { o => o.builtinSources.put("adapter.get_relation", "vendor/adapter.sql") }
     val source = add("vendor/adapter.sql", "{% macro get_relation(database, schema, identifier) %}{% endmacro %}")
     val use = add("models/use.sql", "{{ adapter.get_relation('db', 's', 't') }} {{ config.require('unique_key') }} {{ dbt_version }}")
     assertEquals(Vector(source), targetsAt(use, "adapter.get_relation").map(_.getContainingFile))
@@ -337,17 +336,17 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testFunctionLanguageAdapterOverloadAndCallerGates(): Unit = {
     bareProject()
-    val settings = add(".dbt-navigation.yml", "dbt-version: '1.11'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.11"; o.adapter = "snowflake" }
     val js = add("functions/hash.js", "return input;")
     val sql = add("functions/hash_numeric.sql", "input > 0")
     val props = add("functions/hash.yml", "functions:\n- name: hash\n  config: {language: javascript}\n  overloads:\n  - defined_in: hash_numeric\n")
     val use = add("models/use.sql", "{{ function('hash') }}")
     assertTrue(targetsAt(use, "hash").isEmpty)
-    edit(settings, "dbt-version: '1.12'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.12"; o.adapter = "snowflake" }
     assertEquals(Set(js, sql), targetsAt(use, "hash").map(_.getContainingFile).toSet)
     val hook = add("models/hook.yml", "models:\n- name: use\n  config:\n    post_hook: \"{{ function('hash') }}\"\n")
     assertEquals(3, ReferencesSearch.search(targetsAt(use, "hash").find(_.getContainingFile == js).get).findAll().size())
-    edit(settings, "dbt-version: '1.12'\nadapter: postgres\n")
+    configureSettings { o => o.dbtVersion = "1.12"; o.adapter = "postgres" }
     assertFalse(targetsAt(use, "hash").exists(_.getContainingFile == js))
     assertTrue(hook.isValid && props.isValid)
   }
@@ -384,7 +383,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testCurrentMetricInputsAliasesSavedQueriesAndTimeSpines(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\n")
+    configureSettings(_.dbtVersion = "1.12")
     add("models/orders.sql", "select 1")
     val schema = add("models/semantics.yml", "models:\n- name: orders\n  semantic_model: {name: sales}\n  time_spine: {standard_granularity_column: ordered_at}\n  columns:\n  - name: customer_id\n    entity: {name: customer, type: primary}\n  - name: ordered_at\n    dimension: {type: time}\n  - name: country\n    dimension: {type: categorical}\n  - name: amount\n  metrics:\n  - name: revenue\n    type: simple\n    expr: amount\n  - name: running_revenue\n    type: cumulative\n    input_metric: revenue\n  - name: conversion\n    type: conversion\n    entity: customer\n    base_metric: revenue\n    conversion_metric: running_revenue\nmetrics:\n- name: growth\n  type: derived\n  input_metrics:\n  - name: revenue\n    alias: gross\n  expr: gross + 1\nsaved_queries:\n- name: report\n  query_params:\n    metrics: [growth]\n    group_by: [\"Dimension('customer__country')\"]\n    where: \"TimeDimension('ordered_at', 'DAY') > '2026-01-01'\"\n    order_by: [\"Metric('growth')\"]\n  exports: [{name: daily}]\n")
     assertEquals(1, targetsAt(schema, "ordered_at").size)
@@ -442,7 +441,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testChecksIgnorePathsUnsupportedVersionsAndIncompleteQueries(): Unit = {
     bareProject("check-paths: [metadata_checks]\ninfo_schema: {version: 1}\n")
-    val settings = add(".dbt-navigation.yml", "engine: v2\n")
+    configureSettings(_.engine = "v2")
     add("models/orders.sql", "select 1")
     val check = add("metadata_checks/partial.sql", "select name from {{ info_schema('models') }} where name =")
     assertEquals(1, targetsAt(check, "models").size)
@@ -451,7 +450,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
     assertTrue(DbtNavigation.inFile(ignored).isEmpty)
     edit(projectFile("dbt_project.yml"), "name: analytics\ncheck-paths: [metadata_checks]\ninfo_schema: {version: 999}\n")
     assertTrue(targetsAt(check, "models").isEmpty)
-    edit(settings, "engine: core\ndbt-version: '1.12'\n")
+    configureSettings { o => o.engine = "core"; o.dbtVersion = "1.12" }
     assertTrue(DbtNavigation.inFile(check).isEmpty)
   }
 
@@ -486,7 +485,7 @@ final class DbtAcceptanceTest extends DbtTestCase {
 
   def testCatalogColumnsRespectProjectAndInstalledPackageOwners(): Unit = {
     bareProject()
-    add(".dbt-navigation.yml", "catalog: target/catalog.json\n")
+    configureSettings(_.catalogPath = "target/catalog.json")
     add("models/orders.sql", "select 1")
     bareProject(path = "other/")
     add("other/models/orders.sql", "select 2")

@@ -119,7 +119,7 @@ private[dbt] object DbtNavigation {
   }
 
   private def navigable(file: PsiFile, r: DbtRoot): Boolean = !r.excluded(file.getVirtualFile) && (r.resource(file) ||
-    r.isSelectionFile(file) || ProjectFiles(file.getName) || r.isFile(file, r.profilesFile))
+    ProjectFiles(file.getName) || r.isFile(file, r.profilesFile))
 }
 
 /** Parser-independent SQL evidence shared by editor features and lineage. Unknown is never an empty, known schema. */

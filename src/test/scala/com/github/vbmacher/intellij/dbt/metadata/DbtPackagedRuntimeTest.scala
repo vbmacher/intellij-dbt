@@ -30,7 +30,7 @@ final class DbtPackagedRuntimeTest extends DbtTestCase {
       model.addContentEntry(directory)
     })
     add("dbt_project.yml", "name: analytics\ninfo_schema: {version: 1}\n")
-    add(".dbt-navigation.yml", "engine: v2\ninfo-schema-dir: target/info_schema/v1\n")
+    configureSettings { o => o.engine = "v2"; o.infoSchemaDirectory = "target/info_schema/v1" }
     val use = add("models/use.sql", "{{ ref('remote_20') }}")
     val parent = myFixture.getTempDirFixture.findOrCreateDir("target/info_schema/v1")
     val fixtures = Files.list(Paths.get(sys.props("dbt.packaged.fixtures")))

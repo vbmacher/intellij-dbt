@@ -37,9 +37,9 @@ final class DbtParquetNavigationTest extends DbtTestCase {
 
   private val future = "2099-01-01T00:00:00Z"
 
-  private def infoSchemaProject(settings: String = "engine: v2\ninfo-schema-dir: target/info_schema/v1\n"): Unit = {
+  private def infoSchemaProject(engine: String = "v2", directory: String = "target/info_schema/v1"): Unit = {
     add("dbt_project.yml", "name: analytics\ninfo_schema:\n  version: 1\n")
-    add(".dbt-navigation.yml", settings)
+    configureSettings { o => o.engine = engine; o.infoSchemaDirectory = directory }
   }
 
   private def parquet(table: String, columns: String, rows: Vector[Map[String, String]],
@@ -183,21 +183,14 @@ final class DbtParquetNavigationTest extends DbtTestCase {
   }
 
   def testExplicitSelectionVersionAndMalformedFiles(): Unit = {
-    infoSchemaProject("engine: v2\n")
+    infoSchemaProject(directory = "")
     parquet("models", modelSchema, Vector(model("remote")))
     val usage = add("models/use.sql", "{{ ref('remote') }}")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
-    val settings = myFixture.findFileInTempDir(".dbt-navigation.yml")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit =
-        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v2\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-    })
+    configureSettings { o => o.engine = "v2"; o.infoSchemaDirectory = "target/info_schema/v2" }
     parquet("models", modelSchema, Vector(model("remote")), directory = "target/info_schema/v2")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit =
-        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-    })
+    configureSettings { o => o.engine = "v2"; o.infoSchemaDirectory = "target/info_schema/v1" }
     val artifact = myFixture.findFileInTempDir("target/info_schema/v1/dbt.models.parquet")
     WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
       override def run(): Unit = artifact.setBinaryContent(Array[Byte](1, 2, 3))
@@ -243,15 +236,11 @@ final class DbtParquetNavigationTest extends DbtTestCase {
   }
 
   def testCoreProjectsAndOversizedTablesStayUnresolved(): Unit = {
-    infoSchemaProject("engine: core\ninfo-schema-dir: target/info_schema/v1\n")
+    infoSchemaProject(engine = "core")
     parquet("models", modelSchema, Vector(model("remote")))
     val usage = add("models/use.sql", "{{ ref('remote') }}")
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
-    val settings = myFixture.findFileInTempDir(".dbt-navigation.yml")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit =
-        settings.setBinaryContent("engine: v2\ninfo-schema-dir: target/info_schema/v1\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-    })
+    configureSettings { o => o.engine = "v2"; o.infoSchemaDirectory = "target/info_schema/v1" }
     parquet("models", modelSchema, Vector.fill(100001)(model("remote")))
     assertTrue(references(usage, "remote").forall(_.candidates.isEmpty))
   }
