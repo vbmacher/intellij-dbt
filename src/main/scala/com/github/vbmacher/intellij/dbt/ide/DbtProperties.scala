@@ -3,19 +3,22 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
+import com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis
+import com.intellij.codeInsight.hint.HintManager
+import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.diff.DiffManager
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.{DialogWrapper, ValidationInfo}
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.{PsiDocumentManager, PsiFile, PsiFileFactory}
-import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.ui.table.JBTable
-import org.jetbrains.yaml.{YAMLElementGenerator, YAMLFileType}
+import org.jetbrains.yaml.{YAMLElementGenerator, YAMLFileType, YAMLUtil}
 import org.jetbrains.yaml.psi.{YAMLMapping, YAMLSequence}
-import java.awt.BorderLayout
-import javax.swing.{JButton, JComponent, JPanel}
+import javax.swing.JComponent
 import scala.jdk.CollectionConverters._
 
 private[ide] final case class DbtPropertyEdit(path: String, before: String, after: String, file: Option[PsiFile],
@@ -54,11 +57,24 @@ private[ide] object DbtPropertiesEditor {
       input.name + input.version.map(" v" + _).getOrElse("") + " · " + input.file.getName)
     (state + (if (names.isEmpty) "" else ": " + names.mkString(", ")), inputs)
   }
+  /** The editable properties declarations of a resource; property and source table declarations describe themselves. */
+  private def declarations(w: DbtWorkspace, resource: DbtSymbol): Vector[DbtSymbol] =
+    if (resource.kind == "source_table" || resource.isProperty) Vector(resource) else w.properties(resource)
+
+  /** Appends YAML items to a block or flow sequence of `text`, keeping the sequence's style and indentation. */
+  def appendItems(text: String, sequence: YAMLSequence, values: Vector[String]): String = {
+    val flow = sequence.getText.trim.startsWith("[")
+    val offset = sequence.getTextRange.getEndOffset - (if (flow) 1 else 0)
+    val insertion = if (flow) (if (sequence.getItems.isEmpty) "" else ", ") + values.mkString(", ")
+      else values.map(v => "\n" + " " * YAMLUtil.getIndentInThisLine(sequence) + "- " + v).mkString
+    text.substring(0, offset) + insertion + text.substring(offset)
+  }
+
   def plan(w: DbtWorkspace, resource: DbtSymbol, description: String, columns: Vector[DbtColumnData],
     tags: Vector[String], tests: Vector[String], updateTags: Boolean = false, updateTests: Boolean = false): Either[String, DbtPropertyEdit] = {
     val root = w.owner(resource).toRight("The owning project is unavailable.")
     root.flatMap { r =>
-      val properties = (if (resource.kind == "source_table" || resource.isProperty) Vector(resource) else w.properties(resource)).filterNot(_.metadata)
+      val properties = declarations(w, resource).filterNot(_.metadata)
       if (resource.metadata || w.packageOwner(r).nonEmpty || !resource.file.isWritable) Left("Choose a writable local source definition.")
       else if (properties.size > 1) Left("Multiple properties entries exist; choose an unambiguous declaration.")
       else if (properties.exists(p => !p.file.isWritable)) Left("The properties declaration is read-only.")
@@ -138,12 +154,7 @@ private[ide] object DbtPropertiesEditor {
             s"{name: ${quoted(column.name)}$dataType, description: ${quoted(column.description)}}"
           }
           val after = if (values.isEmpty) copy.getText else DbtYaml.value(mapping, "columns") match {
-            case Some(sequence: YAMLSequence) =>
-              val flow = sequence.getText.trim.startsWith("[")
-              val offset = sequence.getTextRange.getEndOffset - (if (flow) 1 else 0)
-              val insertion = if (flow) (if (sequence.getItems.isEmpty) "" else ", ") + values.mkString(", ")
-                else values.map(v => "\n" + " " * org.jetbrains.yaml.YAMLUtil.getIndentInThisLine(sequence) + "- " + v).mkString
-              copy.getText.substring(0, offset) + insertion + copy.getText.substring(offset)
+            case Some(sequence: YAMLSequence) => appendItems(copy.getText, sequence, values)
             case None =>
               // YAML's key generator moves long flow sequences to a new line
               // with root indentation. Insert at the native mapping range so
@@ -164,8 +175,7 @@ private[ide] object DbtPropertiesEditor {
   }
 
   def show(w: DbtWorkspace, resource: DbtSymbol): Unit = {
-    val properties = (if (resource.kind == "source_table" || resource.isProperty) Vector(resource) else w.properties(resource)).distinctBy(_.id)
-    properties match {
+    declarations(w, resource).distinctBy(_.id) match {
       case Vector(one) => one.element.navigate(true)
       case entries if entries.nonEmpty => DbtNavigationItem.popup("dbt properties", entries.map(s => DbtNavigationItem.declaration(s.element)))
         .showCenteredInCurrentWindow(w.project)
@@ -204,5 +214,56 @@ private[ide] object DbtPropertiesEditor {
           override def doOKAction(): Unit = if (doValidate() == null) { edit.apply(w.project); super.doOKAction() }
         }.show()
     }
+  }
+}
+
+abstract class DbtPropertiesIntention(inherit: Boolean) extends IntentionAction {
+  override def getText: String = if (inherit) "Inherit empty dbt column descriptions" else "Generate missing dbt columns"
+  override def getFamilyName: String = "dbt properties"
+  override def startInWriteAction(): Boolean = false
+  private def resource(project: Project, editor: Editor, file: PsiFile): Option[(DbtWorkspace, DbtSymbol)] =
+    DbtResourceAction.at(project, Some(file), editor.getCaretModel.getOffset)
+      .filter { case (w, s) => !s.metadata && s.file.isWritable && w.owner(s).exists(w.packageOwner(_).isEmpty) }
+  override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean =
+    resource(project, editor, file).exists { case (w, symbol) =>
+      if (inherit) DbtColumnLineage.inherited(w, symbol).nonEmpty
+      else {
+        val names = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).map(_.name).toSet
+        DbtResourceData.get(w, symbol).columns.exists(c => !names(c.name))
+      }
+    }
+  override def invoke(project: Project, editor: Editor, file: PsiFile): Unit =
+    resource(project, editor, file).foreach { case (w, symbol) => DbtPropertiesEditor.generate(w, symbol, inherit) }
+}
+final class DbtGenerateColumnsIntention extends DbtPropertiesIntention(inherit = false)
+final class DbtInheritDescriptionsIntention extends DbtPropertiesIntention(inherit = true)
+
+/** IntelliJ supplies a preview and one undoable write command for this intention. */
+final class DbtExpandColumnsIntention extends IntentionAction {
+  override def getText: String = "Expand dbt SQL columns"
+  override def getFamilyName: String = "dbt SQL"
+  override def startInWriteAction(): Boolean = true
+  private def analysis(file: PsiFile) = DbtSqlAnalysis.get(DbtWorkspace.get(file.getProject), file).toVector
+  private def expansion(file: PsiFile, offset: Int) =
+    analysis(file).flatMap(_.wildcards).find { case (range, columns) => range.containsOffset(offset) && columns.nonEmpty }
+  private def problem(file: PsiFile, offset: Int) = analysis(file).flatMap(_.wildcardProblems).find(_.range.containsOffset(offset))
+  override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean =
+    expansion(file, editor.getCaretModel.getOffset).nonEmpty || problem(file, editor.getCaretModel.getOffset).nonEmpty
+  override def invoke(project: Project, editor: Editor, file: PsiFile): Unit = {
+    val offset = editor.getCaretModel.getOffset
+    expansion(file, offset) match {
+      case Some((range, columns)) => editor.getDocument.replaceString(range.getStartOffset, range.getEndOffset, columns.mkString(", "))
+      case _ => problem(file, offset).foreach(p => HintManager.getInstance().showErrorHint(editor, p.message))
+    }
+  }
+  override def generatePreview(project: Project, editor: Editor, file: PsiFile): IntentionPreviewInfo = {
+    val original = file.getOriginalFile
+    expansion(original, editor.getCaretModel.getOffset).map { case (range, columns) =>
+      val text = original.getText
+      new IntentionPreviewInfo.CustomDiff(file.getFileType, text,
+        text.substring(0, range.getStartOffset) + columns.mkString(", ") + text.substring(range.getEndOffset)): IntentionPreviewInfo
+    }.orElse(problem(original, editor.getCaretModel.getOffset).map(p =>
+      new IntentionPreviewInfo.Html(StringUtil.escapeXmlEntities(p.message)): IntentionPreviewInfo))
+      .getOrElse(IntentionPreviewInfo.EMPTY)
   }
 }
