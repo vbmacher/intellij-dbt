@@ -1,13 +1,13 @@
 package com.github.vbmacher.intellij.dbt.project
 
-import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
+import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.lang.Language
 import com.intellij.navigation.ItemPresentation
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
-import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.{IconLoader, TextRange}
 import com.intellij.psi.impl.light.LightElement
 import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiFile, PsiNamedElement, SmartPointerManager}
-import com.github.vbmacher.intellij.dbt.syntax.DbtSyntax
 import com.intellij.util.IncorrectOperationException
 import org.jetbrains.yaml.psi.{YAMLMapping, YAMLSequence}
 
@@ -73,13 +73,9 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
   def presentableText: String = s"$namespace.$name${version.map(" v" + _).getOrElse("")}$metadataSuffix"
 }
 
-private[project] object DbtSymbolLanguage {
-  val Instance: Language = new Language("dbt-symbol") {}
-}
-
 /** A source declaration with a stable identity, including declarations in plain-text Community files. */
 final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
-  extends LightElement(symbol.file.getManager, DbtSymbolLanguage.Instance) with PsiNamedElement {
+  extends LightElement(symbol.file.getManager, DbtSymbolElement.Language) with PsiNamedElement {
   private val pointer = SmartPointerManager.getInstance(symbol.file.getProject)
     .createSmartPsiFileRangePointer(symbol.file, symbol.range)
   private var deletion = Option.empty[com.intellij.psi.SmartPsiFileRange]
@@ -87,6 +83,13 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
   private[dbt] def prepareOutputAliasRename(): Unit = { insertOutputAlias = true }
   private[dbt] def prepareSourceDeletion(range: TextRange): Unit =
     deletion = Some(SmartPointerManager.getInstance(getProject).createSmartPsiFileRangePointer(symbol.file, range))
+
+  private def edit(change: Document => Unit): Unit = {
+    val documents = PsiDocumentManager.getInstance(getProject)
+    val document = documents.getDocument(symbol.file)
+    change(document)
+    documents.commitDocument(document)
+  }
 
   override def getName: String = symbol.name
 
@@ -105,37 +108,26 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
     if (symbol.isCode) {
       val extension = symbol.file.getVirtualFile.getExtension
       if (!symbol.attributes.contains("defined_in")) symbol.file.setName(name + symbol.version.map("_v" + _).getOrElse("") + "." + extension)
-    } else {
-      val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
+    } else edit { document =>
       if (insertOutputAlias || symbol.attributes.contains("insert-output-alias")) document.insertString(getTextRange.getEndOffset, " as " + name)
       else {
         val existing = document.getText(getTextRange)
         val quote = existing.headOption.filter(c => Set('"', '\'', '`')(c) && existing.lastOption.contains(c))
         document.replaceString(getTextRange.getStartOffset, getTextRange.getEndOffset, quote.fold(name)(q => s"$q$name$q"))
       }
-      PsiDocumentManager.getInstance(getProject).commitDocument(document)
     }
     this
   }
 
   override def delete(): Unit = {
     if (!isWritable) throw new IncorrectOperationException("Choose a writable source definition.")
-    if (deletion.nonEmpty) deletion.flatMap(p => Option(p.getRange)).foreach { range =>
-      val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
-      document.deleteString(range.getStartOffset, range.getEndOffset)
-      PsiDocumentManager.getInstance(getProject).commitDocument(document)
-    }
+    if (deletion.nonEmpty) deletion.flatMap(p => Option(p.getRange))
+      .foreach(range => edit(_.deleteString(range.getStartOffset, range.getEndOffset)))
     else if (symbol.isCode) symbol.file.delete()
     else if (symbol.isProperty || symbol.kind == "column" && symbol.mapping.nonEmpty) symbol.mapping.foreach(m => m.getParent.delete())
     else if (symbol.kind == "macro") {
-      val blocks = DbtSyntax.inFile(symbol.file)
-      val start = blocks.find(b => b.isTag("macro") && b.range.contains(getTextRange))
-      val end = start.flatMap(s => blocks.find(b => b.isTag("endmacro") && b.range.getStartOffset > s.range.getStartOffset))
-      (for (a <- start; b <- end) yield (a, b)).foreach { case (a, b) =>
-        val document = PsiDocumentManager.getInstance(getProject).getDocument(symbol.file)
-        document.deleteString(a.range.getStartOffset, b.range.getEndOffset)
-        PsiDocumentManager.getInstance(getProject).commitDocument(document)
-      }
+      DbtSyntax.tagged(DbtSyntax.inFile(symbol.file), "macro", getTextRange)
+        .foreach { case (a, b) => edit(_.deleteString(a.range.getStartOffset, b.range.getEndOffset)) }
     } else throw new IncorrectOperationException("Safe deletion of this SQL definition requires an explicit projection edit.")
   }
 
@@ -179,6 +171,8 @@ private[dbt] trait DbtDocumentationNavigation {
 }
 
 private[dbt] object DbtSymbolElement {
+  private val Language: Language = new Language("dbt-symbol") {}
+
   /** Shared by every presentation of a dbt declaration. */
   def icon(kind: String): Icon = kind match {
     case "model" | "source" | "source_table" | "information_schema_view" | "cte" => DbtIcons.Table
@@ -208,4 +202,37 @@ private[dbt] object DbtSymbolElement {
     case "materialization" => DbtIcons.Materialization
     case _ => DbtIcons.Property
   }
+}
+
+/** Shared dbt mark with color-coded resource symbols; IntelliJ selects the dark SVG variant. */
+private[dbt] object DbtIcons {
+  private def load(name: String): Icon = IconLoader.getIcon(s"/icons/dbt/$name.svg", getClass)
+
+  lazy val Table: Icon = load("table")
+  lazy val Seed: Icon = load("seed")
+  lazy val Snapshot: Icon = load("snapshot")
+  lazy val Query: Icon = load("query")
+  lazy val Macro: Icon = load("macro")
+  lazy val Jinja: Icon = load("jinja")
+  lazy val Function: Icon = load("function")
+  lazy val Test: Icon = load("test")
+  lazy val Check: Icon = load("check")
+  lazy val Doc: Icon = load("doc")
+  lazy val SemanticModel: Icon = load("semantic-model")
+  lazy val Metric: Icon = load("metric")
+  lazy val Alias: Icon = load("alias")
+  lazy val Dimension: Icon = load("dimension")
+  lazy val Entity: Icon = load("entity")
+  lazy val Column: Icon = load("column")
+  lazy val Export: Icon = load("export")
+  lazy val Group: Icon = load("group")
+  lazy val Package: Icon = load("package")
+  lazy val Variable: Icon = load("variable")
+  lazy val Parameter: Icon = load("parameter")
+  lazy val Config: Icon = load("config")
+  lazy val Property: Icon = load("property")
+  lazy val Result: Icon = load("result")
+  lazy val Selector: Icon = load("selector")
+  lazy val Materialization: Icon = load("materialization")
+  lazy val Gutter: Icon = load("gutter")
 }

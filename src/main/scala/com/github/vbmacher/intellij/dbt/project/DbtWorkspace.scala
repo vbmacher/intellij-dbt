@@ -139,15 +139,12 @@ private[dbt] object DbtWorkspace {
       VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)) ++ inputs): _*)
   })
 
-  private def configFile(project: Project, directory: VirtualFile): Option[PsiFile] =
-    DbtYaml.psiFile(project, directory.findChild(ProjectFileName))
-
-  private def settingsFile(project: Project, directory: VirtualFile): Option[PsiFile] =
-    DbtYaml.psiFile(project, directory.findChild(SettingsFileName))
+  private def child(project: Project, directory: VirtualFile, name: String): Option[PsiFile] =
+    DbtYaml.psiFile(project, directory.findChild(name))
 
   private def loadRoot(project: Project, directory: VirtualFile): Option[DbtRoot] =
-    configFile(project, directory).flatMap(DbtYaml.mapping)
-      .map(DbtRoot(directory, _, settingsFile(project, directory).flatMap(DbtYaml.mapping)))
+    child(project, directory, ProjectFileName).flatMap(DbtYaml.mapping)
+      .map(DbtRoot(directory, _, child(project, directory, SettingsFileName).flatMap(DbtYaml.mapping)))
 
   /** Nearest project configuration, without parsing the file or scanning all workspace resources. */
   def rootForFile(project: Project, file: VirtualFile): Option[DbtRoot] =
@@ -196,7 +193,7 @@ private[dbt] object DbtWorkspace {
   private def fileSymbols(project: Project, file: PsiFile, directory: VirtualFile): Vector[DbtSymbol] =
     CachedValuesManager.getManager(project).getCachedValue(file, FileIndex, () => {
       val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++
-        configFile(project, directory) ++ settingsFile(project, directory)
+        child(project, directory, ProjectFileName) ++ child(project, directory, SettingsFileName)
       CachedValueProvider.Result.create(loadRoot(project, directory).map(DbtDeclarations.inFile(file, _))
         .getOrElse(Vector.empty), dependencies: _*)
     }, false)

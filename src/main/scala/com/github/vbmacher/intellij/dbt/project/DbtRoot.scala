@@ -5,16 +5,17 @@ import com.intellij.openapi.vfs.{LocalFileSystem, VfsUtilCore, VirtualFile}
 import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping, YAMLScalar}
 
-import java.nio.file.{FileSystems, PathMatcher, Paths}
+import java.nio.file.{FileSystems, Path, PathMatcher, Paths}
 import scala.util.Try
 
 /** A dbt project directory with its `dbt_project.yml` and optional `.dbt-navigation.yml` settings. */
 private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping, settings: Option[YAMLMapping]) {
   val name: String = DbtYaml.string(config, "name").getOrElse(directory.getName)
 
+  private def base: Path = Paths.get(directory.getPath)
+
   def psiFile(path: String): Option[PsiFile] = {
     val requested = Paths.get(path).normalize()
-    val base = Paths.get(directory.getPath)
     val relative = if (requested.isAbsolute && requested.startsWith(base)) base.relativize(requested).toString else path
     Option(directory.findFileByRelativePath(relative)).orElse(
       if (requested.isAbsolute) Option(LocalFileSystem.getInstance.findFileByPath(path)) else None).flatMap(DbtYaml.psiFile(config.getProject, _))
@@ -32,12 +33,10 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     configured
   }
 
-  def executionDirectory: java.nio.file.Path = {
-    val overridePath = Option(runOptions.projectRoot).filter(_.nonEmpty).map(Paths.get(_))
-    overridePath.map(p => if (p.isAbsolute) p else Paths.get(directory.getPath).resolve(p)).getOrElse(Paths.get(directory.getPath)).normalize()
-  }
+  def executionDirectory: Path =
+    Option(runOptions.projectRoot).filter(_.nonEmpty).map(base.resolve).getOrElse(base).normalize()
 
-  def artifactDirectory: java.nio.file.Path = {
+  def artifactDirectory: Path = {
     val path = Paths.get(runOptions.artifactDirectory)
     (if (path.isAbsolute) path else executionDirectory.resolve(path)).normalize()
   }
@@ -126,12 +125,11 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   private val ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])] =
     DbtRoot.ignorePatterns(psiFile(".dbtignore").map(_.getText).getOrElse(""))
 
-  private val configuredOutput = {
-    val base = Paths.get(directory.getPath)
+  private val configuredOutput =
     if (artifactDirectory.startsWith(base) && artifactDirectory != base) Vector(base.relativize(artifactDirectory).toString.replace('\\', '/'))
     else Vector.empty
-  }
-  val exclusions: Vector[String] = Vector(".git", ".idea", ".venv", "venv", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
+  val exclusions: Vector[String] = Vector(".git", ".idea", ".venv", "venv", "logs", packagePath,
+    DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
 
   def relative(file: VirtualFile): Option[String] = Option(VfsUtilCore.getRelativePath(file, directory, '/'))
 

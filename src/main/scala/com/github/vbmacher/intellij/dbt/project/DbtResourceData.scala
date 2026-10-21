@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.openapi.progress.ProgressManager
-import org.jetbrains.yaml.psi.{YAMLMapping, YAMLSequence}
+import org.jetbrains.yaml.psi.YAMLMapping
 import scala.jdk.CollectionConverters._
 
 private[dbt] final case class DbtColumnData(name: String, dataType: String = "", description: String = "", declarations: Vector[String] = Vector.empty)
@@ -32,16 +32,14 @@ private[dbt] object DbtResourceData {
     val properties = if (s.isProperty || s.mapping.nonEmpty) Vector(s) else w.properties(s)
     val declared = w.columns(s).distinctBy(_.name)
     val columns = declared.map(c => DbtColumnData(c.name, c.attributes.getOrElse("data_type", ""), c.attributes.getOrElse("description", ""),
-      c.mapping.toVector.flatMap(m => DbtYaml.items(m, "constraints").flatMap(DbtYaml.string(_, "type")) ++ testData(m, c.name).map(_.name))))
+      c.mapping.toVector.flatMap(columnDeclarations(_, c.name))))
     val declaredTests = declared.flatMap(c => c.mapping.toVector.flatMap(testData(_, c.name)))
     val source = properties.flatMap(_.mapping).foldLeft(DbtResourceData(description = s.attributes.getOrElse("description", ""),
       columns = columns, tests = declaredTests, tags = s.attributes.get("tags").toVector.flatMap(_.split(",")).filter(_.nonEmpty), attributes = s.attributes,
       rawSql = if (s.isCode && Set("model", "snapshot")(s.kind) && s.file.getName.endsWith(".sql")) Some(s.file.getText) else None)) { (data, m) =>
-      val columns = DbtYaml.items(m, "columns").flatMap { c => DbtYaml.string(c, "name").map { name =>
-        val constraints = DbtYaml.items(c, "constraints").flatMap(DbtYaml.string(_, "type"))
-        val tests = testData(c, name).map(_.name)
-        DbtColumnData(name, DbtYaml.string(c, "data_type").getOrElse(""), DbtYaml.string(c, "description").getOrElse(""), constraints ++ tests)
-      }}
+      val columns = DbtYaml.items(m, "columns").flatMap(c => DbtYaml.string(c, "name").map(name =>
+        DbtColumnData(name, DbtYaml.string(c, "data_type").getOrElse(""), DbtYaml.string(c, "description").getOrElse(""),
+          columnDeclarations(c, name))))
       val args = DbtYaml.items(m, "arguments").flatMap(a => DbtYaml.string(a, "name").map(n =>
         DbtColumnData(n, DbtYaml.string(a, "type").getOrElse(""), DbtYaml.string(a, "description").getOrElse(""))))
       data.enrich(DbtResourceData(DbtYaml.string(m, "description").getOrElse(""), columns,
@@ -53,10 +51,8 @@ private[dbt] object DbtResourceData {
     }
     def docBody(call: DbtSyntax.Call): Option[String] = {
       val bodies = w.owner(s).toVector.flatMap(r => w.definitions(call, Set("doc"), r)).map { d =>
-        val blocks = DbtSyntax.inFile(d.file)
-        val start = blocks.find(b => b.isTag("docs") && b.range.contains(d.range)).map(_.range.getEndOffset)
-        val end = start.flatMap(a => blocks.find(b => b.isTag("enddocs") && b.range.getStartOffset >= a).map(_.range.getStartOffset))
-        (for (a <- start; b <- end) yield d.file.getText.substring(a, b).trim).getOrElse("")
+        DbtSyntax.tagged(DbtSyntax.inFile(d.file), "docs", d.range)
+          .fold("") { case (a, b) => d.file.getText.substring(a.range.getEndOffset, b.range.getStartOffset).trim }
       }
       if (bodies.size == 1) bodies.headOption else None
     }
@@ -79,10 +75,20 @@ private[dbt] object DbtResourceData {
     enriched.copy(description = docs(enriched.description), columns = enriched.columns.map(c => c.copy(description = docs(c.description))))
   }
 
+  /** Constraint types and data test names declared for a column. */
+  private def columnDeclarations(column: YAMLMapping, name: String): Vector[String] =
+    DbtYaml.items(column, "constraints").flatMap(DbtYaml.string(_, "type")) ++ testData(column, name).map(_.name)
+
   private def testData(m: YAMLMapping, column: String): Vector[DbtTestData] = Vector("data_tests", "tests").flatMap { key =>
-    DbtYaml.value(m, key).toVector.collect { case s: YAMLSequence => s }.flatMap(_.getItems.asScala).flatMap(i => Option(i.getValue)).map {
+    DbtYaml.elements(m, key).map {
       case test: YAMLMapping => DbtTestData(test.getKeyValues.asScala.headOption.map(_.getKeyText).getOrElse("test"), column)
       case test => DbtTestData(test.getText, column)
     }
   }
+}
+
+/** A logical resource within its owning project. DbtSymbol.id identifies an individual declaration instead. */
+private[dbt] object DbtResourceIdentity {
+  def key(workspace: DbtWorkspace, symbol: DbtSymbol): String =
+    workspace.owner(symbol).map(_.directory.getPath).getOrElse("") + "|" + symbol.uniqueId
 }

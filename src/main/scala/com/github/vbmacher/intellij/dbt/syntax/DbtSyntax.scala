@@ -44,6 +44,11 @@ private[dbt] object DbtSyntax {
     start < range.getStartOffset && blocks.find(b => b.isTag(endTag) && b.range.getStartOffset > start)
       .exists(_.range.getEndOffset > range.getEndOffset)
 
+  /** The `tag` block containing a range and the first `end` block following it. */
+  def tagged(blocks: Vector[Block], tag: String, range: TextRange): Option[(Block, Block)] =
+    blocks.find(b => b.isTag(tag) && b.range.contains(range)).flatMap(start =>
+      blocks.find(b => b.isTag("end" + tag) && b.range.getStartOffset > start.range.getStartOffset).map(start -> _))
+
   final case class Argument(tokens: Vector[Token], keyword: Option[String], keywordRange: Option[TextRange] = None) {
     def literal: Option[String] = tokens match {
       case Vector(t) if t.string || t.image.matches("[0-9]+|true|false|True|False") => Some(t.image)
@@ -225,4 +230,59 @@ private[dbt] object DbtSyntax {
     Call(name, new TextRange(ts(begin).range.getStartOffset, ts(callee).range.getEndOffset), args.toVector, block,
       new TextRange(ts(begin).range.getStartOffset, ts(i - 1).range.getEndOffset), closed = finished)
   }
+}
+
+/** Host spans only, not a SQL grammar. Used to keep diagnostics and clipboard edits out of comments/literals. */
+private[dbt] object DbtSqlText {
+  final case class Token(text: String, range: TextRange, protectedText: Boolean = false, identifier: Boolean = false)
+  private val DollarQuote = "\\$[A-Za-z_0-9]*\\$".r
+
+  def tokens(text: String): Vector[Token] = {
+    val result = ArrayBuffer.empty[Token]
+    var i = 0
+    while (i < text.length) {
+      ProgressManager.checkCanceled()
+      val start = i
+      var protectedText = false
+      var identifier = false
+      if (text.startsWith("{{", i) || text.startsWith("{%", i) || text.startsWith("{#", i)) {
+        val endTag = if (text(i + 1) == '{') "}}" else if (text(i + 1) == '%') "%}" else "#}"
+        val end = text.indexOf(endTag, i + 2)
+        i = if (end < 0) text.length else end + 2
+      }
+      else if (text.startsWith("--", i)) { protectedText = true; i = text.indexOf('\n', i) match { case -1 => text.length; case n => n } }
+      else if (text.startsWith("/*", i)) {
+        protectedText = true
+        var depth = 1; i += 2
+        while (i < text.length && depth > 0) {
+          if (text.startsWith("/*", i)) { depth += 1; i += 2 }
+          else if (text.startsWith("*/", i)) { depth -= 1; i += 2 }
+          else i += 1
+        }
+      } else if (Set('\'', '"', '`', '[')(text(i))) {
+        val quote = text(i); val end = if (quote == '[') ']' else quote
+        protectedText = quote == '\''; identifier = !protectedText; i += 1
+        var done = false
+        while (i < text.length && !done) {
+          if (text(i) == end) {
+            if (i + 1 < text.length && text(i + 1) == end) i += 2
+            else { i += 1; done = true }
+          } else if (text(i) == '\\' && i + 1 < text.length) i += 2 else i += 1
+        }
+      } else if (text(i) == '$' && DollarQuote.findPrefixOf(text.substring(i)).nonEmpty) {
+        protectedText = true
+        val delimiter = DollarQuote.findPrefixOf(text.substring(i)).get
+        val end = text.indexOf(delimiter, i + delimiter.length)
+        i = if (end < 0) text.length else end + delimiter.length
+      } else if (text(i).isLetterOrDigit || text(i) == '_') {
+        identifier = true; i += 1
+        while (i < text.length && (text(i).isLetterOrDigit || Set('_', '$')(text(i)))) i += 1
+      } else if (text(i).isWhitespace) { i += 1; while (i < text.length && text(i).isWhitespace) i += 1 }
+      else i += 1
+      result += Token(text.substring(start, i), new TextRange(start, i), protectedText, identifier)
+    }
+    result.toVector
+  }
+
+  def inactive(text: String, offset: Int): Boolean = tokens(text).exists(t => t.protectedText && t.range.containsOffset(offset))
 }
