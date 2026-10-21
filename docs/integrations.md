@@ -6,29 +6,17 @@ Open these actions from the **Tools** menu:
 
 | Action | Use it to |
 | --- | --- |
-| **dbt Downstream Consumers** | Find declared exposures and cached Metabase consumers. |
+| **dbt Downstream Consumers** | Open the [Exposures tab](workspace.md#exposures) for the current resource. |
 | **dbt Airflow Context** | View automatically detected local Airflow pipelines. |
 | **dbt Local MCP Server** | Start or stop read-only project access for an AI assistant on this computer. |
 
 ## Find downstream consumers
 
-Open **Tools → dbt Downstream Consumers** from a model to list its downstream
-exposures and cached Metabase consumers; without a model, it lists all consumers.
-Each entry shows the consumer's name, type, owner and why it is associated. Choose a
-column instead of **All columns** to narrow Metabase matches. Select an entry and
-click **Open consumer** to open it in the browser, or **Go to exposure definition**
-for a declared exposure.
-
-For Metabase, [configure the connection](configuration.md#metabase-connection)
-(**Configure…** opens it), then click **Refresh Metabase metadata**. Refresh is
-manual and reads at most 20 databases, 1,000 questions and 100 dashboards; consumers
-beyond these limits are missing. The cache is marked stale after 15 minutes and
-discarded when the project closes. A failed refresh keeps the previous data and
-shows the error.
-
-A match is **direct physical metadata** when the question's database, schema and
-table identify one resource, and **inferred** when it comes from native SQL text or
-incomplete metadata.
+Declared dbt exposures and cached Metabase questions and dashboards appear in the
+**Exposures** tab beside **Lineage** in the **dbt** tool window. See
+[Exposures](workspace.md#exposures) for its controls, column filter, refresh behavior
+and examples, and [Metabase connection](configuration.md#metabase-connection) for
+connection settings.
 
 ## Inspect Airflow context
 

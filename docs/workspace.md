@@ -2,9 +2,10 @@
 
 [User guide](getting_started.md)
 
-Open **View → Tool Windows → dbt** for the **Lineage** tab. dbt commands run in the
-IDE's **Run** window, CTE inspection uses the **Debug** window, and resource details
-open in the **Documentation** tool window. Browsing the graph does not run dbt or
+Open **View → Tool Windows → dbt** for the **Lineage** and **Exposures** tabs.
+dbt commands run in the
+IDE's **Run** window, CTE inspection uses the **Debug** window, and clicking a Lineage
+card opens its details on the right of the graph. Browsing the graph does not run dbt or
 query the warehouse.
 
 ## Lineage
@@ -18,7 +19,7 @@ a checkmark and border mark the selected card. Depth and layout direction are
 
 | Control | Action |
 | --- | --- |
-| Click a card | Select it, open native Documentation and dim unrelated resources. |
+| Click a card | Select it, show its documentation on the right and dim unrelated resources. |
 | Double-click a card | Focus the graph on it and open its definition. |
 | Enter / Shift+Enter | On a keyboard-focused card: select it / focus the graph on it and open its definition. |
 | **Inspect** | Choose a resource to center it at a readable size and open its details. |
@@ -29,8 +30,22 @@ a checkmark and border mark the selected card. Depth and layout direction are
 | Mouse wheel, **Zoom in**, **Zoom out** | Zoom. Automatic views keep cards at 80–100% zoom, so large graphs extend beyond the canvas. |
 | **Fit graph** | Show the full overview. |
 | Zoom percentage | Return to 100% around the selected or focused resource. |
-| **Open Documentation** | Open details for the selected resource, or the focused one when nothing is selected. See [Quick documentation](editing.md#quick-documentation). |
+| **Open Documentation** | Show details on the right for the selected resource, or the focused one when nothing is selected. |
 | **Regenerate Docs** | Open a Generate Docs [Run configuration](#run-configurations) for the graph's execution project without launching it. |
+
+### Resource documentation
+
+Click a card, for example **orders**, to read its descriptions, columns, dependencies
+and tests in the **Documentation** pane. Hovering over a card opens nothing.
+The pane stays on the right as you move the mouse or pan the graph. Drag its left
+divider to change its width; with the divider focused, use Left and Right arrow keys.
+**Close documentation** returns that space to the graph.
+
+Click a column name to inspect its upstream dependencies and downstream consumers
+in the same pane. **Resource details** returns to the resource. **Airflow context**
+appears only when the resource has detected Airflow tasks.
+
+![Orders documentation beside the Lineage graph, with a divider for resizing.](screenshots/lineage-documentation.png)
 
 ### Filter, group and export
 
@@ -58,6 +73,57 @@ source freshness. Badge details identify the target and invocation. Click a badg
 to open the recorded results in **Run**; this starts no command. Editing source
 makes earlier results stale, and a missing badge does not mean success. Run the
 **Source Freshness** command to update freshness.
+
+## Exposures
+
+Select **Exposures** beside **Lineage** to find declared dbt exposures and cached
+Metabase questions and dashboards associated with the resource in the active
+editor. **Tools → dbt Downstream Consumers** opens this tab for the resource at the
+caret. The **Resource** label shows its scope; **All resources** means that no dbt
+resource was recognized. Switching editors updates the scope even when Lineage
+focus is pinned. Browsing the tab does not run dbt or query the warehouse.
+
+Each row shows the name, type, owner when available, association reason and
+supporting location or relation. Declared exposures can depend on the resource
+through downstream dbt models. Metabase questions match physical database,
+schema and table metadata or SQL text; dashboards are inferred through their
+questions. Inferred associations are candidates to inspect, not proof of usage.
+
+| Control | Action |
+| --- | --- |
+| **All columns** / column name | Narrow Metabase rows to a known column. Exposures and rows without column evidence remain labeled **model-level; column use unknown**. The filter is retained when the same resource refreshes and reset when the resource changes. |
+| **Open consumer** | Open the selected consumer's browser URL, when available. |
+| **Go to exposure definition** | Open the selected declared exposure; Metabase rows have no local declaration. |
+| **Refresh Metabase metadata** | Fetch read-only metadata explicitly. There is no automatic polling. Local exposures remain available without a connection. |
+| **Configure…** | Open the integration settings; see [Metabase connection](configuration.md#metabase-connection). |
+
+For example, `fct_orders` has columns `id` and `gross_amount`. The tab shows its
+`orders_dashboard` exposure, the **Revenue by amount** question using
+`gross_amount`, the **Finance dashboard** containing that question, and an
+**Orders overview** SQL question matched only at model level:
+
+![Exposures beside Lineage, showing all consumers of fct_orders.](screenshots/downstream-consumers-all.png)
+
+Choosing **id** hides the question and dashboard whose known match is
+`gross_amount`. The exposure and **Orders overview** remain with column use
+unknown; their presence does not prove they use `id`:
+
+![The Exposures column filter retains model-level consumers.](screenshots/downstream-consumers-column.png)
+
+The status shows the last successful refresh time and labels cached data older
+than 15 minutes **stale** when the view updates. A failed refresh keeps the
+previous consumers and timestamp, and shows the error:
+
+![The Exposures tab retains its consumer list after an HTTP 503 refresh failure.](screenshots/downstream-consumers-refresh-error.png)
+
+These captures use the production panels in IntelliJ's tabbed content UI with a
+local dbt project and local HTTP fixture metadata, without an installed IDE frame.
+The cache lasts while the IDE project is open and is cleared when integration
+settings are applied. Refresh fails above 20 databases or 1,000 questions; only the
+first 100 dashboards are inspected and a larger list is marked partial. Dashboards
+whose details cannot be fetched are omitted. Missing permissions, physical
+metadata or supported query structures can leave consumers undiscovered, so an
+empty list does not establish that a change is safe.
 
 ## Run dbt commands
 

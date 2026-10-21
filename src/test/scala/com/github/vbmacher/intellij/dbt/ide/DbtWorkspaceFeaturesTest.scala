@@ -99,6 +99,7 @@ sources:
     assertTrue(html.contains("Orders &lt;strong&gt; &amp; details"))
     assertFalse(html.contains("Orders <strong>"))
     assertTrue(html.contains("Upstream (1)"))
+    assertFalse("Hide Airflow context when no tasks are available", html.contains("Airflow context"))
     assertFalse(html.contains("<li>analytics.materialized</li>"))
     assertFalse(html.contains("<li>analytics.raw</li>"))
   }

@@ -107,6 +107,9 @@ Cfg(dag_id="finance /daily", task_id="build & report", dbt_selector="orders")
     val freshModel = resource(fresh, "/models/orders.sql")
     assertTrue(DbtAirflow.navigation(fresh, freshModel, task.id, "definition").isLeft)
     assertEquals("changed", DbtAirflow.context(fresh, freshModel).head.dag)
+    val html = DbtDocumentation.render(fresh, freshModel)
+    assertTrue(html.contains("<h3>Airflow context</h3>"))
+    assertTrue(html.contains("changed / build"))
   }
 
   def testExternalCheckoutRecursionSkipDirectoriesAndDiskRefresh(): Unit = {

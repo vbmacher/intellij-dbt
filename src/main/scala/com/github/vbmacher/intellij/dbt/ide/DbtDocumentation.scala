@@ -139,6 +139,7 @@ private[ide] object DbtDocumentation {
       val names = if (data.arguments.nonEmpty) data.arguments.map(_.name) else w.symbols.filter(p => p.kind == "parameter" && p.owner == s.name && p.file == s.file).map(_.name)
       s"<pre>${e(s.name + names.mkString("(", ", ", ")"))}</pre>" + data.arguments.map(a => s"<p>${e(a.name)}: ${e(a.dataType)} ${e(a.description)}</p>").mkString
     } else ""
+    val airflow = DbtAirflow.context(w, s)
     s"<div class='definition'><b>${e(displayName(s))}</b> — ${e(s.kind)}</div>" + signature +
       "<table>" + metadata.map { case (label, value) => s"<tr><td>$label</td><td>${e(value)}</td></tr>" }.mkString + "</table>" +
       s"<div class='content'>${e(data.description).replace("\n", "<br>")}</div>" +
@@ -147,8 +148,8 @@ private[ide] object DbtDocumentation {
         s"<tr><td><a href=\"dbt-column:${URLEncoder.encode(c.name, StandardCharsets.UTF_8)}\">${e(c.name)}</a></td><td>${e(c.dataType)}</td><td>${e(c.description)}</td></tr>").mkString + "</table>") +
       list("Upstream", upstream) + list("Downstream", downstream) +
       s"<h3>Tests (${data.tests.size})</h3>" + data.tests.map(t => s"<p>${e(t.name)} ${e(t.column)}</p>").mkString +
-      "<h3>Airflow context</h3>" + DbtAirflow.context(w, s).map(t =>
-      s"<p>${e(t.dag)} / ${e(t.task)} — ${e(t.schedule)}<br>Selection: ${e(t.selection)}<br>Exclude: ${e(t.exclude)}<br>${e(t.problems.mkString("; "))}</p>").mkString +
+      (if (airflow.isEmpty) "" else "<h3>Airflow context</h3>" + airflow.map(t =>
+        s"<p>${e(t.dag)} / ${e(t.task)} — ${e(t.schedule)}<br>Selection: ${e(t.selection)}<br>Exclude: ${e(t.exclude)}<br>${e(t.problems.mkString("; "))}</p>").mkString) +
       s"<p>Source: ${e(s.file.getVirtualFile.getPath)}</p>"
   }
 }
@@ -265,8 +266,10 @@ private[ide] final class DbtColumnDocumentationTarget(resource: DbtSymbol, name:
     current(w).flatMap(column(w, _)).map(_.element).orNull
   }
 
-  override def computeDocumentation(): DocumentationResult = DbtDocumentation.compute(resource.file.getProject) {
-    val w = DbtWorkspace.get(resource.file.getProject)
+  override def computeDocumentation(): DocumentationResult = DbtDocumentation.compute(resource.file.getProject)(
+    render(DbtWorkspace.get(resource.file.getProject)))
+
+  def render(w: DbtWorkspace): Option[String] = {
     current(w).map { model =>
       def e(text: String): String = DbtDocumentation.escape(text)
 

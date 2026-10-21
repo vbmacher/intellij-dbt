@@ -21,10 +21,17 @@ const exportedSvg=async()=>Buffer.from((await lastExport('svg')).split(',')[1],'
 const hasEvent=(type,id)=>page.evaluate(([type,id])=>events.some(e=>e.type===type&&e.id===id),[type,id]);
 async function nodePosition(id){return page.evaluate(id=>{const p=cy.getElementById(id).renderedPosition(),r=document.getElementById('cy').getBoundingClientRect();return{x:r.x+p.x,y:r.y+p.y}},id)}
 test('bundled graph loads and cards show resource identity',async()=>{assert.deepEqual(errors,[]);assert.equal(await page.locator('.card:not(.boundary)').count(),4);assert.match(await page.locator('#cards').innerText(),/orders/)});
-test('resource hover shows available details',async()=>{const p=await nodePosition('source');await page.mouse.move(p.x,p.y);assert.match(await page.locator('#tooltip').innerText(),/analytics.events/);await page.mouse.move(10,800)});
-test('single click selects docs and dims unrelated resources without focusing',async()=>{const p=await nodePosition('model');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),0);assert.ok(await hasEvent('select','model'));assert.equal(await page.locator('.card.dim').count(),1);assert.equal(await page.locator('#docs').count(),0)});
+test('resource hover does not show documentation or a node tooltip',async()=>{
+ const before=await page.evaluate(()=>events.filter(e=>e.type==='select').length),p=await nodePosition('source');
+ await page.mouse.move(p.x,p.y);await page.waitForTimeout(230);
+ assert.equal(await page.locator('#docs').isVisible(),false);
+ assert.equal(await page.locator('#tooltip,.card[title]').count(),0);
+ assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),before);
+ await page.mouse.move(10,800);
+});
+test('single click selects docs and dims unrelated resources without focusing',async()=>{const p=await nodePosition('model');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),0);assert.ok(await hasEvent('select','model'));assert.equal(await page.locator('.card.dim').count(),1);assert.equal(await page.locator('#docs').isVisible(),true);await page.locator('#close-docs').click()});
 test('button tooltips appear on hover and keyboard focus inside the panel',async()=>{
- for(const [name,text]of [['Zoom in','Zoom in'],['Open Documentation','Open native Documentation for the selected resource'],['Regenerate Docs','Configure Generate Docs for this execution project']]){
+ for(const [name,text]of [['Zoom in','Zoom in'],['Open Documentation','Show documentation on the right for the selected resource'],['Regenerate Docs','Configure Generate Docs for this execution project']]){
   const button=page.getByRole('button',{name,exact:true});
   await button.hover();assert.equal(await page.getByRole('tooltip').isVisible(),true);
   assert.equal(await page.getByRole('tooltip').innerText(),text);
@@ -267,7 +274,7 @@ test('resource cards hide unresolved configuration and unknown result badges, wi
  await update(fixture);
 });
 
-test('native documentation requests are explicit and refreshes do not reopen documentation',async()=>{
+test('documentation requests are explicit and refreshes do not reopen documentation',async()=>{
  await update(fixture);
  await page.evaluate(()=>{events=[];select('model',false)});
  await page.getByRole('button',{name:'Open Documentation',exact:true}).click();
@@ -275,7 +282,50 @@ test('native documentation requests are explicit and refreshes do not reopen doc
  await page.evaluate(()=>events=[]);
  await update(fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),0);
- assert.equal(await page.locator('#docs,#handle,#tabs').count(),0);
+ assert.equal(await page.locator('#docs').isVisible(),true);
+ await page.locator('#close-docs').click();await update(fixture);
+ assert.equal(await page.locator('#docs').isVisible(),false);
+ assert.deepEqual(errors,[]);
+});
+
+
+test('documentation stays on the right, resizes horizontally and ignores obsolete replies',async()=>{
+ await update(fixture);await page.evaluate(()=>select('model'));
+ await page.evaluate(()=>dbtShowDocumentation({id:'model',column:'',html:'<b>analytics.orders</b><p>Orders and amounts</p><a href="dbt-column:order+id">order id</a>'}));
+ assert.match(await page.locator('#docs').innerText(),/analytics.orders/);
+ const pane=await page.locator('#docs').boundingBox(),graph=await page.locator('#graph-pane').boundingBox();
+ assert.equal(pane.x+pane.width,1400);assert.ok(graph.x+graph.width<=pane.x);
+ const divider=await page.locator('#docs-divider').boundingBox();
+ await page.mouse.move(divider.x+3,divider.y+30);await page.mouse.down();await page.mouse.move(divider.x-100,divider.y+30,{steps:5});await page.mouse.up();
+ const wider=await page.locator('#docs').boundingBox();assert.ok(wider.width>pane.width+90);assert.equal(wider.x+wider.width,1400);
+ assert.ok(await page.evaluate(()=>Math.abs(cy.width()-document.getElementById('graph-pane').clientWidth)<1));
+ await page.locator('#docs-divider').focus();await page.keyboard.press('ArrowRight');
+ assert.equal(Math.round((await page.locator('#docs').boundingBox()).width),Math.round(wider.width)-20);
+ await page.getByRole('link',{name:'order id',exact:true}).click();
+ assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'column',id:'model',value:'order id'});
+ await page.evaluate(()=>dbtShowDocumentation({id:'model',column:'order id',html:'<b>orders.order id</b><h3>Upstream dependencies</h3>'}));
+ assert.match(await page.locator('#docs').innerText(),/orders.order id/);
+ await page.getByRole('button',{name:'Resource details',exact:true}).click();
+ assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'select',id:'model',value:''});
+ await page.evaluate(()=>select('source'));
+ await page.evaluate(()=>dbtShowDocumentation({id:'model',column:'',html:'Obsolete orders'}));
+ assert.equal(await page.locator('#docs-content').innerText(),'Loading documentation…');
+ await page.evaluate(()=>dbtShowDocumentation({id:'source',column:'',html:'<b>analytics.events</b>'}));
+ await page.mouse.move(20,400);assert.equal((await page.locator('#docs').boundingBox()).x+(await page.locator('#docs').boundingBox()).width,1400);
+ await update({...fixture,theme:{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}});
+ assert.match(await page.locator('#docs').innerText(),/analytics.events/);
+ for(const width of [600,1400]){
+  await page.setViewportSize({width,height:850});
+  const bounds=await page.locator('#docs').boundingBox(),canvas=await page.locator('#graph-pane').boundingBox();
+  assert.equal(bounds.x+bounds.width,width);assert.ok(canvas.width>=120);
+  await page.locator('#group-by').selectOption('schema');
+  const groupedDocs=await page.locator('#docs').boundingBox(),groupedCanvas=await page.locator('#graph-pane').boundingBox();
+  assert.equal(groupedDocs.x+groupedDocs.width,width);assert.ok(groupedCanvas.width>=120);
+  await page.locator('#group-by').selectOption('');
+ }
+ await page.locator('#close-docs').click();
+ await page.evaluate(()=>dbtShowDocumentation({id:'source',column:'',html:'Late reply'}));
+ assert.equal(await page.locator('#docs').isVisible(),false);await update(fixture);
  assert.deepEqual(errors,[]);
 });
 

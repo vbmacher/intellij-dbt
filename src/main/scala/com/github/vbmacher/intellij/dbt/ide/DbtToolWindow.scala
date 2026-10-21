@@ -45,18 +45,22 @@ final class DbtToolWindowFactory extends ToolWindowFactory {
   override def createToolWindowContent(project: Project, toolWindow: ToolWindow): Unit = {
     val panel = new DbtToolWindowPanel(project)
     toolWindow.getContentManager.addContent(ContentFactory.getInstance().createContent(panel.lineagePanel, "Lineage", false))
+    toolWindow.getContentManager.addContent(ContentFactory.getInstance().createContent(panel.exposuresPanel, "Exposures", false))
     Disposer.register(toolWindow.getContentManager, panel)
     panel.refresh(follow = true)
   }
 }
 
-/** The dbt window owns graph interaction. Execution and documentation use the IDE's native windows. */
+/** The dbt window owns lineage, its resource details and consumer browsing. Execution uses native windows. */
 private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable {
   val lineagePanel = new JPanel(new BorderLayout)
+  val exposuresPanel = new DbtConsumersPanel(project)
+  Disposer.register(this, exposuresPanel)
   private val settings = DbtProjectSettings.get(project)
   private val runner = project.getService(classOf[DbtRunner])
   private val alarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
   private val generation = new AtomicLong
+  private val documentationGeneration = new AtomicLong
   private val graphWork = new Object
   private var focus = Option(settings.getState.pinnedFocus).filter(_.nonEmpty)
   private[ide] var lastSnapshot: Option[DbtGraphSnapshot] = None
@@ -125,6 +129,8 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     if (disposed) return
     val request = generation.incrementAndGet()
     val file = FileEditorManager.getInstance(project).getSelectedFiles.headOption
+    val offset = Option(FileEditorManager.getInstance(project).getSelectedTextEditor).map(_.getCaretModel.getOffset).getOrElse(0)
+    exposuresPanel.showResource(file, offset)
     val oldFocus = focus
     val state = settings.getState
     DbtUi.readLater(this, ModalityState.any(), Some(project), Some(graphWork)) {
@@ -153,7 +159,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         payload.addProperty("running", runner.isRunning)
         payload.addProperty("pinned", state.pinnedFocus.nonEmpty)
         payload.addProperty("canGenerateDocs", root.nonEmpty)
-        payload.addProperty("status", if (runner.isRunning) "dbt command running…" else "Select a resource for native Documentation; double-click to open its definition.")
+        payload.addProperty("status", if (runner.isRunning) "dbt command running…" else "Click a resource for details on the right; double-click to open its definition.")
 
         def color(c: java.awt.Color): String = f"#${c.getRed}%02x${c.getGreen}%02x${c.getBlue}%02x"
 
@@ -187,7 +193,22 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val id = field("id")
     field("type") match {
       case "ready" => refresh(follow = true)
-      case "select" | "focus" | "edit" | "column" =>
+      case "select" | "column" =>
+        val request = documentationGeneration.incrementAndGet()
+        val column = if (field("type") == "column") field("value") else ""
+        DbtUi.readLater(this, smartIn = Some(project)) {
+          val w = DbtWorkspace.get(project)
+          val html = DbtGraphData.build(w, None, 1, 1).targets.get(id).flatMap { element =>
+            if (column.isEmpty) Some(DbtDocumentation.render(w, element.symbol))
+            else if (DbtResourceData.get(w, element.symbol).columns.exists(_.name == column))
+              new DbtColumnDocumentationTarget(element.symbol, column).render(w)
+            else None
+          }.getOrElse("<p>Documentation is no longer available for this resource or column.</p>")
+          obj("id" -> id, "column" -> column, "html" -> html)
+        } { data =>
+          if (request == documentationGeneration.get()) browser.foreach(_.showDocumentation(data))
+        }
+      case "focus" | "edit" =>
         val kind = field("type")
         DbtUi.readLater(this, smartIn = Some(project))(DbtGraphData.build(DbtWorkspace.get(project), None, 1, 1).targets.get(id)) {
           _.foreach { element =>
@@ -199,7 +220,6 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
               element.navigate(true);
               refresh(follow = false)
             } else if (kind == "edit") DbtPropertiesEditor.show(DbtWorkspace.get(project), element.symbol)
-            else DbtDocumentation.show(project, element.symbol)
           }
         }
       case "expand" => if (id == "upstream") upstreamExtra += 5 else downstreamExtra += 5; refresh(follow = false)
@@ -271,6 +291,8 @@ private[ide] final class DbtLineageBrowser(parent: Disposable, receive: String =
 
   def showFilter(data: JsonObject): Unit = browser.runJavaScript("window.dbtShowFilter&&window.dbtShowFilter(" + decode(data.toString) + ")")
 
+  def showDocumentation(data: JsonObject): Unit = browser.runJavaScript("window.dbtShowDocumentation&&window.dbtShowDocumentation(" + decode(data.toString) + ")")
+
   def runnerState(running: Boolean, message: String): Unit = browser.runJavaScript("window.dbtRunnerState&&window.dbtRunnerState(" + running + "," + new Gson().toJson(message) + ")")
 }
 
@@ -284,7 +306,10 @@ private[ide] object DbtLineageSelection {
 
   def show(project: Project, root: String, expression: String, excluded: String): Unit = {
     val window = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("dbt")
-    if (window != null) window.activate(() => project.getMessageBus.syncPublisher(Topic).showSelection(root, expression, excluded))
+    if (window != null) window.activate(() => {
+      Option(window.getContentManager.findContent("Lineage")).foreach(window.getContentManager.setSelectedContent)
+      project.getMessageBus.syncPublisher(Topic).showSelection(root, expression, excluded)
+    })
   }
 }
 

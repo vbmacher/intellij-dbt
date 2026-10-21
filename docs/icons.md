@@ -77,6 +77,7 @@ The test tree uses the IDE's standard test status icons.
 | IDE Pin icon | **Pin focus** / **Unpin focus** | Lineage toolbar; shown pressed while focus is pinned. |
 | IDE Copy icon | **Copy image** | Lineage toolbar. |
 | IDE Preview Details icon | **Open Documentation** | Lineage toolbar, right side. |
+| × | **Close documentation** | Header of the resource documentation pane, shown after opening Lineage details. |
 | IDE Refresh icon | **Regenerate Docs** | Lineage toolbar, right side. |
 
 Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
