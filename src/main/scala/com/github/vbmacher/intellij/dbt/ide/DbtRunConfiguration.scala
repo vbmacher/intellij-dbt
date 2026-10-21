@@ -12,7 +12,6 @@ import com.intellij.execution.runners.{ExecutionEnvironment, ExecutionEnvironmen
 import com.intellij.execution.ui.{ConsoleView, ConsoleViewContentType, ExecutionConsole}
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.{ActionManager, AnActionEvent, CommonDataKeys, IdeActions}
-import com.intellij.openapi.application.{ModalityState, ReadAction}
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.options.SettingsEditor
@@ -22,13 +21,11 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.{Disposer, Key, Ref}
 import com.intellij.psi.PsiElement
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextArea, JBTextField}
-import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.execution.ParametersListUtil
 import com.intellij.util.ui.FormBuilder
 import java.awt.BorderLayout
 import java.io.OutputStream
-import java.util.concurrent.Callable
-import javax.swing.{JButton, JCheckBox, JComboBox, JComponent, JPanel, JTabbedPane}
+import javax.swing.{JCheckBox, JComboBox, JComponent, JPanel, JTabbedPane}
 import org.jdom.Element
 import scala.jdk.CollectionConverters._
 
@@ -107,7 +104,7 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
       }
       preview <- if (inlineSql.isEmpty || captured.nonEmpty) Right(base) else for {
         _ <- Either.cond(action == "Preview" && !selected.directory, (), "Inline SQL requires Preview and one source model.")
-        model <- w.symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == selected.path).toRight("The preview source model is unavailable.")
+        model <- w.model(selected.path).toRight("The preview source model is unavailable.")
         query <- DbtCteInspection.command(w, model, inlineSql)
       } yield base.copy(request = base.request.copy(scope = query.request.scope, debugSql = true), previewSource = query.previewSource)
       command <- if (!exactTests) Right(preview) else {
@@ -142,12 +139,7 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
   }
   private def prepareAsync(parent: Disposable)(done: Either[String, (DbtCommand, Vector[DbtTestDefinition])] => Unit): Unit = {
     val snapshot = clone().asInstanceOf[DbtRunConfiguration]
-    ReadAction.nonBlocking(new Callable[Either[String, (DbtCommand, Vector[DbtTestDefinition])]] {
-      override def call(): Either[String, (DbtCommand, Vector[DbtTestDefinition])] = snapshot.prepare()
-    }).inSmartMode(project).withDocumentsCommitted(project).expireWith(parent)
-      .finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, (DbtCommand, Vector[DbtTestDefinition])]) => done(result))
-      .submit(AppExecutorUtil.getAppExecutorService)
-    ()
+    DbtUi.readLater(parent, smartIn = Some(project), committedIn = Some(project))(snapshot.prepare())(done)
   }
   override def writeExternal(element: Element): Unit = {
     super.writeExternal(element)
@@ -190,20 +182,18 @@ private[ide] object DbtRunConfiguration {
   }
   def openEvidence(project: Project, key: String): Unit = {
     val parts = key.split("\\|", 3)
-    if (parts.length >= 2) ReadAction.nonBlocking(new Callable[Option[(String, Vector[DbtTestDefinition], DbtExecutionRun)]] {
-      override def call(): Option[(String, Vector[DbtTestDefinition], DbtExecutionRun)] = {
-        val w = DbtWorkspace.get(project)
-        w.roots.find(_.directory.getPath == parts(0)).map(w.executionRoot).map { owner =>
-          val tests = DbtTestDiscovery.discover(w).filter(t => t.root == owner.directory.getPath &&
-            (t.id == parts(1) || t.dependencies.contains(parts(1))))
-          val ids = tests.map(_.id).toSet + parts(1)
-          val runs = project.getService(classOf[DbtExecutionEvidence]).runs(owner)
-          val run = runs.find(_.results.exists(r => ids(r.id))).orElse(runs.headOption)
-            .getOrElse(DbtExecutionRun(Vector.empty, "", "", "", "", Vector.empty, "No execution evidence available"))
-          (owner.directory.getPath, tests, run.copy(results = run.results.filter(r => ids(r.id))))
-        }
+    if (parts.length >= 2) DbtUi.readLater(project) {
+      val w = DbtWorkspace.get(project)
+      w.roots.find(_.directory.getPath == parts(0)).map(w.executionRoot).map { owner =>
+        val tests = DbtTestDiscovery.discover(w).filter(t => t.root == owner.directory.getPath &&
+          (t.id == parts(1) || t.dependencies.contains(parts(1))))
+        val ids = tests.map(_.id).toSet + parts(1)
+        val runs = project.getService(classOf[DbtExecutionEvidence]).runs(owner)
+        val run = runs.find(_.results.exists(r => ids(r.id))).orElse(runs.headOption)
+          .getOrElse(DbtExecutionRun(Vector.empty, "", "", "", "", Vector.empty, "No execution evidence available"))
+        (owner.directory.getPath, tests, run.copy(results = run.results.filter(r => ids(r.id))))
       }
-    }).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), result => result.foreach { case (root, tests, execution) =>
+    }(_.foreach { case (root, tests, execution) =>
       val configuration = new DbtRunConfiguration(project, factory, "dbt recorded results")
       configuration.root = root; configuration.action = "Test"
       configuration.selectors = tests.map(_.selector).distinct
@@ -213,8 +203,7 @@ private[ide] object DbtRunConfiguration {
       val environment = ExecutionEnvironmentBuilder.create(executor, configuration).build()
       new RunContentBuilder(new DefaultExecutionResult(session.view, session.process), environment).showRunContent(null)
       session.showEvidence(execution, tests)
-    }).submit(AppExecutorUtil.getAppExecutorService)
-    ()
+    })
   }
 
   def edit(project: Project, root: String, action: String, selection: String = "", excluded: String = ""): Unit = {
@@ -229,7 +218,7 @@ private[ide] object DbtRunConfiguration {
   }
 
   /** Selection review must complete while its modal configuration editor is open. */
-  private[ide] def resolveSelection(project: Project, configuration: DbtRunConfiguration): Unit = {
+  private[ide] def resolveSelection(configuration: DbtRunConfiguration): Unit = {
     val executor = DefaultRunExecutor.getRunExecutorInstance
     val environment = ExecutionEnvironmentBuilder.create(executor, configuration).build()
     environment.assignNewExecutionId()
@@ -248,13 +237,13 @@ private[ide] object DbtRunConfiguration {
     configuration.profilesDirectory = command.environment.getOrElse("DBT_PROFILES_DIR", "")
     configuration.scope = command.previewSource.map(_.path).getOrElse("")
     if (command.action == "Preview" && configuration.scope.isEmpty) {
-      configuration.scope = ReadAction.computeBlocking[String, RuntimeException](() => {
+      configuration.scope = DbtUi.read {
         val w = DbtWorkspace.get(project)
         DbtRunSelection.available(w).find(s => !s.directory && DbtRunSelection.selectors(w, s).exists(term => command.request.scope match {
           case DbtCommandScope.Selected(terms) => terms.contains(term)
           case _ => false
         })).map(_.path).getOrElse("")
-      })
+      }
     }
     configuration.action = command.action
     configuration.fullRefresh = command.request.fullRefresh
@@ -328,20 +317,17 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       override def actionPerformed(event: AnActionEvent): Unit = {
         val text = field.getText; val caret = field.getCaretPosition
         val source = draft()
-        ReadAction.nonBlocking(new Callable[Vector[(String, String, Int)]] {
-          override def call(): Vector[(String, String, Int)] = {
-            val w = DbtWorkspace.get(project)
-            source.configuredRoot(w).map(r => DbtSelectionReview.complete(text, caret, DbtSelectionReview.completions(w, r)))
-              .getOrElse(Vector.empty)
-          }
-        }).expireWith(DbtRunEditor.this).finishOnUiThread(ModalityState.defaultModalityState(), choices => {
+        DbtUi.readLater(DbtRunEditor.this) {
+          val w = DbtWorkspace.get(project)
+          source.configuredRoot(w).map(r => DbtSelectionReview.complete(text, caret, DbtSelectionReview.completions(w, r)))
+            .getOrElse(Vector.empty)
+        } { choices =>
           if (field.getText == text && choices.nonEmpty) JBPopupFactory.getInstance
             .createPopupChooserBuilder(choices.map(_._1).asJava).setTitle("dbt selectors")
             .setItemChosenCallback((chosen: String) => choices.find(_._1 == chosen).foreach { case (_, value, next) =>
               field.setText(value); field.setCaretPosition(next)
             }).createPopup().showUnderneathOf(field)
-        }).submit(AppExecutorUtil.getAppExecutorService)
-        ()
+        }
       }
     }.registerCustomShortcutSet(ActionManager.getInstance.getAction(IdeActions.ACTION_CODE_COMPLETION).getShortcutSet, field, this)
   }
@@ -354,26 +340,23 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
     target.getEmptyText.setText("Project setting / profile default")
     executable.getTextField.asInstanceOf[JBTextField].getEmptyText.setText("Use project executable and arguments")
     arguments.setToolTipText("Prefix arguments for the overridden executable, e.g. run dbt for uv. Shell expressions are not evaluated.")
-    val review = new JButton("Review selection")
-    review.addActionListener(_ => DbtSelectionResults.review(draft()))
-    val resolve = new JButton("Resolve with dbt ls")
-    resolve.addActionListener(_ => {
+    val review = DbtUi.button("Review selection")(DbtSelectionResults.review(draft()))
+    val resolve = DbtUi.button("Resolve with dbt ls") {
       val source = draft()
-      val key = ReadAction.computeBlocking[Vector[String], RuntimeException](() => source.sourceKey(DbtWorkspace.get(project)))
+      val key = DbtUi.read(source.sourceKey(DbtWorkspace.get(project)))
       val resolving = source.clone().asInstanceOf[DbtRunConfiguration]
       resolving.action = "Resolve Selection"
       resolving.setName("dbt ls · " + DbtUi.name(source.root))
       resolving.selectionResolved = Some(ids => {
         if (!disposed) {
           val current = draft()
-          val now = ReadAction.computeBlocking[Vector[String], RuntimeException](() => current.sourceKey(DbtWorkspace.get(project)))
+          val now = DbtUi.read(current.sourceKey(DbtWorkspace.get(project)))
           if (key == now) resolved = Some(key -> ids)
         }
       })
-      DbtRunConfiguration.resolveSelection(project, resolving)
-    })
-    val compare = new JButton("Compare baseline")
-    compare.addActionListener(_ => DbtStateComparison.show(draft()))
+      DbtRunConfiguration.resolveSelection(resolving)
+    }
+    val compare = DbtUi.button("Compare baseline")(DbtStateComparison.show(draft()))
     val buttons = new JPanel; buttons.add(review); buttons.add(resolve); buttons.add(compare)
     val form = FormBuilder.createFormBuilder()
       .addLabeledComponent("Owning dbt root:", root)
@@ -438,22 +421,20 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
   private var active = Option.empty[DbtCommand]
   private var canceled = false
   private val grid = new DbtResultGrid(project, limit => active.foreach { previous =>
-    ReadAction.nonBlocking(new Callable[Either[String, DbtCommand]] {
-      override def call(): Either[String, DbtCommand] = {
-        val fresh = snapshot.clone().asInstanceOf[DbtRunConfiguration]; fresh.captured = None
-        fresh.prepare().map(_._1).flatMap { command =>
-          val same = command.artifactContext == previous.artifactContext && command.environment == previous.environment &&
-            command.sourceSql == previous.sourceSql && command.previewSource.map(_.text) == previous.previewSource.map(_.text) &&
-            command.copy(request = command.request.copy(limit = previous.request.limit)).arguments == previous.arguments
-          Either.cond(same, command.copy(request = command.request.copy(limit = limit),
-            previewSource = previous.previewSource.orElse(command.previewSource)),
-            "Source or execution settings changed. Start a fresh preview before rerunning with a limit.")
-        }
+    DbtUi.readLater(this) {
+      val fresh = snapshot.clone().asInstanceOf[DbtRunConfiguration]; fresh.captured = None
+      fresh.prepare().map(_._1).flatMap { command =>
+        val same = command.artifactContext == previous.artifactContext && command.environment == previous.environment &&
+          command.sourceSql == previous.sourceSql && command.previewSource.map(_.text) == previous.previewSource.map(_.text) &&
+          command.copy(request = command.request.copy(limit = previous.request.limit)).arguments == previous.arguments
+        Either.cond(same, command.copy(request = command.request.copy(limit = limit),
+          previewSource = previous.previewSource.orElse(command.previewSource)),
+          "Source or execution settings changed. Start a fresh preview before rerunning with a limit.")
       }
-    }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), result => result match {
+    } {
       case Right(command) => DbtRunConfiguration.launch(project, command)
       case Left(error) => console.print(error + "\n", ConsoleViewContentType.ERROR_OUTPUT)
-    }).submit(AppExecutorUtil.getAppExecutorService)
+    }
   })
   private val evidence = new DbtPreviewEvidencePanel(project)
   val process = new DbtManagedProcess(p => { canceled = true; if (active.nonEmpty) runner.stop() else p.complete(130) })

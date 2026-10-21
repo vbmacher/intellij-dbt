@@ -48,8 +48,6 @@ private[dbt] object DbtImpact {
     } catch { case NonFatal(_) => Left("Git read is unavailable.") }
     finally if (process != null && process.isAlive) process.destroyForcibly()
   }
-  private def digest(text: String): String = java.util.HexFormat.of().formatHex(
-    java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)))
   private def resources(w: DbtWorkspace): Vector[DbtSymbol] = w.symbols.filter(s => !s.metadata && (
     s.isCode || s.attributes.contains("block-start") || Set("exposure", "unit_test", "source_table")(s.kind) || s.isProperty && s.kind != "source_table" && s.kind != "source" &&
       !w.symbols.exists(c => !c.isProperty && c.sameResource(s) && w.owner(c) == w.owner(s)))).sortBy(_.isProperty).distinctBy(DbtResourceIdentity.key(w, _))
@@ -75,7 +73,7 @@ private[dbt] object DbtImpact {
     val sourceText = if (s.attributes.contains("block-start")) DbtSyntax.inFile(s.file).find(_.range.containsOffset(s.range.getStartOffset))
       .map(blockText(s.file.getText, _)).getOrElse(s.file.getText) else if (s.isCode) s.file.getText else if (s.mapping.nonEmpty) propertyText(s) else s.file.getText
     val text = sourceText + properties + sourceContext + w.owner(s).map(_.config.getContainingFile.getText).getOrElse("")
-    DbtImpactResource(DbtResourceIdentity.key(w, s), s.file.getVirtualFile.getPath, digest(text), (w.columns(s).map(_.name) ++ (if (s.isCode && s.file.getName.endsWith(".sql")) DbtNavigation.projectedColumns(s.file.getText).toVector.flatMap(_._1) else Vector.empty)).distinct)
+    DbtImpactResource(DbtResourceIdentity.key(w, s), s.file.getVirtualFile.getPath, DbtHash.sha256(text), (w.columns(s).map(_.name) ++ (if (s.isCode && s.file.getName.endsWith(".sql")) DbtNavigation.projectedColumns(s.file.getText).toVector.flatMap(_._1) else Vector.empty)).distinct)
   }
   def compare(before: Vector[DbtImpactResource], after: Vector[DbtImpactResource]): Vector[DbtImpactChange] = {
     val old = before.map(s => s.id -> s).toMap; val now = after.map(s => s.id -> s).toMap
@@ -165,9 +163,7 @@ private[dbt] object DbtImpact {
     }
     // Seed column evidence before walking resource edges so its downstream consumers are included too.
     DbtColumnLineage.edges(w).foreach { edge =>
-      val inputs = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && s.relationName == edge.input.owner &&
-        s.namespace == edge.input.namespace && s.version == edge.input.version && w.owner(s) == w.owner(edge.input))
-        .map(DbtResourceIdentity.key(w, _)).toSet
+      val inputs = w.relations(edge.input).map(DbtResourceIdentity.key(w, _)).toSet
       changes.find(c => inputs(c.resource.id) && c.columns.exists(_.equalsIgnoreCase(edge.input.name))).foreach { change =>
         frontier.enqueue(DbtResourceIdentity.key(w, edge.resource) -> Vector(change.resource.id,
           edge.input.owner + "." + edge.input.name, edge.resource.uniqueId + "." + edge.column + " via " + edge.expression))
@@ -239,7 +235,7 @@ private[dbt] object DbtImpact {
           val property = properties.find(p => p._1 == kind && p._4 == physical)
           val name = property.map(_._2).getOrElse(physical); val version = property.flatMap(_._3)
           val id = root.directory.getPath + "|" + kind + "." + projectName + "." + name + version.map(".v" + _).getOrElse("")
-          DbtImpactResource(id, path, digest(text + property.map(_._6).getOrElse("") + projectConfig), (property.map(_._7).getOrElse(Vector.empty) ++ (if (path.endsWith(".sql")) DbtNavigation.projectedColumns(text).toVector.flatMap(_._1) else Vector.empty)).distinct)
+          DbtImpactResource(id, path, DbtHash.sha256(text + property.map(_._6).getOrElse("") + projectConfig), (property.map(_._7).getOrElse(Vector.empty) ++ (if (path.endsWith(".sql")) DbtNavigation.projectedColumns(text).toVector.flatMap(_._1) else Vector.empty)).distinct)
         }
       }
       val blocks = owned.toVector.filter(p => Vector(".sql", ".md").exists(p._1.endsWith) && root.pathKinds.exists(k => root.pathContains(k._2, p._1.stripPrefix(root.directory.getPath + "/")))).flatMap { case (path, text) =>
@@ -248,7 +244,7 @@ private[dbt] object DbtImpact {
             val kind = Map("macro" -> "macro", "test" -> "generic_test", "docs" -> "doc", "materialization" -> "materialization", "snapshot" -> "snapshot")(block.tagName.get)
             val property = properties.find(p => p._1 == kind && p._2 == name.image)
             DbtImpactResource(root.directory.getPath + "|" + kind + "." + projectName + "." + name.image,
-              path, digest(blockText(text, block) + property.map(_._6).getOrElse("") + projectConfig),
+              path, DbtHash.sha256(blockText(text, block) + property.map(_._6).getOrElse("") + projectConfig),
                 if (kind == "snapshot") (property.map(_._7).getOrElse(Vector.empty) ++ DbtNavigation.projectedColumns(blockText(text, block)).toVector.flatMap(_._1)).distinct else Vector.empty)
           }
         }
@@ -259,13 +255,13 @@ private[dbt] object DbtImpact {
           val inherited = source.getKeyValues.asScala.filterNot(_.getKeyText == "tables").map(_.getText).mkString
           for (name <- DbtYaml.string(source, "name").toVector; table <- DbtYaml.items(source, "tables"); tableName <- DbtYaml.string(table, "name").toVector)
             yield DbtImpactResource(root.directory.getPath + "|source." + projectName + "." + name + "." + tableName,
-              path, digest(table.getText + inherited + projectConfig), DbtYaml.items(table, "columns").flatMap(DbtYaml.string(_, "name")))
+              path, DbtHash.sha256(table.getText + inherited + projectConfig), DbtYaml.items(table, "columns").flatMap(DbtYaml.string(_, "name")))
         }
       }
       result ++= code ++ blocks ++ sources
       properties.filterNot(p => (code ++ blocks).exists(_.id == root.directory.getPath + "|" + p._1 + "." + projectName + "." + p._2 + p._3.map(".v" + _).getOrElse("")))
         .foreach { p => result += DbtImpactResource(root.directory.getPath + "|" + p._1 + "." + projectName + "." + p._2 + p._3.map(".v" + _).getOrElse(""),
-          p._5, digest(p._6 + p._6 + projectConfig), p._7) }
+          p._5, DbtHash.sha256(p._6 + p._6 + projectConfig), p._7) }
     }
     result.toVector
   }
@@ -274,7 +270,7 @@ private[dbt] object DbtImpact {
 final class DbtImpactAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
     val baseline = Messages.showInputDialog(project, "Compare current source and unsaved edits against Git revision:", "dbt Change Impact", Messages.getQuestionIcon, "HEAD", null)
-    if (baseline != null && baseline.trim.nonEmpty) DbtUi.background(project, "Analyze dbt Git impact") {
+    if (baseline != null && baseline.trim.nonEmpty) DbtUi.background(project, "Analyze dbt Git impact") { _ =>
       val w = DbtUi.read { DbtWorkspace.get(project) }
       DbtImpact.analyze(w, baseline.trim).map(result => DbtUi.read { DbtWorkspace.get(project) } -> result)
     } {

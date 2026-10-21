@@ -11,7 +11,7 @@ import com.intellij.ide.util.treeView.NodeDescriptor
 import com.intellij.ide.util.treeView.smartTree.TreeElement
 import com.intellij.lang.{Language, PsiStructureViewFactory}
 import com.intellij.navigation.ItemPresentation
-import com.intellij.openapi.actionSystem.{CommonDataKeys, DataContext}
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.progress.ProgressManager
@@ -117,15 +117,12 @@ private[ide] object DbtLineMarkerProvider {
 }
 
 final class DbtHierarchyProvider extends HierarchyProvider {
-  override def getTarget(context: DataContext): PsiElement = Option(CommonDataKeys.PROJECT.getData(context)).flatMap { project =>
+  override def getTarget(context: DataContext): PsiElement = DbtEditorAction.caret(context).flatMap { case (project, file, offset) =>
     val w = DbtWorkspace.get(project)
-    val file = Option(CommonDataKeys.PSI_FILE.getData(context))
-    val offset = Option(CommonDataKeys.EDITOR.getData(context)).map(_.getCaretModel.getOffset).getOrElse(0)
-    val resolved = file.toVector.flatMap(f => DbtNavigation.at(f, offset))
-      .flatMap(_.candidates).collect { case e: DbtSymbolElement if DbtHierarchy.ColumnKinds(e.symbol.kind) => e.symbol }.distinctBy(_.id)
+    val resolved = file.toVector.flatMap(DbtNavigation.resolvedAt(_, offset)).filter(s => DbtSymbol.ColumnKinds(s.kind)).distinctBy(_.id)
     if (resolved.size > 1) None else resolved.headOption.orElse(
-      file.flatMap(f => w.symbolAt(f, offset).find(s => DbtHierarchy.ColumnKinds(s.kind))))
-      .orElse(DbtImpactUi.context(w, file, offset)).map(_.element)
+      file.flatMap(f => w.symbolAt(f, offset).find(s => DbtSymbol.ColumnKinds(s.kind))))
+      .orElse(DbtResourceAction.at(w, file, offset)).map(_.element)
   }.orNull
   override def createHierarchyBrowser(target: PsiElement): HierarchyBrowser = new DbtHierarchyBrowser(target.getProject, target)
   override def browserActivated(browser: HierarchyBrowser): Unit = browser.asInstanceOf[DbtHierarchyBrowser].changeView(CallHierarchyBrowserBase.getCalleeType)
@@ -172,18 +169,15 @@ private[ide] final class DbtHierarchyTree(project: Project, symbol: DbtSymbol, d
   }
 }
 private[ide] object DbtHierarchy {
-  /** Kinds whose hierarchy is column lineage rather than resource lineage. */
-  val ColumnKinds: Set[String] = Set("column", "sql_projection")
-
   def related(w: DbtWorkspace, symbol: DbtSymbol, downstream: Boolean): Vector[(DbtSymbol, String)] = {
     def label(edge: DbtColumnEdge): String =
       edge.kind + (if (edge.kind == "value" && edge.direct) " · direct passthrough" else " · derived") +
         (if (edge.complete) "" else " · partial analysis") + (if (edge.expression.isEmpty) "" else " · " + edge.expression)
 
-    if (ColumnKinds(symbol.kind)) {
+    if (DbtSymbol.ColumnKinds(symbol.kind)) {
       val resource = w.symbols.find(s => DbtSymbol.RelationKinds(s.kind) && s.namespace == symbol.namespace &&
         s.relationName == symbol.owner && w.owner(s) == w.owner(symbol))
-        .orElse(w.codeSymbols(symbol.file).find(_.kind == "model"))
+        .orElse(w.model(symbol.file))
       DbtColumnLineage.edges(w).flatMap { edge =>
         if (!downstream && resource.exists(_.sameResource(edge.resource)) && edge.column.equalsIgnoreCase(symbol.name))
           Vector(edge.input -> label(edge))
@@ -206,14 +200,14 @@ private[ide] object DbtHierarchy {
 
 final class DbtSqlStructureViewFactory extends PsiStructureViewFactory {
   override def getStructureViewBuilder(file: PsiFile): StructureViewBuilder = {
-    if (DbtSqlStructureElement.model(file).isEmpty) null
+    if (DbtWorkspace.get(file.getProject).model(file).isEmpty) null
     else new TreeBasedStructureViewBuilder {
       override def createStructureViewModel(editor: Editor): StructureViewModel =
         new StructureViewModelBase(file, editor, new DbtSqlStructureElement(file, None)) {
           override def getCurrentEditorElement: AnyRef = {
             val workspace = DbtWorkspace.get(file.getProject)
             val cte = for {
-              model <- DbtSqlStructureElement.model(file)
+              model <- workspace.model(file)
               analysis <- DbtSqlAnalysis.get(workspace, file)
               selected <- Option(editor).flatMap(e => DbtCteInspection.at(workspace, file, analysis, e.getCaretModel.getOffset))
             } yield DbtSymbol("cte", selected.name, model.namespace, file, selected.range).element
@@ -234,7 +228,7 @@ private[ide] final class DbtSqlStructureElement(file: PsiFile, symbol: Option[Db
   override def getChildren: Array[TreeElement] = {
     val w = DbtWorkspace.get(file.getProject)
     val nodes = for {
-      model <- DbtSqlStructureElement.model(file).toVector
+      model <- w.model(file).toVector
       analysis <- DbtSqlAnalysis.get(w, file).toVector
       cte <- analysis.ctes if symbol.fold(!analysis.ctes.exists(p => p.body.contains(cte.range)))(parent =>
         analysis.ctes.find(_.range == parent.range).exists(p => p.body.contains(cte.range)) &&
@@ -247,17 +241,12 @@ private[ide] final class DbtSqlStructureElement(file: PsiFile, symbol: Option[Db
   override def navigate(requestFocus: Boolean): Unit = symbol.foreach(_.element.navigate(requestFocus))
 }
 
-private[ide] object DbtSqlStructureElement {
-  /** The authored model of a SQL file. */
-  def model(file: PsiFile): Option[DbtSymbol] = DbtWorkspace.get(file.getProject).codeSymbols(file).find(_.kind == "model")
-}
-
 /** Extend a SQL plugin's existing outline rather than replacing its structure provider. */
 final class DbtSqlStructureViewExtension extends StructureViewExtension {
   override def getType: Class[_ <: PsiElement] = classOf[PsiFile]
   override def getChildren(element: PsiElement): Array[StructureViewTreeElement] = element match {
     case file: PsiFile if Option(Language.findLanguageByID("SQL")).exists(file.getLanguage.isKindOf) &&
-      DbtSqlStructureElement.model(file).nonEmpty =>
+      DbtWorkspace.get(file.getProject).model(file).nonEmpty =>
       new DbtSqlStructureElement(file, None).getChildren.map(_.asInstanceOf[StructureViewTreeElement])
     case _ => Array.empty
   }

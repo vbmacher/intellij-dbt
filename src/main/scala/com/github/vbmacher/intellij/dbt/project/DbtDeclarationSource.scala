@@ -38,6 +38,16 @@ private[dbt] object DbtManifestPolicy {
   case object Baseline extends DbtManifestPolicy(50000000)
 }
 
+/** Field access of Gson objects; a field holding another JSON type is absent. */
+private[dbt] object DbtJson {
+  def child(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+  /** A JSON string value; numbers, booleans and null are absent. */
+  def text(o: JsonObject, key: String): Option[String] =
+    Option(o.get(key)).filter(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
+  /** Any JSON primitive as text, or empty. */
+  def string(o: JsonObject, key: String): String = Option(o.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
+}
+
 private[dbt] final case class DbtManifestResource(section: String, id: String, data: JsonObject)
 private[dbt] final case class DbtManifest(schemaVersion: Int, projectName: Option[String], resources: Vector[DbtManifestResource]) {
   def in(sections: String*): Vector[DbtManifestResource] = resources.filter(r => sections.contains(r.section))

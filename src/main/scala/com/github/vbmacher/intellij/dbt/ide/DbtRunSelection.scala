@@ -11,8 +11,6 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.psi.{PsiFile, PsiManager}
 import com.intellij.usages.{Usage, UsageInfo2UsageAdapter, UsageTarget, UsageView, UsageViewManager, UsageViewPresentation}
 import com.intellij.usageView.UsageInfo
-import com.intellij.util.execution.ParametersListUtil
-import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /** Only stable paths and display text cross from workspace reads into the Runner. */
@@ -174,7 +172,7 @@ private[ide] object DbtSelectionResults {
               else command.toOption.map(_.request.scope).collect { case DbtCommandScope.Selected(terms) => terms.mkString(" ") }.getOrElse(""),
               configuration.exclude.mkString(" ")), "Show in Lineage", false)
         command.foreach { value =>
-          view.addButtonToLowerPane(() => DbtUi.copy(ParametersListUtil.join(value.arguments.asJava)), "Copy command", true)
+          view.addButtonToLowerPane(() => DbtUi.copy(value.commandLine), "Copy command", true)
         }
     }
   }

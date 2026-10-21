@@ -24,7 +24,7 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
       else false
     }
   }
-  private def literalRange(element: PsiElement, decoded: String): TextRange = {
+  private def literalRange(element: PsiElement): TextRange = {
     val source = element.getText
     val quote = source.indexWhere(c => c == '\'' || c == '"')
     val triple = quote >= 0 && source.drop(quote).startsWith(source(quote).toString * 3)
@@ -38,7 +38,7 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
       return Vector.empty
     val result = ArrayBuffer.empty[DbtNavigationReference]
     def add(e: PsiElement, name: String, targets: Vector[PsiElement]): Unit =
-      result += new DbtNavigationReference(file, literalRange(e, name), targets, name)
+      result += new DbtNavigationReference(file, literalRange(e), targets, name)
     def walk(e: PsiElement): Unit = {
       ProgressManager.checkCanceled()
       if (e.getClass.getSimpleName == "PyCallExpressionImpl") {

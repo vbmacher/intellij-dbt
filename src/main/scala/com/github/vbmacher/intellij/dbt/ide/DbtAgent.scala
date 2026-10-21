@@ -58,9 +58,6 @@ private[dbt] object DbtAgentProtocol {
   }
   def strings(values: Iterable[String]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
   def array(values: Iterable[JsonElement]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
-  def stringField(o: JsonObject, key: String): Option[String] =
-    Option(o.get(key)).filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString)
-  def objectField(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
   def error(code: Int, message: String): JsonObject = obj("message" -> message, "code" -> code)
   /** A JSON-RPC error response; `id` is omitted when the request id could not be read. */
   def errorResponse(id: Option[JsonElement], code: Int, message: String, data: Option[JsonElement] = None): JsonObject = {
@@ -89,11 +86,8 @@ private[dbt] object DbtAgentProtocol {
     val result = obj("resource_id" -> s.uniqueId, "project" -> w.owner(s).map(_.directory.getPath).getOrElse(""),
       "kind" -> s.kind, "name" -> s.name, "owner" -> s.owner, "package" -> s.namespace, "version" -> s.version.getOrElse(""),
       "path" -> s.file.getVirtualFile.getPath, "provenance" -> (if (s.metadata) "local artifact" else "current source"))
-    if (s.kind == "column" || s.kind == "sql_projection") {
-      val relations = w.symbols.filter(r => DbtSymbol.RelationKinds(r.kind) && r.relationName == s.owner &&
-        r.namespace == s.namespace && r.version == s.version && w.owner(r) == w.owner(s)).sortBy(_.isProperty)
-      relations.headOption.foreach(r => result.addProperty("relation_resource_id", r.uniqueId))
-    }
+    if (DbtSymbol.ColumnKinds(s.kind))
+      w.relations(s).sortBy(_.isProperty).headOption.foreach(r => result.addProperty("relation_resource_id", r.uniqueId))
     result.addProperty("offset", s.range.getStartOffset)
     val line = s.file.getText.take(s.range.getStartOffset).count(_ == '\n') + 1
     result.addProperty("line", line); result.addProperty("stale", s.isStale); result
@@ -331,7 +325,7 @@ final class DbtAgent(project: Project) extends Disposable {
         }
       case Some(message) if message.isJsonObject =>
         val request = message.getAsJsonObject
-        val meta = objectField(objectField(request, "params").getOrElse(new JsonObject), "_meta")
+        val meta = DbtJson.child(DbtJson.child(request, "params").getOrElse(new JsonObject), "_meta")
         val headerVersion = header("MCP-Protocol-Version").map(DbtAgent.decodeHeader)
         if (meta.exists(_.has(DbtAgent.ProtocolVersionKey)) || headerVersion.exists(ModernVersions.contains)) modern(header, request)
         else legacy(request, headerVersion.getOrElse(DefaultLegacyVersion))
@@ -344,17 +338,17 @@ final class DbtAgent(project: Project) extends Disposable {
     import DbtAgentProtocol._
     import DbtAgent._
     val id = Option(request.get("id"))
-    val method = stringField(request, "method")
-    val params = objectField(request, "params").getOrElse(new JsonObject)
-    val meta = objectField(params, "_meta")
+    val method = DbtJson.text(request, "method")
+    val params = DbtJson.child(request, "params").getOrElse(new JsonObject)
+    val meta = DbtJson.child(params, "_meta")
     val headerVersion = header("MCP-Protocol-Version").map(decodeHeader)
-    val requested = meta.flatMap(stringField(_, ProtocolVersionKey)).orElse(headerVersion).getOrElse("")
+    val requested = meta.flatMap(DbtJson.text(_, ProtocolVersionKey)).orElse(headerVersion).getOrElse("")
     if (method.isEmpty) clientMessage(request)
     else if (!ModernVersions.contains(requested)) unsupportedVersion(id, requested)
-    else if (id.isDefined && !meta.exists(m => stringField(m, ProtocolVersionKey).isDefined && objectField(m, ClientCapabilitiesKey).isDefined))
+    else if (id.isDefined && !meta.exists(m => DbtJson.text(m, ProtocolVersionKey).isDefined && DbtJson.child(m, ClientCapabilitiesKey).isDefined))
       Reply(400, Some(errorResponse(id, -32602, "Request params._meta must contain " + ProtocolVersionKey + " and " + ClientCapabilitiesKey + ".")))
     else if (!headerVersion.contains(requested) || !header("Mcp-Method").map(decodeHeader).contains(method.get) ||
-      (method.contains("tools/call") && header("Mcp-Name").map(decodeHeader) != stringField(params, "name")))
+      (method.contains("tools/call") && header("Mcp-Name").map(decodeHeader) != DbtJson.text(params, "name")))
       Reply(400, Some(errorResponse(id, -32020, "MCP-Protocol-Version, Mcp-Method and Mcp-Name headers must match the request body.")))
     else if (id.isEmpty) Reply(202, None)
     else if (disposed || project.isDisposed) Reply(200, Some(errorResponse(id, -32603, "Project is disposed.")))
@@ -376,17 +370,17 @@ final class DbtAgent(project: Project) extends Disposable {
     import DbtAgentProtocol._
     import DbtAgent._
     val id = Option(request.get("id"))
-    val method = stringField(request, "method")
+    val method = DbtJson.text(request, "method")
     if (method.isEmpty) clientMessage(request)
     else if (!LegacyVersions.contains(version)) unsupportedVersion(id, version)
     else if (id.isEmpty) Reply(202, None)
     else if (disposed || project.isDisposed) Reply(200, Some(errorResponse(id, -32603, "Project is disposed.")))
     else {
-      val params = objectField(request, "params").getOrElse(new JsonObject)
+      val params = DbtJson.child(request, "params").getOrElse(new JsonObject)
       def ok(result: JsonObject): Reply = Reply(200, Some(success(id.get, result)))
       method.get match {
         case "initialize" =>
-          val requested = stringField(params, "protocolVersion").filter(LegacyVersions.contains).getOrElse(LegacyVersions.head)
+          val requested = DbtJson.text(params, "protocolVersion").filter(LegacyVersions.contains).getOrElse(LegacyVersions.head)
           ok(obj("protocolVersion" -> requested, "instructions" -> Instructions, "capabilities" -> toolCapabilities, "serverInfo" -> serverInfo))
         case "ping" => ok(new JsonObject)
         case "tools/list" => ok(obj("tools" -> schemas))
@@ -400,8 +394,8 @@ final class DbtAgent(project: Project) extends Disposable {
   private def toolsCall(params: JsonObject): Either[(Int, String), JsonObject] = {
     import DbtAgentProtocol._
     import DbtAgent._
-    val name = stringField(params, "name").getOrElse("")
-    val args = objectField(params, "arguments").getOrElse(new JsonObject)
+    val name = DbtJson.text(params, "name").getOrElse("")
+    val args = DbtJson.child(params, "arguments").getOrElse(new JsonObject)
     Tools.find(_._1 == name).map(_._3) match {
       case None => Left((-32602, "Unknown tool: " + name))
       case Some(required) =>
@@ -412,12 +406,12 @@ final class DbtAgent(project: Project) extends Disposable {
              else !v.getAsJsonPrimitive.isString || v.getAsString.length > 16384)
         }
         val badDirection = Option(args.get("direction")).exists(v => !v.isJsonPrimitive || !Set("upstream", "downstream")(v.getAsString))
-        if (invalid || badDirection || !required.forall(k => stringField(args, k).exists(_.nonEmpty)))
+        if (invalid || badDirection || !required.forall(k => DbtJson.text(args, k).exists(_.nonEmpty)))
           Right(toolResult(None, "Arguments do not match the tool input schema or exceed request limits.", isError = true))
         else {
           val output = if (name == "suggest_validation_selection") DbtAgentProtocol.impact(project, args)
           else DbtUi.read { DbtAgentProtocol.call(DbtWorkspace.get(project), name, args) }
-          val failed = stringField(output, "status").exists(Set("error", "unsupported", "disposed"))
+          val failed = DbtJson.text(output, "status").exists(Set("error", "unsupported", "disposed"))
           val result = toolResult(Some(output), output.toString, failed)
           if (result.toString.length > ResponseLimit - 4096)
             Right(toolResult(None, "The result exceeds the 2 MB response limit. Narrow the request.", isError = true))

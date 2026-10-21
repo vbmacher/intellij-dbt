@@ -107,8 +107,18 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
   def columns(relation: DbtSymbol): Vector[DbtSymbol] = symbols.filter(c => c.kind == "column" && c.namespace == relation.namespace &&
     c.owner == relation.relationName && c.version == relation.version && owner(c) == owner(relation))
 
+  /** Relations owning a column: those of the same project, package and version named by the column's owner. */
+  def relations(column: DbtSymbol): Vector[DbtSymbol] = symbols.filter(s => DbtSymbol.RelationKinds(s.kind) &&
+    s.relationName == column.owner && s.namespace == column.namespace && s.version == column.version && owner(s) == owner(column))
+
   /** Symbols of the resources defined by a file itself, rather than by blocks or properties inside it. */
   def codeSymbols(file: PsiFile): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.isCode)
+
+  /** The model defined by a file. */
+  def model(file: PsiFile): Option[DbtSymbol] = codeSymbols(file).find(_.kind == "model")
+
+  /** The model defined by the file at a path. */
+  def model(path: String): Option[DbtSymbol] = symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == path)
 
   /** Macros a call may invoke, honouring an explicit `namespace.macro` qualifier. */
   def macros(call: DbtSyntax.Call, from: DbtRoot): Vector[DbtSymbol] = {

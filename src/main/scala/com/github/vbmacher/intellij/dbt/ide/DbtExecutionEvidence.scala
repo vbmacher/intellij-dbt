@@ -1,6 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.string
 import com.google.gson.{Gson, JsonObject, JsonParser}
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
@@ -17,13 +18,7 @@ private[ide] final case class DbtExecutionRun(context: Vector[String], target: S
 /** Execution evidence is separate from declarations. Only changed artifacts from this invocation receive provenance. */
 private[ide] object DbtExecutionEvidence {
   private val gson = new Gson
-  def string(o: JsonObject, key: String): String = Option(o.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
-  def obj(o: JsonObject, key: String): JsonObject = child(o, key).getOrElse(new JsonObject)
-  /** A nested object, if `key` holds one. */
-  def child(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
-  /** A JSON string value; numbers, booleans and null are absent. */
-  def text(o: JsonObject, key: String): Option[String] =
-    Option(o.get(key)).filter(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
+  def obj(o: JsonObject, key: String): JsonObject = DbtJson.child(o, key).getOrElse(new JsonObject)
   def objects(o: JsonObject, key: String): Vector[JsonObject] = Option(o.get(key)).toVector.flatMap { e =>
     if (e.isJsonArray) e.getAsJsonArray.asScala.toVector.filter(_.isJsonObject).map(_.getAsJsonObject)
     else if (e.isJsonObject) e.getAsJsonObject.entrySet.asScala.toVector.map(_.getValue).filter(_.isJsonObject).map(_.getAsJsonObject)
@@ -34,8 +29,7 @@ private[ide] object DbtExecutionEvidence {
     read
   }.toOption
   def json(path: Path): Option[JsonObject] = bounded(path)(JsonParser.parseString(Files.readString(path)).getAsJsonObject)
-  def fingerprint(path: Path): Option[String] = bounded(path)(
-    java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)).map(b => f"${b & 255}%02x").mkString)
+  def fingerprint(path: Path): Option[String] = bounded(path)(DbtHash.sha256(Files.readAllBytes(path)))
   def normalize(status: String): String = status.toLowerCase match {
     case "pass" | "success" => "passed"
     case "fail" => "failed"

@@ -1,9 +1,8 @@
 package com.github.vbmacher.intellij.dbt.ide.textmate
 
 import com.github.vbmacher.intellij.dbt.project.{DbtRoot, DbtWorkspace}
-import com.github.vbmacher.intellij.dbt.ide.DbtTargetElementEvaluator
+import com.github.vbmacher.intellij.dbt.ide.{DbtTargetElementEvaluator, DbtUi}
 import com.intellij.codeInsight.TargetElementEvaluatorEx2
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.extensions.{PluginAware, PluginDescriptor}
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.Editor
@@ -87,8 +86,7 @@ private object DbtSqlFileType extends LanguageFileType(PlainTextLanguage.INSTANC
 
   /** Whether `file` is an unexcluded file of a dbt project root accepted by `accept`. */
   def inProject(project: Project, file: VirtualFile)(accept: DbtRoot => Boolean): Boolean =
-    ReadAction.computeBlocking[Boolean, RuntimeException](() =>
-      DbtWorkspace.rootForFile(project, file).exists(r => !r.excluded(file) && accept(r)))
+    DbtUi.read(DbtWorkspace.rootForFile(project, file).exists(r => !r.excluded(file) && accept(r)))
 }
 
 /** TextMate tokens require its editor storage, rather than the platform's registered-token storage. */

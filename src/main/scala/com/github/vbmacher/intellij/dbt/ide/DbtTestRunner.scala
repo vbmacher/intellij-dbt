@@ -32,7 +32,8 @@ private[ide] final case class DbtTestDefinition(id: String, name: String, kind: 
 
 /** Source definitions remain browsable offline. Manifest identities enrich generated generic tests without guessing their hashes. */
 private[ide] object DbtTestDiscovery {
-  import DbtExecutionEvidence._
+  import DbtExecutionEvidence.obj
+  import DbtJson.string
   def discover(w: DbtWorkspace, executionOptions: Map[String, DbtRunOptions] = Map.empty): Vector[DbtTestDefinition] = {
     lazy val sourceDependencies = DbtLineage.edges(w).filter(e => !e.ambiguous && DbtSymbol.RelationKinds(e.to.kind))
       .groupMap(_.from.id)(_.to.uniqueId)
@@ -64,8 +65,7 @@ private[ide] object DbtTestDiscovery {
           }
           declaration.map { case (name, offset, config) =>
             val customName = config.flatMap(DbtYaml.string(_, "name"))
-            val resource = if (s.kind == "column") w.symbols.find(r => DbtSymbol.RelationKinds(r.kind) && r.relationName == s.owner &&
-              r.namespace == s.namespace && r.version == s.version && w.owner(r).contains(owner)) else Some(s)
+            val resource = if (s.kind == "column") w.relations(s).headOption else Some(s)
             DbtTestDefinition("declaration:" + s.id + ":" + offset, customName.getOrElse(name) + (if (s.kind == "column") " (" + s.name + ")" else ""),
               "Data tests", resource.map(_.presentableText).getOrElse(s.owner), w.executionRoot(owner).directory.getPath,
               s.file.getVirtualFile, offset, customName.map(n => "fqn:" + s.namespace + "." + n).getOrElse(""), resource.map(_.uniqueId).toVector, packageName = owner.name, projectName = w.executionRoot(owner).name)
@@ -330,7 +330,7 @@ final class DbtModelRunLineMarker extends RunLineMarkerContributor {
     val file = element.getContainingFile
     if (element.getFirstChild != null || element.isInstanceOf[PsiFile] || file == null ||
       element.getTextOffset != DbtTestRunLineMarker.firstCode(file) ||
-      !DbtWorkspace.get(file.getProject).codeSymbols(file).exists(_.kind == "model")) null
+      DbtWorkspace.get(file.getProject).model(file).isEmpty) null
     else DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model")
   }
 }

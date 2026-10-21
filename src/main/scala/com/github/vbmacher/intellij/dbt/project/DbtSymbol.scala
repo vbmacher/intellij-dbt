@@ -23,6 +23,8 @@ private[dbt] object DbtSymbol {
   val RefKinds: Set[String] = Set("model", "seed", "snapshot")
   /** Kinds materialized as warehouse relations. */
   val RelationKinds: Set[String] = RefKinds + "source_table"
+  /** Kinds of relation columns: declared properties and SQL projections; their `owner` is the relation name. */
+  val ColumnKinds: Set[String] = Set("column", "sql_projection")
 }
 
 private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: String, file: PsiFile,

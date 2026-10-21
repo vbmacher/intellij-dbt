@@ -7,7 +7,7 @@ import com.google.gson.JsonObject
 import com.intellij.ide.BrowserUtil
 import com.intellij.navigation.{GotoRelatedItem, GotoRelatedProvider}
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent, CommonDataKeys, DataContext}
+import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent, DataContext}
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -471,34 +471,33 @@ private[ide] object DbtAirflowParser {
 }
 
 final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
-  override def getItems(context: DataContext): java.util.List[_ <: GotoRelatedItem] = Option(CommonDataKeys.PROJECT.getData(context)).toVector.flatMap { project =>
-    val w = DbtWorkspace.get(project)
-    val offset = Option(CommonDataKeys.EDITOR.getData(context)).map(_.getCaretModel.getOffset).getOrElse(0)
-    val resource = DbtImpactUi.context(w, Option(CommonDataKeys.PSI_FILE.getData(context)), offset)
-    resource.toVector.flatMap(DbtAirflow.context(w, _)).flatMap { task =>
-      val definition = Option(LocalFileSystem.getInstance.findFileByPath(task.evidence))
-        .flatMap(f => Option(PsiManager.getInstance(w.project).findFile(f)))
-        .flatMap(f => Option(f.findElementAt(task.offset))).map { at =>
-          new GotoRelatedItem(at, "Airflow DAGs / tasks") {
-            override def getCustomName: String = task.dag + " / " + task.task
-            override def getCustomContainerName: String = task.evidence + ":" + task.line
+  override def getItems(context: DataContext): java.util.List[_ <: GotoRelatedItem] =
+    DbtEditorAction.caret(context).toVector.flatMap { case (project, file, offset) =>
+      val w = DbtWorkspace.get(project)
+      DbtResourceAction.at(w, file, offset).toVector.flatMap(DbtAirflow.context(w, _)).flatMap { task =>
+        val definition = Option(LocalFileSystem.getInstance.findFileByPath(task.evidence))
+          .flatMap(f => Option(PsiManager.getInstance(w.project).findFile(f)))
+          .flatMap(f => Option(f.findElementAt(task.offset))).map { at =>
+            new GotoRelatedItem(at, "Airflow DAGs / tasks") {
+              override def getCustomName: String = task.dag + " / " + task.task
+              override def getCustomContainerName: String = task.evidence + ":" + task.line
+            }
+          }.toVector
+        val browser = task.url.toVector.map { url =>
+          new GotoRelatedItem(null, "Airflow task links", -1) {
+            override def getCustomName: String = "Open " + task.dag + " / " + task.task
+            override def getCustomContainerName: String = task.schedule
+            override def navigate(): Unit = BrowserUtil.browse(url)
           }
-        }.toVector
-      val browser = task.url.toVector.map { url =>
-        new GotoRelatedItem(null, "Airflow task links", -1) {
-          override def getCustomName: String = "Open " + task.dag + " / " + task.task
-          override def getCustomContainerName: String = task.schedule
-          override def navigate(): Unit = BrowserUtil.browse(url)
         }
+        definition ++ browser
       }
-      definition ++ browser
-    }
-  }.asJava
+    }.asJava
 }
 
 final class DbtAirflowAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
-    DbtUi.background(project, "Discover local dbt Airflow context") { DbtUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) } } { case (tasks, problems) =>
+    DbtUi.background(project, "Discover local dbt Airflow context") { _ => DbtUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) } } { case (tasks, problems) =>
       val status = DbtUi.textArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Workspace > Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
       val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
         " · " + t.kind + (if (t.schedule.nonEmpty) " · Schedule: " + t.schedule else "") +

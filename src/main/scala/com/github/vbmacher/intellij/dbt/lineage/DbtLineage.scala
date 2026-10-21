@@ -85,8 +85,11 @@ private[dbt] object DbtLineage {
   }
 
   /** The `n+` parents and `+n` children operators of a selection expression. */
-  private[lineage] def operators(expression: String): (Option[String], Option[String]) =
+  private[dbt] def operators(expression: String): (Option[String], Option[String]) =
     (ParentsOperator.findFirstIn(expression), ChildrenOperator.findFirstIn(expression))
+
+  /** A selector term without its leading `N+` and trailing `+N` graph operators. */
+  private[dbt] def withoutOperators(term: String): String = ChildrenOperator.replaceFirstIn(ParentsOperator.replaceFirstIn(term, ""), "")
 
   /** Ancestors and descendants of the seeds selected by graph operators, within their depths. */
   private[lineage] def neighbours(w: DbtWorkspace, seeds: Vector[DbtSymbol], parents: Option[String], children: Option[String]): Vector[DbtSymbol] =
@@ -225,7 +228,7 @@ private[dbt] object DbtSelection {
     }
     def term(raw: String, visiting: Set[String]): Vector[DbtSymbol] = {
       ProgressManager.checkCanceled()
-      val core = raw.replaceFirst("^[0-9]*\\+", "").replaceFirst("\\+[0-9]*$", "")
+      val core = DbtLineage.withoutOperators(raw)
       val method = if (core.contains(":")) core.takeWhile(_ != ':') else "fqn"
       if (raw.startsWith("@") && raw.length > 1 && !raw.startsWith("@@")) {
         val seeds = term(raw.drop(1), visiting)

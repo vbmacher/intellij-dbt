@@ -7,13 +7,13 @@ import com.intellij.codeInspection.{LocalInspectionTool, LocalQuickFix, ProblemD
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.{CapturingProcessHandler, ProcessOutput}
 import com.intellij.formatting.service.{AsyncDocumentFormattingService, AsyncFormattingRequest, FormattingService}
-import com.intellij.notification.{NotificationGroupManager, NotificationType}
-import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
-import com.intellij.openapi.application.{ApplicationManager, ReadAction}
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileDocumentManagerListener}
-import com.intellij.openapi.progress.{EmptyProgressIndicator, ProgressIndicator, ProgressManager, Task}
+import com.intellij.openapi.progress.{EmptyProgressIndicator, ProgressIndicator, ProgressManager}
 import com.intellij.openapi.project.{Project, ProjectLocator}
 import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.openapi.vfs.VirtualFile
@@ -87,54 +87,42 @@ private[ide] final class DbtToolProcess {
   }
 }
 
-private[ide] object DbtToolNotifications {
-  def show(project: Project, title: String, message: String, error: Boolean = true): Unit =
-    if (!project.isDisposed) NotificationGroupManager.getInstance.getNotificationGroup("dbt Workspace")
-      .createNotification(title, message, if (error) NotificationType.WARNING else NotificationType.INFORMATION).notify(project)
-}
-
-final class DbtInspectSqlAction extends AnAction {
-  override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
-  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
-    Option(event.getProject).nonEmpty && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
+final class DbtInspectSqlAction extends DbtEditorAction {
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event))
   override def actionPerformed(event: AnActionEvent): Unit =
-    for (project <- Option(event.getProject); file <- Option(event.getData(CommonDataKeys.PSI_FILE))) inspect(project, file)
+    DbtEditorAction.fileContext(event).foreach { case (project, file) => inspect(project, file) }
 
   private[ide] def inspect(project: Project, file: PsiFile): Unit = {
-    def report(message: String, error: Boolean = true): Unit = DbtToolNotifications.show(project, "SQLFluff inspection", message, error)
-    val snapshot = ReadAction.computeBlocking[Either[String, (DbtToolCommand, String, Long)], RuntimeException](() => {
+    def report(message: String, kind: NotificationType = NotificationType.WARNING): Unit =
+      DbtNotifications.show(project, "SQLFluff inspection", message, kind)
+    val snapshot = DbtUi.read {
       val document = PsiDocumentManager.getInstance(project).getDocument(file)
       if (document == null) Left("Open the SQL source document before running SQLFluff.")
       else DbtToolCommand.create(file, lint = true).map(c => (c, document.getText, document.getModificationStamp))
-    })
+    }
     snapshot match {
       case Left(error) => report(error)
       case Right((command, source, stamp)) =>
         file.putUserData(DbtSqlFluff.Result, null)
-        new Task.Backgroundable(project, "Inspect dbt SQL with SQLFluff", true) {
-          private var result: Either[String, Vector[DbtSqlFluffDiagnostic]] = Left("SQLFluff did not finish.")
-          override def run(indicator: ProgressIndicator): Unit = {
-            result = new DbtToolProcess().run(command, source, indicator).flatMap { output =>
-              if (output.getExitCode != 0 && output.getExitCode != 1)
-                Left("SQLFluff failed (exit " + output.getExitCode + "). Check the project configuration. " + output.getStderr.take(4000))
-              else DbtSqlFluff.parse(source, output.getStdout, file.getVirtualFile.getPath)
-            }
+        DbtUi.background(project, "Inspect dbt SQL with SQLFluff", Some(error => report("Cannot inspect this source: " + error.getMessage))) {
+          indicator => new DbtToolProcess().run(command, source, indicator).flatMap { output =>
+            if (output.getExitCode != 0 && output.getExitCode != 1)
+              Left("SQLFluff failed (exit " + output.getExitCode + "). Check the project configuration. " + output.getStderr.take(4000))
+            else DbtSqlFluff.parse(source, output.getStdout, file.getVirtualFile.getPath)
           }
-          override def onSuccess(): Unit = if (!project.isDisposed) {
-            val current = ReadAction.computeBlocking[Boolean, RuntimeException](() => file.isValid &&
-              Option(PsiDocumentManager.getInstance(project).getDocument(file)).exists(d => d.getModificationStamp == stamp && d.getText == source))
-            if (!current) report("The document changed during inspection. Rerun Inspect dbt SQL.")
-            else result match {
-              case Left(error) => report(error)
-              case Right(diagnostics) =>
-                file.putUserData(DbtSqlFluff.Result, DbtSqlFluffResult(source, stamp, diagnostics))
-                DaemonCodeAnalyzer.getInstance(project).restart(file, "SQLFluff explicit inspection completed")
-                report(if (diagnostics.isEmpty) "No SQLFluff violations."
-                  else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.", error = false)
-            }
+        } { result =>
+          val current = DbtUi.read(file.isValid &&
+            Option(PsiDocumentManager.getInstance(project).getDocument(file)).exists(d => d.getModificationStamp == stamp && d.getText == source))
+          if (!current) report("The document changed during inspection. Rerun Inspect dbt SQL.")
+          else result match {
+            case Left(error) => report(error)
+            case Right(diagnostics) =>
+              file.putUserData(DbtSqlFluff.Result, DbtSqlFluffResult(source, stamp, diagnostics))
+              DaemonCodeAnalyzer.getInstance(project).restart(file, "SQLFluff explicit inspection completed")
+              report(if (diagnostics.isEmpty) "No SQLFluff violations."
+                else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.", NotificationType.INFORMATION)
           }
-          override def onThrowable(error: Throwable): Unit = report("Cannot inspect this source: " + error.getMessage)
-        }.queue()
+        }
     }
   }
 }
@@ -279,7 +267,7 @@ final class DbtFormattingService extends AsyncDocumentFormattingService {
   override def createFormattingTask(request: AsyncFormattingRequest): AsyncDocumentFormattingService.FormattingTask = {
     val file = request.getContext.getContainingFile
     val before = request.getDocumentText
-    val command = ReadAction.computeBlocking[Either[String, DbtToolCommand], RuntimeException](() => DbtToolCommand.create(file))
+    val command = DbtUi.read(DbtToolCommand.create(file))
     val process = new DbtToolProcess
     new AsyncDocumentFormattingService.FormattingTask {
       override def run(): Unit = {
@@ -287,7 +275,7 @@ final class DbtFormattingService extends AsyncDocumentFormattingService {
         command.flatMap(DbtFormatting.result(process, _, before, indicator)) match {
           case Left(error) => request.onError("dbt formatter", error)
           case Right(text) =>
-            val current = ReadAction.computeBlocking[Boolean, RuntimeException](() => !file.getProject.isDisposed &&
+            val current = DbtUi.read(!file.getProject.isDisposed &&
               Option(PsiDocumentManager.getInstance(file.getProject).getDocument(file)).exists(_.getText == before))
             if (current) request.onTextReady(text)
             else request.onError("dbt formatter", "The document changed during formatting. Run Reformat Code again; source is unchanged.")
@@ -328,27 +316,22 @@ final class DbtFormatOnSave extends FileDocumentManagerListener {
     val selected = for {
       file <- Option(manager.getFile(document))
       project <- Option(ProjectLocator.getInstance.guessProjectForFile(file))
-      snapshot <- ReadAction.computeBlocking[Option[(Project, DbtToolCommand, String, Long)], RuntimeException](() =>
+      snapshot <- DbtUi.read {
         if (!project.isDisposed && DbtFormatOnSave.enabled(project, file))
           Option(PsiManager.getInstance(project).findFile(file)).flatMap(psi => DbtToolCommand.create(psi).toOption)
             .map(command => (project, command, document.getText, document.getModificationStamp))
-        else None)
+        else None
+      }
     } yield snapshot
     selected.foreach { case (project, command, source, stamp) =>
       if (DbtFormatOnSave.pending.add(document)) ApplicationManager.getApplication.invokeLater(() => {
         if (project.isDisposed) DbtFormatOnSave.pending.remove(document)
-        else new Task.Backgroundable(project, "Format dbt SQL on save", true) {
-        private var result: Either[String, String] = Left("Formatting did not finish.")
-        override def run(indicator: ProgressIndicator): Unit =
-          result = DbtFormatting.result(new DbtToolProcess, command, source, indicator)
-        override def onSuccess(): Unit = if (!project.isDisposed) result match {
-          case Left(error) => DbtToolNotifications.show(project, "dbt format on save", error)
-          case Right(after) =>
-            if (DbtFormatOnSave.applyText(project, document, source, stamp, after)) manager.saveDocument(document)
+        else DbtUi.background(project, "Format dbt SQL on save",
+          Some(error => DbtNotifications.show(project, "dbt format on save", error.getMessage)),
+          () => { DbtFormatOnSave.pending.remove(document); () })(DbtFormatting.result(new DbtToolProcess, command, source, _)) {
+          case Left(error) => DbtNotifications.show(project, "dbt format on save", error)
+          case Right(after) => if (DbtFormatOnSave.applyText(project, document, source, stamp, after)) manager.saveDocument(document)
         }
-        override def onThrowable(error: Throwable): Unit = DbtToolNotifications.show(project, "dbt format on save", error.getMessage)
-        override def onFinished(): Unit = { DbtFormatOnSave.pending.remove(document); () }
-      }.queue()
       })
     }
   }

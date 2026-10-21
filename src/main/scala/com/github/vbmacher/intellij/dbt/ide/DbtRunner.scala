@@ -300,6 +300,11 @@ final class DbtRunner(project: Project) extends Disposable {
 }
 
 private[ide] object DbtNotifications {
+  /** A balloon of the plugin's notification group; nothing is shown for a closed project. */
+  def show(project: Project, title: String, content: String, kind: NotificationType = NotificationType.WARNING): Unit =
+    if (project == null || !project.isDisposed)
+      NotificationGroupManager.getInstance().getNotificationGroup("dbt Workspace").createNotification(title, content, kind).notify(project)
+
   def publish(project: Project, command: DbtCommand, message: String, success: Boolean, wasCancelled: Boolean,
     system: SystemNotifications = SystemNotifications.getInstance()): Unit = {
     val kind = if (success || wasCancelled) NotificationType.INFORMATION else NotificationType.ERROR
@@ -357,12 +362,12 @@ private[ide] final class DbtConsoleOutput(sink: (String, Key[_]) => Unit) {
       val obj = element.getAsJsonObject
       for {
         _ <- Option(obj.get("data")).filter(_.isJsonObject)
-        info <- DbtExecutionEvidence.child(obj, "info")
-        text <- DbtExecutionEvidence.text(info, "msg")
+        info <- DbtJson.child(obj, "info")
+        text <- DbtJson.text(info, "msg")
       } yield {
-        val timestamp = DbtExecutionEvidence.text(info, "ts").flatMap(value => time.findFirstMatchIn(value).map(_.group(1)))
+        val timestamp = DbtJson.text(info, "ts").flatMap(value => time.findFirstMatchIn(value).map(_.group(1)))
           .map(_ + "  ").getOrElse("")
-        val level = DbtExecutionEvidence.text(info, "level").map(_.toUpperCase(java.util.Locale.ROOT))
+        val level = DbtJson.text(info, "level").map(_.toUpperCase(java.util.Locale.ROOT))
           .filterNot(_ == "INFO").map(value => s"[$value] ").getOrElse("")
         if (text.isEmpty) "\n" else timestamp + level + text.stripSuffix("\n") + "\n"
       }

@@ -95,6 +95,10 @@ private[dbt] object DbtNavigation {
     matches.map(_.getRangeInElement.getLength).minOption.toVector.flatMap(size => matches.filter(_.getRangeInElement.getLength == size))
   }
 
+  /** Declarations resolved by the innermost references at an offset. */
+  def resolvedAt(file: PsiFile, offset: Int): Vector[DbtSymbol] =
+    at(file, offset).flatMap(_.candidates).collect { case e: DbtSymbolElement => e.symbol }
+
   private def compute(file: PsiFile, includeSelections: Boolean): Vector[DbtNavigationReference] = {
     val workspace = DbtWorkspace.get(file.getProject)
     workspace.root(file).filter(navigable(file, _)).fold(Vector.empty[DbtNavigationReference]) { root =>

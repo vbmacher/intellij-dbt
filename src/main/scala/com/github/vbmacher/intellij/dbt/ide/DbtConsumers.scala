@@ -1,13 +1,14 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.string
 import com.github.vbmacher.intellij.dbt.lineage.DbtLineage
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.{JsonElement, JsonObject, JsonParser}
 import com.intellij.credentialStore.{CredentialAttributes, Credentials}
 import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.ide.BrowserUtil
-import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent, CommonDataKeys}
+import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
 import com.intellij.openapi.components._
 import com.intellij.openapi.project.Project
 import java.awt.BorderLayout
@@ -99,7 +100,7 @@ final class DbtConsumers(project: Project) {
           get("/api/dashboard/" + dashboard.get("id").getAsInt).toOption.toVector.flatMap { detail =>
             val cardIds = Option(detail.getAsJsonObject.getAsJsonArray("dashcards")).toVector.flatMap(_.asScala)
               .flatMap(c => Option(c.getAsJsonObject.get("card_id")).filterNot(_.isJsonNull).map(_.getAsString)).toSet
-            questions.filter(q => cardIds(q.evidence.takeWhile(_ != ':'))).map(q => q.copy(name = DbtConsumers.string(dashboard, "name"),
+            questions.filter(q => cardIds(q.evidence.takeWhile(_ != ':'))).map(q => q.copy(name = string(dashboard, "name"),
               kind = "Metabase dashboard", url = Some(url.stripSuffix("/") + "/dashboard/" + dashboard.get("id").getAsInt),
               confidence = "inferred via question", evidence = q.name + ": " + q.evidence))
           }
@@ -125,7 +126,6 @@ private[dbt] object DbtConsumers {
         DbtResourceIdentity.key(w, s), None, (if (s.isStale) "declared (stale local artifact)" else if (s.metadata) "declared (local artifact)" else "declared"), s.file.getVirtualFile.getPath + ":" + s.range.getStartOffset)
     }
   }
-  def string(json: JsonObject, key: String): String = Option(json.get(key)).filter(e => e.isJsonPrimitive && !e.isJsonNull).map(_.getAsString).getOrElse("")
   private def normalize(s: String): String = s.replace("\"", "").replace("`", "").toLowerCase(java.util.Locale.ROOT)
   private[ide] def mapQuestions(w: DbtWorkspace, base: String, cards: Vector[JsonObject], tables: Vector[JsonObject]): Vector[DbtConsumer] = {
     val relations = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && !s.isProperty).map(s => s -> DbtResourceData.get(w, s))
@@ -176,11 +176,9 @@ private[dbt] object DbtConsumers {
 }
 
 final class DbtConsumersAction extends AnAction {
-  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
-    val source = Option(event.getData(CommonDataKeys.PSI_FILE))
-    val offset = Option(event.getData(CommonDataKeys.EDITOR)).map(_.getCaretModel.getOffset).getOrElse(0)
-    DbtUi.background(project, "Read dbt consumers") { DbtUi.read {
-      val w = DbtWorkspace.get(project); val focus = DbtImpactUi.context(w, source, offset)
+  override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.caret(event.getDataContext).foreach { case (project, source, offset) =>
+    DbtUi.background(project, "Read dbt consumers") { _ => DbtUi.read {
+      val w = DbtWorkspace.get(project); val focus = DbtResourceAction.at(w, source, offset)
       val columns = focus.toVector.flatMap(s => DbtResourceData.get(w, s).columns.map(_.name)).distinct
       (w, focus, DbtConsumers.exposures(w, focus), columns)
     } } { case (w, focus, exposures, columns) =>
@@ -207,7 +205,7 @@ final class DbtConsumersAction extends AnAction {
             w.symbols.find(s => DbtResourceIdentity.key(w, s) == consumer.resource && s.kind == "exposure").foreach(_.element.navigate(true))
           } },
           DbtUi.button("Refresh Metabase metadata") {
-            DbtUi.background(project, "Refresh Metabase consumers") { service.refresh(DbtUi.read { DbtWorkspace.get(project) }) }(_ => update())
+            DbtUi.background(project, "Refresh Metabase consumers") { _ => service.refresh(DbtUi.read { DbtWorkspace.get(project) }) }(_ => update())
           },
           DbtUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) }))
     }

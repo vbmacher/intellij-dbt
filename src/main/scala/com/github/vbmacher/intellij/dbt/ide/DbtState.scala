@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.{obj, objectField, stringField}
+import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.obj
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
@@ -121,10 +121,10 @@ private[ide] object DbtState {
   /** The diff labels distinguish recorded baseline values from authored, unresolved source values. */
   def comparison(w: DbtWorkspace, root: DbtRoot, id: String): Either[String, (String, String)] = manifest(root).map { baseline =>
     val before = entries(baseline).get(id).map { entry =>
-      obj("raw_code" -> stringField(entry, "raw_code").orElse(stringField(entry, "raw_sql")).getOrElse(""),
-        "description" -> stringField(entry, "description").getOrElse(""),
-        "config" -> objectField(entry, "unrendered_config").orElse(objectField(entry, "config")).getOrElse(new JsonObject),
-        "columns" -> objectField(entry, "columns").getOrElse(new JsonObject))
+      obj("raw_code" -> DbtJson.text(entry, "raw_code").orElse(DbtJson.text(entry, "raw_sql")).getOrElse(""),
+        "description" -> DbtJson.text(entry, "description").getOrElse(""),
+        "config" -> DbtJson.child(entry, "unrendered_config").orElse(DbtJson.child(entry, "config")).getOrElse(new JsonObject),
+        "columns" -> DbtJson.child(entry, "columns").getOrElse(new JsonObject))
     }
     val after = current(w, root).get(id).filter(_.size == 1).flatMap(_.headOption).map { symbol =>
       val config = new JsonObject
@@ -149,18 +149,18 @@ private[ide] object DbtState {
       (old.get(id), now.get(id)) match {
         case (None, Some(_)) => Some(DbtStateChange(id, "added", "No baseline declaration", ""))
         case (Some(previous), None) =>
-          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") || stringField(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
-          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed", if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration", stringField(previous, "relation_name").getOrElse("")))
+          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") || DbtJson.text(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
+          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed", if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration", DbtJson.text(previous, "relation_name").getOrElse("")))
         case (Some(previous), Some(Vector(symbol))) =>
           val changed = scala.collection.mutable.ArrayBuffer.empty[String]
           val unknown = scala.collection.mutable.ArrayBuffer.empty[String]
           if (symbol.isCode) {
-            val oldCode = stringField(previous, "raw_code").orElse(stringField(previous, "raw_sql")).filter(_.nonEmpty)
+            val oldCode = DbtJson.text(previous, "raw_code").orElse(DbtJson.text(previous, "raw_sql")).filter(_.nonEmpty)
             if (oldCode.isEmpty) unknown += "Baseline source code unavailable"
             else if (oldCode.exists(_.trim != symbol.file.getText.trim)) changed += "Source SQL/code changed"
           }
           val config = sourceConfig(w, symbol)
-          objectField(previous, "unrendered_config").orElse(objectField(previous, "config")) match {
+          DbtJson.child(previous, "unrendered_config").orElse(DbtJson.child(previous, "config")) match {
             case None => unknown += "Baseline resolved config unavailable"
             case Some(oldConfig) =>
               (ConfigKeys.map(configKey) ++ config.keySet).toVector.sorted.foreach { key =>
@@ -171,7 +171,7 @@ private[ide] object DbtState {
                   case Some(source) if normalized(source).contains("{{") || normalized(source).contains("{%") => unknown += s"Dynamic config: $key"
                   case Some(source) => before match {
                     case None => changed += s"Config added: $key"
-                    case Some(value) if Set("pre-hook", "post-hook")(key) && objectField(previous, "unrendered_config").isEmpty && !empty(value) =>
+                    case Some(value) if Set("pre-hook", "post-hook")(key) && DbtJson.child(previous, "unrendered_config").isEmpty && !empty(value) =>
                       unknown += s"Hook normalization requires dbt: $key"
                     case Some(value) =>
                       val result = if (key == "tags" && !source.isJsonNull && !value.isJsonNull) Difference(changed = tags(value) != tags(source)) else difference(value, source)
@@ -186,14 +186,14 @@ private[ide] object DbtState {
           }
           val description = sourceDescription(w, symbol)
           if (description.contains("{{")) unknown += "Dynamic description"
-          else if (stringField(previous, "description").exists(_ != description)) changed += "Description changed"
-          objectField(previous, "columns") match {
+          else if (DbtJson.text(previous, "description").exists(_ != description)) changed += "Description changed"
+          DbtJson.child(previous, "columns") match {
             case None => unknown += "Baseline column declarations unavailable"
             case Some(columns) =>
               val declared = w.columns(symbol).filter(c => !c.metadata && c.mapping.nonEmpty).distinctBy(_.name)
               val names = declared.map(_.name).toSet
               if (columns.keySet().asScala.toSet != names) changed += "Column declarations changed"
-              declared.foreach { column => objectField(columns, column.name).foreach { oldColumn =>
+              declared.foreach { column => DbtJson.child(columns, column.name).foreach { oldColumn =>
                 ColumnKeys.toVector.sorted.foreach { key =>
                   val before = Option(oldColumn.get(key)).filterNot(_.isJsonNull)
                   val after = column.mapping.flatMap(DbtYaml.value(_, key)).map(yaml).orElse(column.attributes.get(key).map(new com.google.gson.JsonPrimitive(_)))
@@ -212,7 +212,7 @@ private[ide] object DbtState {
               }}
           }
           val reasons = changed.toVector ++ unknown.toVector.distinct.map("Unresolved: " + _)
-          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown", reasons.mkString("; "), stringField(previous, "relation_name").getOrElse(""))) else None
+          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown", reasons.mkString("; "), DbtJson.text(previous, "relation_name").getOrElse(""))) else None
         case _ => Some(DbtStateChange(id, "unknown", "Ambiguous current owning project/resource identity", ""))
       }
     }
@@ -234,7 +234,7 @@ private[ide] object DbtState {
     val edges = DbtLineage.edges(w)
     def key(s: DbtSymbol): String = DbtResourceIdentity.key(w, s)
     def term(raw: String): Vector[DbtSymbol] = {
-      val core = raw.replaceFirst("^[0-9]*\\+", "").replaceFirst("\\+[0-9]*$", "")
+      val core = DbtLineage.withoutOperators(raw)
       if (!core.startsWith("state:")) {
         val resolved = DbtSelection.resolve(w, root, raw); problems ++= resolved.problems; resolved.resources
       } else {
@@ -247,11 +247,11 @@ private[ide] object DbtState {
           case _ => problems += s"Unsupported local state selector: $core"; Set.empty[String]
         }
         val matched = now.toVector.filter(p => ids(p._1)).flatMap(_._2).filter(_.isEnabled)
-        val parents = raw.matches("^[0-9]*\\+.*"); val children = raw.matches(".*\\+[0-9]*$")
-        val parentDepth = "^([0-9]*)\\+".r.findFirstMatchIn(raw).flatMap(m => m.group(1).toIntOption).getOrElse(100)
-        val childDepth = "\\+([0-9]*)$".r.findFirstMatchIn(raw).flatMap(m => m.group(1).toIntOption).getOrElse(100)
-        (matched ++ matched.flatMap(s => (if (parents) DbtLineage.traverse(edges, s, downstream = false, parentDepth.min(100)) else Vector.empty) ++
-          (if (children) DbtLineage.traverse(edges, s, downstream = true, childDepth.min(100)) else Vector.empty))).distinctBy(key)
+        val (parents, children) = DbtLineage.operators(raw)
+        val parentDepth = parents.flatMap(_.dropRight(1).toIntOption).getOrElse(100)
+        val childDepth = children.flatMap(_.drop(1).toIntOption).getOrElse(100)
+        (matched ++ matched.flatMap(s => parents.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = false, parentDepth.min(100))) ++
+          children.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = true, childDepth.min(100))))).distinctBy(key)
       }
     }
     def selection(text: String): Vector[DbtSymbol] = text.trim.split("\\s+").toVector.filter(_.nonEmpty).flatMap { token =>
@@ -265,7 +265,7 @@ private[ide] object DbtState {
     val upstream = selected.flatMap(s => DbtLineage.traverse(edges, s, downstream = false, 100)).distinctBy(key).filterNot(s => selectedIds(key(s)))
     val dependencies = upstream.filter(s => DbtSymbol.RelationKinds(s.kind)).take(1000).map { symbol =>
       val previous = old.get(symbol.uniqueId)
-      val relation = previous.flatMap(stringField(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")) .getOrElse("")
+      val relation = previous.flatMap(DbtJson.text(_, "relation_name")).filterNot(v => v.contains("{{") || v.contains("{%")) .getOrElse("")
       val ephemeral = symbol.attributes.get("materialized").contains("ephemeral")
       val resolution = if (symbol.kind == "source_table") "source" else if (ephemeral || !root.runOptions.defer) "local"
         else if (relation.isEmpty || symbol.isStale || symbol.metadata || symbol.attributes.get("materialized").exists(_.contains("{{"))) "unknown" else if (root.runOptions.favorState) "deferred" else "candidate"

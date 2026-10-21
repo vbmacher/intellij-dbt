@@ -6,8 +6,8 @@ import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.ui.{ConsoleViewContentType, ExecutionConsole, RunnerLayoutUi}
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys, DefaultActionGroup}
-import com.intellij.openapi.application.{ApplicationManager, ModalityState, ReadAction, WriteIntentReadAction}
+import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, DefaultActionGroup}
+import com.intellij.openapi.application.{ApplicationManager, WriteIntentReadAction}
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.{DocumentEvent, DocumentListener}
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -15,17 +15,15 @@ import com.intellij.openapi.fileTypes.{FileType, PlainTextFileType}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.{Disposer, Key}
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.{PsiDocumentManager, PsiManager}
+import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.{ColoredTextContainer, SimpleTextAttributes}
-import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.xdebugger._
 import com.intellij.xdebugger.breakpoints._
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
 import com.intellij.xdebugger.frame._
 import com.intellij.xdebugger.ui.XDebugTabLayouter
 import java.awt.BorderLayout
-import java.util.concurrent.Callable
 import javax.swing.JPanel
 import org.jdom.Element
 import scala.jdk.CollectionConverters._
@@ -92,10 +90,8 @@ private[ide] final class DbtCteController(project: Project, val path: String,
   }
   private def cancelPreparation(): Unit = { generation += 1; pending = None }
   private def currentContext(): Option[DbtCteContext] =
-    if (disposed || project.isDisposed) None else ReadAction.computeBlocking[Option[DbtCteContext], RuntimeException](() => {
-      val w = DbtWorkspace.get(project)
-      DbtCteInspection.model(w, path).flatMap(DbtCteInspection.context(w, _))
-    })
+    if (disposed || project.isDisposed) None
+    else DbtUi.read { val w = DbtWorkspace.get(project); w.model(path).flatMap(DbtCteInspection.context(w, _)) }
   private val connection = project.getMessageBus.connect(this)
   connection.subscribe(PsiModificationTracker.TOPIC, new PsiModificationTracker.Listener {
     override def modificationCountChanged(): Unit = invalidateIfChanged()
@@ -117,7 +113,7 @@ private[ide] final class DbtCteController(project: Project, val path: String,
       message = "Source or execution settings changed. Step explicitly to refresh the CTE list."; changed()
     }
   }
-  def referencedModel(): Option[(String, Vector[DbtCte])] = ReadAction.computeBlocking[Option[(String, Vector[DbtCte])], RuntimeException](() => {
+  def referencedModel(): Option[(String, Vector[DbtCte])] = DbtUi.read {
     val w = DbtWorkspace.get(project)
     w.symbols.find(s => s.isCode && s.file.getVirtualFile.getPath == path).flatMap { model =>
       DbtSqlAnalysis.get(w, model.file).flatMap(a => DbtCteInspection.frames(a).lift(selected)).flatMap { cte =>
@@ -127,33 +123,30 @@ private[ide] final class DbtCteController(project: Project, val path: String,
           m.file.getVirtualFile.getPath -> DbtCteInspection.frames(a)))
       }
     }
-  })
+  }
   private def run(count: Boolean, rerunSelected: Boolean = false, limitOverride: Option[Int] = None): Unit =
     if (!disposed && !runner.isRunning && pending.isEmpty && !session.stopped) WriteIntentReadAction.run(() => {
       invalidateIfChanged()
-      FileDocumentManager.getInstance.saveAllDocuments()
-      PsiDocumentManager.getInstance(project).commitAllDocuments()
+      DbtUi.saveAndCommit(project)
       val expected = currentContext()
       val selectedName = frames.lift(selected).map(_.name)
       val nextIndex = session.position + 1
       val token = generation + 1; generation = token; pending = Some(token); observed = expected
       message = "Preparing a separate CTE query…"
-      ReadAction.nonBlocking(new Callable[Either[String, DbtCtePrepared]] {
-        override def call(): Either[String, DbtCtePrepared] = {
-          val w = DbtWorkspace.get(project)
-          for {
-            model <- DbtCteInspection.model(w, path).toRight("The model source is unavailable.")
-            snapshot <- DbtCteInspection.context(w, model).toRight("The owning project is unavailable.")
-            analysis <- DbtSqlAnalysis.get(w, model.file).toRight("This SQL cannot be inspected.")
-            available = DbtCteInspection.frames(analysis)
-            index = if (count || rerunSelected) selectedName.map(name => available.indexWhere(_.name == name)).getOrElse(0) else nextIndex
-            cte <- available.lift(index).toRight("End of CTE list. Restart to query again.")
-            query <- DbtCteInspection.plan(snapshot.source, analysis, cte, count)
-            command <- DbtCteInspection.command(w, model, query.sql, query.spans)
-          } yield DbtCtePrepared(snapshot, available, index,
-            limitOverride.fold(command)(limit => command.copy(request = command.request.copy(limit = DbtCommandRequest.limit(limit)))))
-        }
-      }).expireWith(this).finishOnUiThread(ModalityState.defaultModalityState(), prepared => {
+      DbtUi.readLater(this) {
+        val w = DbtWorkspace.get(project)
+        for {
+          model <- w.model(path).toRight("The model source is unavailable.")
+          snapshot <- DbtCteInspection.context(w, model).toRight("The owning project is unavailable.")
+          analysis <- DbtSqlAnalysis.get(w, model.file).toRight("This SQL cannot be inspected.")
+          available = DbtCteInspection.frames(analysis)
+          index = if (count || rerunSelected) selectedName.map(name => available.indexWhere(_.name == name)).getOrElse(0) else nextIndex
+          cte <- available.lift(index).toRight("End of CTE list. Restart to query again.")
+          query <- DbtCteInspection.plan(snapshot.source, analysis, cte, count)
+          command <- DbtCteInspection.command(w, model, query.sql, query.spans)
+        } yield DbtCtePrepared(snapshot, available, index,
+          limitOverride.fold(command)(limit => command.copy(request = command.request.copy(limit = DbtCommandRequest.limit(limit)))))
+      } { prepared =>
         if (!disposed && generation == token && pending.contains(token) && !session.stopped) {
           pending = None
           prepared match {
@@ -172,7 +165,7 @@ private[ide] final class DbtCteController(project: Project, val path: String,
               }
           }
         }
-      }).submit(AppExecutorUtil.getAppExecutorService)
+      }
     })
   override def dispose(): Unit = { disposed = true; stop() }
 }
@@ -191,21 +184,18 @@ final class DbtCteBreakpointProperties extends XBreakpointProperties[Element] {
 final class DbtCteBreakpointType extends XLineBreakpointType[DbtCteBreakpointProperties]("dbt-cte", "dbt CTE query breakpoints") {
   override def createBreakpointProperties(file: VirtualFile, line: Int): DbtCteBreakpointProperties = new DbtCteBreakpointProperties
   override def getVisibleStandardPanels: java.util.EnumSet[XBreakpointType.StandardPanels] = java.util.EnumSet.noneOf(classOf[XBreakpointType.StandardPanels])
-  override def canPutAt(file: VirtualFile, line: Int, project: Project): Boolean = file.getExtension == "sql" &&
-    ReadAction.computeBlocking[java.lang.Boolean, RuntimeException](() => {
-      val w = DbtWorkspace.get(project)
-      val psi = Option(PsiManager.getInstance(project).findFile(file))
-      Boolean.box(psi.exists(f => w.codeSymbols(f).exists(_.kind == "model") && DbtSqlAnalysis.get(w, f).exists(a =>
-        Option(FileDocumentManager.getInstance.getDocument(file)).exists(d =>
-          DbtCteInspection.frames(a).exists(c => d.getLineNumber(c.range.getStartOffset) == line)))))
-    }).booleanValue()
+  override def canPutAt(file: VirtualFile, line: Int, project: Project): Boolean = file.getExtension == "sql" && DbtUi.read {
+    val w = DbtWorkspace.get(project)
+    Option(PsiManager.getInstance(project).findFile(file)).exists(f => w.model(f).nonEmpty && DbtSqlAnalysis.get(w, f).exists(a =>
+      Option(FileDocumentManager.getInstance.getDocument(file)).exists(d =>
+        DbtCteInspection.frames(a).exists(c => d.getLineNumber(c.range.getStartOffset) == line))))
+  }
 }
 
 private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String, initial: Vector[DbtCte]) extends XDebugProcess(session) {
   private val project = session.getProject
   private val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).getConsole
-  private val file = ReadAction.computeBlocking[Option[VirtualFile], RuntimeException](() =>
-    DbtWorkspace.get(project).files.find(_.getVirtualFile.getPath == path).map(_.getVirtualFile))
+  private val file = DbtUi.read(DbtWorkspace.get(project).files.find(_.getVirtualFile.getPath == path).map(_.getVirtualFile))
   private var initialized = false
   private val process = new DbtManagedProcess(p => { controller.stop(); p.complete(130) })
   val controller: DbtCteController = new DbtCteController(project, path, initial, () => paused(),
@@ -320,7 +310,6 @@ private[ide] final case class DbtCtePrepared(context: DbtCteContext, frames: Vec
 private[ide] final class DbtCteSession {
   var position: Int = -1
   var stopped: Boolean = false
-  var breakpoints: Set[String] = Set.empty
   private var target = ""
   private var signatures = Map.empty[String, String]
   private var cache = Map.empty[String, DbtQueryResult]
@@ -345,20 +334,12 @@ private[ide] final class DbtCteSession {
 
 final class DbtInspectCtesAction extends AnAction("Inspect dbt CTEs") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
-  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
-    event.getProject != null && Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
-  override def actionPerformed(event: AnActionEvent): Unit = {
-    val project = event.getProject
-    val file = event.getData(CommonDataKeys.PSI_FILE)
-    if (project == null || file == null) return
-    ReadAction.nonBlocking(new Callable[Option[(String, Vector[DbtCte])]] {
-      override def call(): Option[(String, Vector[DbtCte])] = {
-        val w = DbtWorkspace.get(project)
-        for (model <- DbtCteInspection.model(w, file); analysis <- DbtSqlAnalysis.get(w, file))
-          yield model.file.getVirtualFile.getPath -> DbtCteInspection.frames(analysis)
-      }
-    }).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Option[(String, Vector[DbtCte])]) => result.foreach { case (path, frames) =>
-      DbtCteDebugger.open(project, path, frames)
-    }).submit(AppExecutorUtil.getAppExecutorService)
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event))
+  override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.fileContext(event).foreach { case (project, file) =>
+    DbtUi.readLater(project) {
+      val w = DbtWorkspace.get(project)
+      for (model <- w.model(file); analysis <- DbtSqlAnalysis.get(w, file))
+        yield model.file.getVirtualFile.getPath -> DbtCteInspection.frames(analysis)
+    }(_.foreach { case (path, frames) => DbtCteDebugger.open(project, path, frames) })
   }
 }

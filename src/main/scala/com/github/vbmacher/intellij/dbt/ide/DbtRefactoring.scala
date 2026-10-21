@@ -23,8 +23,7 @@ private[ide] object DbtRefactoring {
   val Kinds: Set[String] = Set("model", "macro", "cte", "sql_alias", "sql_projection", "column")
 
   /** Authored SQL models whose properties declare `column`. */
-  def models(w: DbtWorkspace, column: DbtSymbol): Vector[DbtSymbol] = w.symbols.filter(s => s.kind == "model" && s.isCode &&
-    s.relationName == column.owner && s.namespace == column.namespace && s.version == column.version && w.owner(s) == w.owner(column))
+  def models(w: DbtWorkspace, column: DbtSymbol): Vector[DbtSymbol] = w.relations(column).filter(s => s.kind == "model" && s.isCode)
 
   /** dbt references in workspace files (of `scope`, if given) that resolve to any of `targets`. */
   def references(w: DbtWorkspace, targets: Seq[PsiElement], scope: Option[SearchScope] = None): Vector[DbtNavigationReference] =
@@ -176,9 +175,7 @@ private[ide] object DbtSafeDelete {
         val offset = active.getCaretModel.getOffset
         val declarations = DbtUsages.sqlDeclarationsAt(w, file, offset)
         val authored = w.symbolAt(file, offset).filter(s => Kinds(s.kind))
-        val references = DbtNavigation.at(file, offset).flatMap(_.candidates).collect {
-          case target: DbtSymbolElement if Kinds(target.symbol.kind) => target.symbol
-        }
+        val references = DbtNavigation.resolvedAt(file, offset).filter(s => Kinds(s.kind))
         val exact = (if (declarations.nonEmpty) declarations else if (authored.nonEmpty) authored else references)
           .filter(s => Kinds(s.kind)).map(_.element).distinct
         if (exact.size == 1) exact else Vector.empty
@@ -246,7 +243,7 @@ final class DbtSafeDelete extends SafeDeleteProcessorDelegateBase {
         if (localFiles.exists(f => DbtSyntax.inFile(f).flatMap(DbtSyntax.calls).exists(c =>
             Set("ref", "source", "builtins.ref", "builtins.source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
           messages += "Dynamic consumers exist; the complete set of usages cannot be proven."
-        if (DbtHierarchy.ColumnKinds(e.symbol.kind) && localFiles.filter(_.getName.endsWith(".sql"))
+        if (DbtSymbol.ColumnKinds(e.symbol.kind) && localFiles.filter(_.getName.endsWith(".sql"))
           .exists(f => DbtSqlAnalysis.get(w, f).forall(_.issues.nonEmpty)))
           messages += "SQL analysis is incomplete; dependent column usages cannot be proven."
       }

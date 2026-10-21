@@ -118,8 +118,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val state = settings.getState
     DbtUi.readLater(this, ModalityState.any(), Some(project), Some(graphWork)) {
       val w = DbtWorkspace.get(project)
-      val editorModel = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).toVector
-        .flatMap(w.codeSymbols).find(_.kind == "model")
+      val editorModel = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).flatMap(w.model)
       val nextFocus = if (follow && state.pinnedFocus.isEmpty || oldFocus.isEmpty)
         editorModel.map(DbtResourceIdentity.key(w, _)).orElse(oldFocus) else oldFocus
       val graph = DbtGraphData.build(w, nextFocus,

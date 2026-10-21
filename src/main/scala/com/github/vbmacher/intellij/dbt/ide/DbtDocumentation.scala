@@ -28,10 +28,8 @@ import scala.util.Try
 /** Offset-based provider supports native modifier-free hover, even with plain-text SQL PSI. */
 final class DbtDocumentationTargetProvider extends DocumentationTargetProvider {
   override def documentationTargets(file: PsiFile, offset: Int): java.util.List[_ <: DocumentationTarget] = {
-    val targets = DbtNavigation.at(file, offset).flatMap(_.candidates).collect {
-      case e: DbtSymbolElement if DbtResourceData.GraphKinds(e.symbol.kind) || Set("macro", "documentation")(e.symbol.kind) ||
-        DbtHierarchy.ColumnKinds(e.symbol.kind) => e.symbol
-    }.distinctBy(_.id)
+    val targets = DbtNavigation.resolvedAt(file, offset).filter(s => DbtResourceData.GraphKinds(s.kind) ||
+      Set("macro", "documentation")(s.kind) || DbtSymbol.ColumnKinds(s.kind)).distinctBy(_.id)
     (if (targets.size != 1) Vector.empty
       else DbtDocumentation.target(file.getProject, targets.head)(new DbtDocumentationTarget(file, offset, _)).toVector).asJava
   }
@@ -72,7 +70,7 @@ private[ide] object DbtDocumentation {
   /** The documentation target of a resolved symbol; `resource` documents resources and macros. */
   def target(project: Project, symbol: DbtSymbol)(resource: DbtSymbol => DocumentationTarget): Option[DocumentationTarget] =
     if (symbol.kind == "documentation") Some(new DbtBuiltinDocumentationTarget(symbol))
-    else if (DbtHierarchy.ColumnKinds(symbol.kind)) columnTarget(DbtWorkspace.get(project), symbol)
+    else if (DbtSymbol.ColumnKinds(symbol.kind)) columnTarget(DbtWorkspace.get(project), symbol)
     else Some(resource(symbol))
 
   /** The documentation target of the reference at an offset. */
@@ -93,9 +91,7 @@ private[ide] object DbtDocumentation {
   }
 
   def columnTarget(w: DbtWorkspace, column: DbtSymbol): Option[DocumentationTarget] = {
-    val resource = w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && s.namespace == column.namespace &&
-      s.relationName == column.owner && s.version == column.version && w.owner(s) == w.owner(column)).sortBy(s => (!s.isCode, s.metadata)).headOption
-      .orElse(w.codeSymbols(column.file).find(_.kind == "model"))
+    val resource = w.relations(column).sortBy(s => (!s.isCode, s.metadata)).headOption.orElse(w.model(column.file))
     resource.map(s => new DbtColumnDocumentationTarget(s, column.name))
   }
 

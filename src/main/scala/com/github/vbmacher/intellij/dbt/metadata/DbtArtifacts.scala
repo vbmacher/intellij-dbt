@@ -202,8 +202,6 @@ private object DbtArtifactSource {
 
 /** Reads current editor content and bounded local files without depending on workspace discovery. */
 private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
-  import com.google.gson.JsonObject
-
   private val sections = Vector("nodes", "sources", "macros", "docs", "metrics", "exposures", "groups", "semantic_models", "saved_queries",
     "functions", "checks", "unit_tests", "selectors")
   private val baselineSections = Set("nodes", "sources", "exposures", "unit_tests", "metrics", "semantic_models", "saved_queries")
@@ -212,10 +210,6 @@ private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
     Vector(DbtManifestPolicy.Navigation, DbtManifestPolicy.TestDiscovery, DbtManifestPolicy.Baseline)
       .map(p => p -> Key.create[CachedValue[Either[String, DbtManifest]]](s"dbt.manifest.$p")).toMap
 
-  private def obj(json: JsonObject, name: String): Option[JsonObject] = Option(json.get(name)).filter(_.isJsonObject).map(_.getAsJsonObject)
-  private def string(json: JsonObject, name: String): Option[String] = Option(json.get(name))
-    .filter(v => v.isJsonPrimitive && v.getAsJsonPrimitive.isString).map(_.getAsString)
-
   override def parse(text: String, policy: DbtManifestPolicy): Either[String, DbtManifest] = {
     val label = if (policy == DbtManifestPolicy.Baseline) "Baseline manifest" else "Manifest"
     if (text.length > policy.maxBytes) Left(s"$label exceeds the ${policy.maxBytes / 1000000} MB limit.")
@@ -223,28 +217,30 @@ private[metadata] final class DbtJsonManifestReader extends DbtManifestReader {
       if (!value.isJsonObject) Left(s"$label must be an object.")
       else {
         val top = value.getAsJsonObject
-        val version = obj(top, "metadata").flatMap(string(_, "dbt_schema_version")).flatMap(schemas.get)
-        val records = sections.flatMap(section => obj(top, section).toVector.flatMap(_.entrySet.asScala).collect {
+        val version = DbtJson.child(top, "metadata").flatMap(DbtJson.text(_, "dbt_schema_version")).flatMap(schemas.get)
+        val records = sections.flatMap(section => DbtJson.child(top, section).toVector.flatMap(_.entrySet.asScala).collect {
           case entry if entry.getValue.isJsonObject => DbtManifestResource(section, entry.getKey, entry.getValue.getAsJsonObject)
         })
         val baseline = policy == DbtManifestPolicy.Baseline
         val checked = records.filter(r => baselineSections(r.section))
-        val shapesValid = baselineSections.forall(section => !top.has(section) || obj(top, section).nonEmpty)
-        val entriesValid = baselineSections.forall(section => obj(top, section).forall(_.entrySet.asScala.forall(_.getValue.isJsonObject)))
+        val shapesValid = baselineSections.forall(section => !top.has(section) || DbtJson.child(top, section).nonEmpty)
+        val entriesValid = baselineSections.forall(section =>
+          DbtJson.child(top, section).forall(_.entrySet.asScala.forall(_.getValue.isJsonObject)))
         val valid = entriesValid && checked.map(_.id).distinct.size == checked.size && checked.forall { r =>
           val node = r.data
-          string(node, "unique_id").forall(_ == r.id) &&
-            Vector("config", "columns", "depends_on").forall(key => !node.has(key) || obj(node, key).nonEmpty) &&
-            obj(node, "columns").forall(_.entrySet.asScala.forall(_.getValue.isJsonObject)) &&
-            obj(node, "depends_on").flatMap(d => Option(d.get("nodes"))).forall(v => v.isJsonArray &&
+          DbtJson.text(node, "unique_id").forall(_ == r.id) &&
+            Vector("config", "columns", "depends_on").forall(key => !node.has(key) || DbtJson.child(node, key).nonEmpty) &&
+            DbtJson.child(node, "columns").forall(_.entrySet.asScala.forall(_.getValue.isJsonObject)) &&
+            DbtJson.child(node, "depends_on").flatMap(d => Option(d.get("nodes"))).forall(v => v.isJsonArray &&
               v.getAsJsonArray.asScala.forall(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString))
         }
-        if (version.isEmpty || baseline && obj(top, "nodes").isEmpty)
+        if (version.isEmpty || baseline && DbtJson.child(top, "nodes").isEmpty)
           Left(s"$label schema is missing or unsupported; supported manifest schemas are v9-v12.")
         else if (baseline && !shapesValid) Left("Baseline manifest resource sections must be objects.")
         else if (baseline && checked.size > 50000) Left("Baseline manifest exceeds 50000 resource entries.")
         else if (baseline && !valid) Left("Baseline resource identities, columns, config or dependency shapes are malformed.")
-        else Right(DbtManifest(version.get, obj(top, "metadata").flatMap(string(_, "project_name")), if (baseline) checked else records))
+        else Right(DbtManifest(version.get, DbtJson.child(top, "metadata").flatMap(DbtJson.text(_, "project_name")),
+          if (baseline) checked else records))
       }
     }
   }

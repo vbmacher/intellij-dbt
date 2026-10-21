@@ -5,8 +5,7 @@ import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.{DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.intellij.diff.{DiffContentFactory, DiffManager}
 import com.intellij.diff.requests.SimpleDiffRequest
-import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
-import com.intellij.openapi.application.{ModalityState, ReadAction}
+import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys, DataContext}
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.{FileType, FileTypeManager}
@@ -16,10 +15,8 @@ import com.intellij.openapi.ui.popup.{JBPopup, JBPopupFactory, ListItemDescripto
 import com.intellij.psi.PsiFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
-import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
 
-import java.util.concurrent.Callable
 import javax.swing.{Icon, JList}
 import scala.jdk.CollectionConverters._
 
@@ -74,19 +71,23 @@ private[ide] abstract class DbtEditorAction extends AnAction {
 }
 
 private[ide] object DbtEditorAction {
-  /** The project, PSI file and editor of an event, when all are available. */
-  def editorContext(event: AnActionEvent): Option[(Project, PsiFile, Editor)] = for {
-    project <- Option(event.getProject)
-    file <- Option(event.getData(CommonDataKeys.PSI_FILE))
-    editor <- Option(event.getData(CommonDataKeys.EDITOR))
-  } yield (project, file, editor)
+  /** The project and PSI file of an event, when both are available. */
+  def fileContext(event: AnActionEvent): Option[(Project, PsiFile)] =
+    for (project <- Option(event.getProject); file <- Option(event.getData(CommonDataKeys.PSI_FILE))) yield (project, file)
 
-  /** Computes in a cancellable smart-mode read action off the EDT, then consumes the result on the EDT. */
-  def inBackground[T](project: Project)(compute: => T)(consume: T => Unit): Unit =
-    ReadAction.nonBlocking(new Callable[T] {
-      override def call(): T = compute
-    }).inSmartMode(project).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: T) => consume(result))
-      .submit(AppExecutorUtil.getAppExecutorService)
+  /** The project, PSI file and editor of an event, when all are available. */
+  def editorContext(event: AnActionEvent): Option[(Project, PsiFile, Editor)] =
+    fileContext(event).flatMap { case (project, file) => Option(event.getData(CommonDataKeys.EDITOR)).map((project, file, _)) }
+
+  /** Whether an event has a project and a SQL file, and an editor if `editor`. */
+  def sql(event: AnActionEvent, editor: Boolean = false): Boolean =
+    (if (editor) editorContext(event).map(_._2) else fileContext(event).map(_._2)).exists(_.getName.endsWith(".sql"))
+
+  /** The project of a data context with its PSI file and the editor caret offset, or 0 without an editor. */
+  def caret(context: DataContext): Option[(Project, Option[PsiFile], Int)] = Option(CommonDataKeys.PROJECT.getData(context)).map { project =>
+    val offset = Option(CommonDataKeys.EDITOR.getData(context)).map(_.getCaretModel.getOffset).getOrElse(0)
+    (project, Option(CommonDataKeys.PSI_FILE.getData(context)), offset)
+  }
 }
 
 /** Computes navigation items at the caret in a background read action and offers them in a popup. */
@@ -95,13 +96,9 @@ abstract class DbtPopupAction(title: String) extends DbtEditorAction {
 
   protected def nothingFound(project: Project): Unit = ()
 
-  /** Symbols resolved by the reference at the caret. */
-  protected def resolvedAt(file: PsiFile, offset: Int): Vector[DbtSymbol] =
-    DbtNavigation.at(file, offset).flatMap(_.candidates).collect { case e: DbtSymbolElement => e.symbol }
-
   override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
     val offset = editor.getCaretModel.getOffset
-    DbtEditorAction.inBackground(project)(items(DbtWorkspace.get(project), file, offset)) { choices =>
+    DbtUi.readLater(project, smartIn = Some(project))(items(DbtWorkspace.get(project), file, offset)) { choices =>
       if (choices.isEmpty) nothingFound(project)
       else DbtNavigationItem.popup(title, choices).showInBestPositionFor(editor)
     }
@@ -111,7 +108,7 @@ abstract class DbtPopupAction(title: String) extends DbtEditorAction {
 /** Lists the property declarations of the resource at the caret, or of the current file. */
 final class DbtPropertiesAction extends DbtPopupAction("dbt Properties") {
   override private[ide] def items(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtNavigationItem] = {
-    val at = resolvedAt(file, offset)
+    val at = DbtNavigation.resolvedAt(file, offset)
     (if (at.nonEmpty) at else w.codeSymbols(file)).flatMap(w.properties).distinct.map(s => DbtNavigationItem.declaration(s.element))
   }
 }
@@ -119,7 +116,7 @@ final class DbtPropertiesAction extends DbtPopupAction("dbt Properties") {
 /** Lists what the symbol at the caret uses and what uses it, with the call sites of each. */
 final class DbtDependenciesAction extends DbtPopupAction("dbt Dependencies") {
   override private[ide] def items(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtNavigationItem] = {
-    val at = resolvedAt(file, offset)
+    val at = DbtNavigation.resolvedAt(file, offset)
     val current = if (at.nonEmpty) at else w.symbolAt(file, offset) ++ w.codeSymbols(file)
     DbtDependenciesAction.choices(DbtLineage.edges(w), current.map(_.id).toSet)
   }
@@ -149,21 +146,27 @@ private[ide] object DbtDependenciesAction {
 
 /** Acts on the resource at the caret, or of the current file. */
 private[ide] abstract class DbtResourceAction(perform: (DbtWorkspace, DbtSymbol) => Unit) extends DbtEditorAction {
-  private def resource(event: AnActionEvent): Option[(DbtWorkspace, DbtSymbol)] = Option(event.getProject).flatMap(project =>
-    DbtResourceAction.at(project, Option(event.getData(CommonDataKeys.PSI_FILE)),
-      Option(event.getData(CommonDataKeys.EDITOR)).map(_.getCaretModel.getOffset).getOrElse(0)))
+  private def resource(event: AnActionEvent): Option[(DbtWorkspace, DbtSymbol)] =
+    DbtEditorAction.caret(event.getDataContext).flatMap { case (project, file, offset) => DbtResourceAction.at(project, file, offset) }
 
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(resource(event).nonEmpty)
 
-  override def actionPerformed(event: AnActionEvent): Unit =
-    ReadAction.computeBlocking[Option[(DbtWorkspace, DbtSymbol)], RuntimeException](() => resource(event)).foreach(perform.tupled)
+  override def actionPerformed(event: AnActionEvent): Unit = DbtUi.read(resource(event)).foreach(perform.tupled)
 }
 
 private[ide] object DbtResourceAction {
   /** The resource at an offset of a file, or of the file itself. */
   def at(project: Project, file: Option[PsiFile], offset: Int): Option[(DbtWorkspace, DbtSymbol)] = {
     val w = DbtWorkspace.get(project)
-    DbtImpactUi.context(w, file, offset).map(w -> _)
+    at(w, file, offset).map(w -> _)
+  }
+
+  /** The graph resource at the caret, the relation owning a column at the caret, or the file's first code resource. */
+  def at(w: DbtWorkspace, source: Option[PsiFile], offset: Int): Option[DbtSymbol] = source.flatMap { file =>
+    val here = w.symbolAt(file, offset)
+    here.find(s => DbtResourceData.GraphKinds(s.kind))
+      .orElse(here.find(_.kind == "column").flatMap(w.relations(_).sortBy(_.isProperty).headOption))
+      .orElse(w.codeSymbols(file).headOption)
   }
 }
 

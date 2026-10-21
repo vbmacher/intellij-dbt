@@ -1,15 +1,12 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.google.gson.{JsonArray, JsonElement, JsonNull, JsonParser}
-import com.intellij.notification.{NotificationGroupManager, NotificationType}
-import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextField}
 import com.intellij.ui.table.JBTable
 import java.awt.{BorderLayout, Component, FlowLayout}
-import java.awt.datatransfer.StringSelection
 import java.nio.file.Files
-import javax.swing.{JButton, JComboBox, JFileChooser, JPanel, JSpinner, JTable, RowFilter, SpinnerNumberModel, SwingConstants}
+import javax.swing.{JComboBox, JFileChooser, JPanel, JSpinner, JTable, RowFilter, SpinnerNumberModel, SwingConstants}
 import javax.swing.table.{AbstractTableModel, DefaultTableCellRenderer, TableRowSorter}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
@@ -69,19 +66,17 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
   bar.add(label); bar.add(new JBLabel("Filter:")); bar.add(filter)
   private val limit = new JSpinner(new SpinnerNumberModel(20, 1, 1000, 10))
   limit.getAccessibleContext.setAccessibleName("Preview row limit")
-  private val rerun = new JButton("Run with limit")
-  rerun.addActionListener(_ => if (onLimit != null && result.nonEmpty && !running) {
-    scala.util.Try(limit.commitEdit()).toOption.foreach(_ => onLimit(limit.getValue.asInstanceOf[Number].intValue()))
-  })
+  private val rerun = DbtUi.button("Run with limit") {
+    if (onLimit != null && result.nonEmpty && !running)
+      scala.util.Try(limit.commitEdit()).toOption.foreach(_ => onLimit(limit.getValue.asInstanceOf[Number].intValue()))
+  }
   bar.add(limit); bar.add(rerun)
-  private val copy = new JButton("Copy selection")
-  copy.addActionListener(_ => if (table.getSelectedRowCount > 0 && table.getSelectedColumnCount > 0)
-    CopyPasteManager.getInstance().setContents(new StringSelection(exportText('\t', selectedOnly = true))))
+  private val copy = DbtUi.button("Copy selection") {
+    if (table.getSelectedRowCount > 0 && table.getSelectedColumnCount > 0) DbtUi.copy(exportText('\t', selectedOnly = true))
+  }
   private val format = new JComboBox[String](Array("CSV", "TSV"))
   format.getAccessibleContext.setAccessibleName("Preview export format")
-  private val `export` = new JButton("Export CSV")
-  format.addActionListener(_ => export.setText("Export " + format.getSelectedItem))
-  export.addActionListener(_ => result.foreach { _ =>
+  private val `export` = DbtUi.button("Export CSV")(result.foreach { _ =>
     val chooser = new JFileChooser
     chooser.setSelectedFile(new java.io.File(if (format.getSelectedItem == "TSV") "preview.tsv" else "preview.csv"))
     if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
@@ -95,13 +90,12 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
           Files.writeString(destination, text)
         }
         override def onThrowable(error: Throwable): Unit =
-          NotificationGroupManager.getInstance().getNotificationGroup("dbt Workspace")
-            .createNotification("Cannot export dbt preview", Option(error.getMessage).getOrElse(error.toString), NotificationType.WARNING).notify(null)
+          DbtNotifications.show(null, "Cannot export dbt preview", Option(error.getMessage).getOrElse(error.toString))
       }.queue()
     }
   })
-  private val sql = new JButton("Open SQL")
-  sql.addActionListener(_ => result.foreach(r => DbtSqlEditors.open(project, "dbt preview", r.sql)))
+  format.addActionListener(_ => export.setText("Export " + format.getSelectedItem))
+  private val sql = DbtUi.button("Open SQL")(result.foreach(r => DbtSqlEditors.open(project, "dbt preview", r.sql)))
   Vector[Component](copy, format, export, sql).foreach(bar.add)
   add(bar, BorderLayout.NORTH); add(new JBScrollPane(table), BorderLayout.CENTER)
   table.setCellSelectionEnabled(true); table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)

@@ -1,15 +1,14 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project._
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.{ModalityState, ReadAction}
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.{FileDocumentManager, OpenFileDescriptor}
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.{DialogWrapper, Messages}
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.{BorderLayout, Dimension, FlowLayout, GridBagConstraints, Insets}
 import java.awt.datatransfer.StringSelection
@@ -21,25 +20,41 @@ import javax.swing._
 private[ide] object DbtUi {
   def name(path: String): String = scala.util.Try(Paths.get(path).getFileName.toString).getOrElse(path)
 
-  /** Reads in a non-blocking read action expiring with `parent` (optionally in smart mode), then shows the result on the EDT. */
+  /**
+   * Reads in a cancellable non-blocking read action expiring with `parent`, optionally in smart mode, with committed
+   * documents and coalesced with other reads of the same key, then shows the result on the EDT.
+   */
   def readLater[A](parent: Disposable, modality: ModalityState = ModalityState.defaultModalityState(),
-    smartIn: Option[Project] = None, coalesce: Option[AnyRef] = None)(read: => A)(show: A => Unit): Unit = {
+    smartIn: Option[Project] = None, coalesce: Option[AnyRef] = None, committedIn: Option[Project] = None)(read: => A)(
+    show: A => Unit): Unit = {
     val action = ReadAction.nonBlocking(new Callable[A] { override def call(): A = read }).expireWith(parent)
     val smart = smartIn.fold(action)(action.inSmartMode)
-    coalesce.fold(smart)(smart.coalesceBy(_)).finishOnUiThread(modality, (result: A) => show(result))
+    val committed = committedIn.fold(smart)(smart.withDocumentsCommitted)
+    coalesce.fold(committed)(committed.coalesceBy(_)).finishOnUiThread(modality, (result: A) => show(result))
       .submit(AppExecutorUtil.getAppExecutorService)
     ()
   }
 
-  /** A cancellable background task; its result is shown on the EDT while the project is open. */
-  def background[A](project: Project, title: String)(work: => A)(show: A => Unit): Unit =
+  /**
+   * A cancellable background task; its result is shown on the EDT while the project is open. Failures are reported by
+   * `failed` while the project is open, or by a generic error dialog. `finished` runs after every outcome.
+   */
+  def background[A](project: Project, title: String, failed: Option[Throwable => Unit] = None, finished: () => Unit = () => ())(
+    work: ProgressIndicator => A)(show: A => Unit): Unit =
     new Task.Backgroundable(project, title, true) {
       private var result: Option[A] = None
-      override def run(indicator: ProgressIndicator): Unit = { result = Some(work) }
+      override def run(indicator: ProgressIndicator): Unit = { result = Some(work(indicator)) }
       override def onSuccess(): Unit = if (!project.isDisposed) result.foreach(show)
-      override def onThrowable(error: Throwable): Unit =
-        if (!project.isDisposed) Messages.showErrorDialog(project, "Analysis failed or was canceled. Refresh and try again.", title)
+      override def onThrowable(error: Throwable): Unit = if (!project.isDisposed) failed.fold(
+        Messages.showErrorDialog(project, "Analysis failed or was canceled. Refresh and try again.", title))(_(error))
+      override def onFinished(): Unit = finished()
     }.queue()
+
+  /** Saves all documents and commits them, so that PSI reads and launched tools see the same source. */
+  def saveAndCommit(project: Project): Unit = {
+    FileDocumentManager.getInstance.saveAllDocuments()
+    PsiDocumentManager.getInstance(project).commitAllDocuments()
+  }
 
   def read[A](body: => A): A = ReadAction.computeBlocking[A, RuntimeException](() => body)
   def copy(value: String): Unit = CopyPasteManager.getInstance().setContents(new StringSelection(value))
@@ -74,15 +89,5 @@ private[ide] object DbtUi {
       panel.add(new JLabel(label), c)
       c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL
       panel.add(field, c)
-  }
-}
-
-private[ide] object DbtImpactUi {
-  /** The graph resource at the caret, the relation owning a column at the caret, or the file's first code resource. */
-  def context(w: DbtWorkspace, source: Option[PsiFile], offset: Int): Option[DbtSymbol] = source.flatMap { file =>
-    val at = w.symbolAt(file, offset)
-    at.find(s => DbtResourceData.GraphKinds(s.kind)).orElse(at.find(_.kind == "column").flatMap(c =>
-      w.symbols.filter(s => DbtSymbol.RelationKinds(s.kind) && s.relationName == c.owner && s.namespace == c.namespace &&
-        s.version == c.version && w.owner(s) == w.owner(c)).sortBy(_.isProperty).headOption)).orElse(w.codeSymbols(file).headOption)
   }
 }

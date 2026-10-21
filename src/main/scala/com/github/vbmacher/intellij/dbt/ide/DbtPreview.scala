@@ -5,25 +5,22 @@ import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.DbtSyntax
 import com.google.gson.{JsonObject, JsonParser}
 import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys}
-import com.intellij.openapi.application.{ModalityState, ReadAction, WriteIntentReadAction}
+import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, OpenFileDescriptor}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.psi.{PsiDocumentManager, PsiFile}
+import com.intellij.psi.PsiFile
 import com.intellij.ui.components.JBLabel
-import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.FlowLayout
-import java.util.concurrent.Callable
 import javax.swing.{JButton, JPanel}
 import scala.util.Try
 
 final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
-    event.getProject != null && Option(event.getData(CommonDataKeys.EDITOR)).exists(_.getSelectionModel.hasSelection) &&
-      Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
+    DbtEditorAction.sql(event, editor = true) && event.getData(CommonDataKeys.EDITOR).getSelectionModel.hasSelection)
   override def actionPerformed(event: AnActionEvent): Unit = DbtCteInspection.launchPreview[DbtCommand](event, "Preview selected dbt SQL") {
     (file, editor) =>
       val sql = Option(editor.getSelectionModel.getSelectedText).filter(_.trim.nonEmpty)
@@ -31,7 +28,7 @@ final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
         text <- sql.toRight("Select SQL to preview.")
         _ <- Either.cond(DbtNavigation.projectedColumns(text).nonEmpty,
           (), "Select one supported SELECT query to preview. Statements that modify data or schema cannot be previewed.")
-        model <- DbtCteInspection.model(w, file).toRight("Choose a dbt source model.")
+        model <- w.model(file).toRight("Choose a dbt source model.")
         _ <- Either.cond(before == DbtCteInspection.context(w, model), (), "Source or execution settings changed; select the query again.")
         command <- DbtCteInspection.command(w, model, text)
       } yield command
@@ -42,14 +39,12 @@ final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
 
 final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
-  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
-    event.getProject != null && event.getData(CommonDataKeys.EDITOR) != null &&
-      Option(event.getData(CommonDataKeys.PSI_FILE)).exists(_.getName.endsWith(".sql")))
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event, editor = true))
   override def actionPerformed(event: AnActionEvent): Unit =
     DbtCteInspection.launchPreview[(DbtCteContext, DbtCommand)](event, "Preview dbt CTE") { (file, editor) =>
       val offset = editor.getCaretModel.getOffset
       (w, _) => for {
-        resource <- DbtCteInspection.model(w, file).toRight("Choose a dbt source model.")
+        resource <- w.model(file).toRight("Choose a dbt source model.")
         snapshot <- DbtCteInspection.context(w, resource).toRight("The execution project is unavailable.")
         analysis <- DbtSqlAnalysis.get(w, file).toRight("This SQL cannot be inspected safely.")
         cte <- DbtCteInspection.at(w, file, analysis, offset)
@@ -64,9 +59,6 @@ final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
 }
 
 private[ide] object DbtCteInspection {
-  def model(w: DbtWorkspace, file: PsiFile): Option[DbtSymbol] = w.codeSymbols(file).find(_.kind == "model")
-  def model(w: DbtWorkspace, path: String): Option[DbtSymbol] =
-    w.symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == path)
   /** Top-level CTEs: the inspectable query steps of a model. */
   def frames(analysis: DbtSqlAnalysis): Vector[DbtCte] = analysis.ctes.filter(c => !analysis.ctes.exists(p => p.body.contains(c.range)))
 
@@ -76,26 +68,19 @@ private[ide] object DbtCteInspection {
    */
   def launchPreview[T](event: AnActionEvent, title: String)(
     input: (PsiFile, Editor) => (DbtWorkspace, Option[DbtCteContext]) => Either[String, T])(
-    verify: (T, Option[DbtCteContext], () => Option[DbtCteContext]) => Either[String, DbtCommand]): Unit = WriteIntentReadAction.run(() => {
-    val project = event.getProject; val file = event.getData(CommonDataKeys.PSI_FILE); val editor = event.getData(CommonDataKeys.EDITOR)
-    if (project != null && file != null && editor != null) {
+    verify: (T, Option[DbtCteContext], () => Option[DbtCteContext]) => Either[String, DbtCommand]): Unit = WriteIntentReadAction.run(() =>
+    DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
       val prepare = input(file, editor)
-      FileDocumentManager.getInstance().saveAllDocuments()
-      PsiDocumentManager.getInstance(project).commitAllDocuments()
-      def current(): Option[DbtCteContext] = ReadAction.computeBlocking[Option[DbtCteContext], RuntimeException](() => {
-        val w = DbtWorkspace.get(project)
-        model(w, file).flatMap(context(w, _))
-      })
+      DbtUi.saveAndCommit(project)
+      def current(): Option[DbtCteContext] = DbtUi.read { val w = DbtWorkspace.get(project); w.model(file).flatMap(context(w, _)) }
       val before = current()
-      ReadAction.nonBlocking(new Callable[Either[String, T]] {
-        override def call(): Either[String, T] = prepare(DbtWorkspace.get(project), before)
-      }).expireWith(project).finishOnUiThread(ModalityState.defaultModalityState(), (result: Either[String, T]) =>
+      DbtUi.readLater(project)(prepare(DbtWorkspace.get(project), before)) { result =>
         result.flatMap(verify(_, before, () => current())) match {
           case Left(error) => Messages.showInfoMessage(project, error, title)
           case Right(command) => DbtRunConfiguration.launch(project, command)
-        }).submit(AppExecutorUtil.getAppExecutorService)
-    }
-  })
+        }
+      }
+    })
 
   def at(w: DbtWorkspace, file: PsiFile, analysis: DbtSqlAnalysis, offset: Int): Option[DbtCte] = {
     val resolved = DbtNavigation.at(file, offset).flatMap(_.candidates).collect {
@@ -164,8 +149,7 @@ private[ide] object DbtCteInspection {
     val execution = root.runOptions.values.map(value => String.valueOf(value)) ++ Vector(root.directory.getPath, root.executionDirectory.toString,
       DbtExecutionContext.activeTarget(root).getOrElse(""), DbtExecutionContext.profiles(root).directory.toString,
       root.config.getContainingFile.getText, root.settings.map(_.getText).getOrElse(""),
-      root.psiFile(root.profilesFile).map(f => java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-        .digest(f.getText.getBytes(java.nio.charset.StandardCharsets.UTF_8)))).getOrElse(""))
+      root.psiFile(root.profilesFile).map(f => DbtHash.sha256(f.getText)).getOrElse(""))
     val dependencies = w.files.filter(f => w.root(f).exists(r => w.executionRoot(r) == root &&
       (r.resource(f) || f.getName == "dbt_project.yml" || f.getName == "profiles.yml" || f.getName == ".dbt-navigation.yml")))
       .map(f => f.getVirtualFile.getPath -> Option(manager.getCachedDocument(f.getVirtualFile)).map(_.getModificationStamp).getOrElse(f.getModificationStamp))
@@ -206,7 +190,7 @@ private[ide] final case class DbtPreviewEvidence(submitted: String, adapterSql: 
 }
 
 private[ide] object DbtPreviewEvidence {
-  import DbtExecutionEvidence.{child, text}
+  import DbtJson.{child, text}
   private final case class Event(info: JsonObject, data: JsonObject) {
     def name: String = text(info, "name").getOrElse("")
     def invocation: String = text(info, "invocation_id").getOrElse("")
@@ -290,15 +274,13 @@ private[ide] object DbtPreviewEvidence {
 /** Shared by the Runner and CTE inspector; failed queries have no result grid to hold these controls. */
 private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new FlowLayout(FlowLayout.LEFT)) {
   private var evidence = Option.empty[DbtPreviewEvidence]
-  private val details = new JButton("Open preview SQL")
-  private val navigate = new JButton("Go to CTE error")
   private val label = new JBLabel
   label.putClientProperty("html.disable", java.lang.Boolean.TRUE)
-  details.addActionListener(_ => evidence.foreach { e =>
+  private val details = DbtUi.button("Open preview SQL")(evidence.foreach { e =>
     DbtSqlEditors.open(project, "dbt submitted preview", e.submitted)
     e.adapterSql.foreach(sql => DbtSqlEditors.open(project, "dbt adapter preview", sql))
   })
-  navigate.addActionListener(_ => WriteIntentReadAction.run(() => evidence.flatMap(_.location).foreach { at =>
+  private val navigate: JButton = DbtUi.button("Go to CTE error")(WriteIntentReadAction.run(() => evidence.flatMap(_.location).foreach { at =>
     val file = Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl))
     val current = file.flatMap(f => Option(FileDocumentManager.getInstance.getDocument(f)))
     if (current.exists(_.getText == at.source.text)) file.foreach { f =>

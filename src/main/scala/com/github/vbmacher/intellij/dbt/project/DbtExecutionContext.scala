@@ -170,11 +170,16 @@ private[dbt] object DbtExecutionContext {
   def activeTarget(root: DbtRoot): Option[String] = root.selectedTarget.orElse(profiles(root).defaultTarget)
 }
 
+/** Lowercase hexadecimal SHA-256 digests; text is encoded as UTF-8. */
+private[dbt] object DbtHash {
+  def sha256(bytes: Array[Byte]): String = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+  def sha256(text: String): String = sha256(text.getBytes(StandardCharsets.UTF_8))
+}
+
 /** Provenance binds the manifest bytes to the execution configuration captured before launching dbt. */
 private[dbt] object DbtArtifactContext {
   private val Marker = ".dbt-workspace-context"
-  private def textDigest(text: String): String = java.security.MessageDigest.getInstance("SHA-256")
-    .digest(text.stripPrefix("\ufeff").replace("\r\n", "\n").getBytes(StandardCharsets.UTF_8)).map(b => f"${b & 0xff}%02x").mkString
+  private def textDigest(text: String): String = DbtHash.sha256(text.stripPrefix("\ufeff").replace("\r\n", "\n"))
   private def digest(path: Path): String = textDigest(Files.readString(path, StandardCharsets.UTF_8))
   def fingerprint(directory: String): Option[String] = Try(digest(Paths.get(directory).resolve("manifest.json"))).toOption
   def identity(root: DbtRoot): Vector[String] = {

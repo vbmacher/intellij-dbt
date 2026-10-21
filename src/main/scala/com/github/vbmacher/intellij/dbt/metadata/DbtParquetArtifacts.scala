@@ -78,10 +78,8 @@ private[metadata] final class DbtParquetArtifactSource extends DbtDeclarationSou
         val owners = (workspace.symbols ++ resources).filter(s => s.kind != "column" && s.uniqueId == id && visible(workspace, root, s))
         owners.headOption.toVector.filter(owner => !owner.isStale && name.nonEmpty && !outdated(workspace, root, row))
           .flatMap { owner =>
-            val ownerName = owner.relationName
-            if (workspace.symbols.exists(s => s.kind == "column" && workspace.owner(s) == workspace.owner(owner) && s.namespace == owner.namespace &&
-              s.owner == ownerName && s.name == name && s.version == owner.version)) Vector.empty
-            else Vector(DbtSymbol("column", name, owner.namespace, table.file, row.range("column_name"), ownerName, owner.version,
+            if (workspace.columns(owner).exists(_.name == name)) Vector.empty
+            else Vector(DbtSymbol("column", name, owner.namespace, table.file, row.range("column_name"), owner.relationName, owner.version,
               (attributes(table, row, stale = false) - "unique_id") ++ workspace.owner(owner).map(r => "resource-root" -> r.directory.getPath),
               metadata = true))
           }
