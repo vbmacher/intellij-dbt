@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt selectors (current)",
+  "type": "object",
+  "properties": {
+    "selectors": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "definition": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "array"
+                  }
+                ]
+              },
+              "default": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "definition"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    }
+  },
+  "required": [],
+  "additionalProperties": true
+}

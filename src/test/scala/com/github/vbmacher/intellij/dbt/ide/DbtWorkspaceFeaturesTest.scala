@@ -1,22 +1,44 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
+import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtSqlAnalysis}
 import com.github.vbmacher.intellij.dbt.project._
-import com.google.gson.{JsonArray, JsonObject}
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.util.TextRange
+import com.intellij.ide.structureView.{StructureViewTreeElement, TreeBasedStructureViewBuilder}
+import com.intellij.mock.Mock
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.fileEditor.{FileEditorManager, FileEditorManagerListener}
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.registry.Registry
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.testFramework.ServiceContainerUtil
+import com.intellij.ui.jcef.JBCefApp
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.junit.Assert._
+
 import java.util.concurrent.{Callable, TimeUnit}
 import scala.jdk.CollectionConverters._
 
 /** Fixtures describe visible resource identities and metadata rather than the implementation's internal steps. */
-final class DbtWorkspaceFeaturesTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def workspace = DbtWorkspace.get(getProject)
+final class DbtWorkspaceFeaturesTest extends DbtTestCase {
   private def resource(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
+
+  def testVirtualEnvironmentsDoNotIntroduceDbtProjectsOrWorkspaceFiles(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    Vector(".venv", "venv").foreach { environment =>
+      add(s"$environment/lib/dbt/include/adapter/dbt_project.yml", "name: adapter_internal\nconfig-version: 2\n")
+      add(s"$environment/lib/dbt/include/adapter/models/internal.sql", "select 2 as id")
+      add(s"$environment/profiles.yml", "private: {}\n")
+    }
+    val w = workspace
+    assertEquals(Vector("analytics"), w.roots.map(_.name))
+    assertEquals(Vector("orders"), w.symbols.filter(_.isCode).map(_.name))
+    assertFalse(w.files.exists(f => f.getVirtualFile.getPath.contains("/venv/") || f.getVirtualFile.getPath.contains("/.venv/")))
+  }
+
   def testDeletedFilesAreIgnoredByBackgroundPresentation(): Unit = {
     project()
+    assertEquals("Native Diff PSI files may have no virtual file", None, DbtWorkspace.rootForFile(getProject, null))
     val file = add("models/removed.sql", "select 1").getVirtualFile
     assertTrue(DbtWorkspace.rootForFile(getProject, file).nonEmpty)
     com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
@@ -31,7 +53,8 @@ final class DbtWorkspaceFeaturesTest extends DbtCodeInsightTestCase {
     project("profile: analytics\n")
     add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {type: duckdb, schema: main}\n    prod: {type: duckdb, schema: prod}\n")
     add("models/orders.sql", "{{ config(materialized='incremental') }}\nselect * from {{ source('raw', 'events') }}")
-    add("models/schema.yml", """models:
+    add("models/schema.yml",
+      """models:
 - name: orders
   description: "Orders <strong> & details"
   config: {materialized: incremental, tags: [finance]}
@@ -50,8 +73,9 @@ sources:
     columns: [{name: event_id, data_type: int}]
 """)
     add("models/report.sql", "select * from {{ ref('orders') }}")
-    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
-      "model.analytics.orders":{"unique_id":"model.analytics.orders","name":"orders","resource_type":"model","package_name":"analytics","original_file_path":"models/orders.sql","database":"warehouse","schema":"mart","alias":"physical_orders","relation_name":"\"warehouse\".\"mart\".\"physical_orders\"","config":{"materialized":"incremental"},"compiled_code":"select * from warehouse.landing.actual_events","depends_on":{"nodes":["source.analytics.raw.events"]}},
+    add("target/manifest.json",
+      """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
+      "model.analytics.orders":{"unique_id":"model.analytics.orders","name":"orders","resource_type":"model","package_name":"analytics","original_file_path":"models/orders.sql","database":"warehouse","schema":"mart","alias":"physical_orders","relation_name":"\"warehouse\".\"mart\".\"physical_orders\"","config":{"materialized":"incremental","database":null,"schema":null},"compiled_code":"select * from warehouse.landing.actual_events","depends_on":{"nodes":["source.analytics.raw.events"]}},
       "test.analytics.unique_orders_id":{"unique_id":"test.analytics.unique_orders_id","name":"unique_orders_id","test_metadata":{"name":"unique"},"resource_type":"test","package_name":"analytics","column_name":"id","depends_on":{"nodes":["model.analytics.orders"]}}
       },"sources":{"source.analytics.raw.events":{"unique_id":"source.analytics.raw.events","name":"events","source_name":"raw","resource_type":"source","package_name":"analytics","database":"warehouse","schema":"landing","identifier":"actual_events","relation_name":"warehouse.landing.actual_events"}}}""")
   }
@@ -63,6 +87,8 @@ sources:
     assertEquals("Orders <strong> & details", data.description)
     assertEquals(Vector("finance"), data.tags)
     assertEquals("bigint", data.columns.head.dataType)
+    assertEquals("warehouse", data.attributes("database"))
+    assertEquals("mart", data.attributes("schema"))
     assertTrue(data.tests.exists(t => t.name == "unique" && t.column == "id"))
     assertEquals("A test declared in YAML and its manifest must be counted once", 2, data.tests.size)
     assertTrue(data.compiledSql.exists(_.startsWith("select")))
@@ -73,6 +99,7 @@ sources:
     assertTrue(html.contains("Orders &lt;strong&gt; &amp; details"))
     assertFalse(html.contains("Orders <strong>"))
     assertTrue(html.contains("Upstream (1)"))
+    assertFalse("Hide Airflow context when no tasks are available", html.contains("Airflow context"))
     assertFalse(html.contains("<li>analytics.materialized</li>"))
     assertFalse(html.contains("<li>analytics.raw</li>"))
   }
@@ -98,12 +125,14 @@ sources:
     assertTrue(new DbtDocumentationTargetProvider().documentationTargets(file, myFixture.getCaretOffset).isEmpty)
   }
 
-  def testLargeHoverIsBoundedAndSidebarKeepsAllColumns(): Unit = {
+  def testNativeDocumentationKeepsAllKnownColumns(): Unit = {
     project()
     add("models/orders.sql", "select 1")
     add("models/schema.yml", "models:\n- name: orders\n  columns:\n" + (1 to 19).map(n => s"  - {name: column_$n, data_type: int}\n").mkString)
     val html = DbtDocumentation.render(workspace, resource("orders"))
-    assertTrue(html.contains("Columns (19)")); assertTrue(html.contains("4 more columns")); assertFalse(html.contains("<b>column_19</b>"))
+    assertTrue(html.contains("Columns (19)"));
+    assertFalse(html.contains("more columns"));
+    assertTrue(html.contains(">column_19</a>"))
     assertEquals(19, DbtGraphData.documentation(workspace, resource("orders")).getAsJsonArray("columns").size())
   }
 
@@ -112,39 +141,40 @@ sources:
     add("seeds/countries.csv", "id\n1\n")
     add("snapshots/history.sql", "{% snapshot history %}select * from {{ ref('orders') }}{% endsnapshot %}")
     add("models/exposures.yml", "exposures:\n- name: dashboard\n  type: dashboard\n  depends_on: [\"ref('report')\"]\n")
-    val snapshot = DbtGraphData.build(workspace, None, 5, 5, exposures = true)
+    val snapshot = DbtGraphData.build(workspace, None, 5, 5)
     val kinds = snapshot.payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject.get("kind").getAsString).toSet
     assertEquals(Set("model", "source_table", "seed", "snapshot", "exposure"), kinds)
     val names = snapshot.payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject.get("name").getAsString).toVector
-    assertEquals(1, names.count(_ == "orders")); assertFalse(names.exists(_.startsWith("unique_")))
+    assertEquals(1, names.count(_ == "orders"));
+    assertFalse(names.exists(_.startsWith("unique_")))
     val edges = snapshot.payload.getAsJsonArray("edges").asScala.map(_.getAsJsonObject)
     assertTrue(edges.exists(e => e.get("source").getAsString.endsWith("source.analytics.raw.events") && e.get("target").getAsString.endsWith("model.analytics.orders")))
-    val noExposures = DbtGraphData.build(workspace, None, 5, 5, exposures = false)
-    assertFalse(noExposures.payload.getAsJsonArray("nodes").toString.contains("dashboard"))
   }
 
   def testGraphDepthExpansionAndCyclesDoNotDuplicateResources(): Unit = {
     project()
     (0 to 8).foreach(n => add(s"models/m$n.sql", if (n == 0) "select 1" else s"select * from {{ ref('m${n - 1}') }}"))
-    val focus = DbtGraphData.key(workspace, resource("m4"))
-    val shallow = DbtGraphData.build(workspace, Some(focus), 1, 1, exposures = true).payload
+    val focus = DbtResourceIdentity.key(workspace, resource("m4"))
+    val shallow = DbtGraphData.build(workspace, Some(focus), 1, 1).payload
     assertEquals(3, shallow.getAsJsonArray("nodes").size())
     assertEquals(2, shallow.getAsJsonArray("boundary").size())
-    val expanded = DbtGraphData.build(workspace, Some(focus), 6, 6, exposures = true).payload
+    val expanded = DbtGraphData.build(workspace, Some(focus), 6, 6).payload
     assertEquals(9, expanded.getAsJsonArray("nodes").size())
     edit(resource("m0").file, "select * from {{ ref('m8') }}")
-    assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20, exposures = true).targets.size)
+    assertEquals(9, DbtGraphData.build(workspace, Some(focus), 20, 20).targets.size)
   }
 
   def testRunnerCommandsKeepVersionTargetAndCwdIntact(): Unit = {
     documentedProject()
     val properties = resource("orders").mapping.get.getContainingFile
     edit(properties, properties.getText.replace("- name: orders\n", "- name: orders\n  latest_version: 2\n  versions: [{v: 2, defined_in: orders}]\n"))
-    val w = workspace; val root = w.roots.head
+    val w = workspace;
+    val root = w.roots.head
     val model = resource("orders")
     assertEquals(Some("2"), model.version)
     val selected = DbtRunSelection.available(w).find(_.path == model.file.getVirtualFile.getPath).get
-    DbtCommand.Actions.foreach { action =>
+    assertTrue(DbtCommand.create(w, selected, "Source Freshness", fullRefresh = false).isLeft)
+    DbtCommand.Actions.filterNot(_ == "Source Freshness").foreach { action =>
       val command = DbtCommand.create(w, selected, action, fullRefresh = true).toOption.get
       assertEquals(root.directory.getPath, command.directory)
       assertTrue(command.environment("DBT_PROFILES_DIR").endsWith(root.directory.getPath))
@@ -159,7 +189,9 @@ sources:
   def testPreviewFormatsColumnsNullAndNoData(): Unit = {
     assertEquals("No data returned.", DbtPreview.format("log\n{\"preview\":\"[]\"}\n"))
     val table = DbtPreview.format("log\n{\"preview\":\"[{\\\"id\\\":1,\\\"name\\\":null},{\\\"id\\\":2,\\\"name\\\":\\\"Alice\\\"}]\"}\n")
-    assertTrue(table.contains("id | name")); assertTrue(table.contains("null")); assertTrue(table.contains("Alice"))
+    assertTrue(table.contains("id | name"));
+    assertTrue(table.contains("null"));
+    assertTrue(table.contains("Alice"))
     val actualDbtOutput = "12:00:00 Running with dbt=1.10.0\n{\n  \"node\": \"orders\",\n  \"show\": [\n    {\"ID\": 1, \"NAME\": null}\n  ]\n}\n"
     assertTrue(DbtPreview.format(actualDbtOutput).contains("NAME"))
     assertEquals("No data returned.", DbtPreview.format("logs\n{\n \"show\": []\n}\n"))
@@ -168,7 +200,8 @@ sources:
   def testWarningsUseExactRangesAndIgnoreCommentStringDynamicAndPartialCalls(): Unit = {
     project()
     add("models/sources.yml", "sources: [{name: raw, tables: [{name: events}]}]\n")
-    val file = configure("models/report.sql", """select * from {{ ref('mis<caret>sing') }}
+    val file = configure("models/report.sql",
+      """select * from {{ ref('mis<caret>sing') }}
 -- {{ ref('commented') }}
 select '{{ ref("literal") }}'
 {# {{ ref('jinja_comment') }} #}
@@ -233,6 +266,7 @@ select * from {{ source('raw', 'missing_table') }}
       assertFalse(html.contains("<td>Relation</td>"))
     }
   }
+
   def testDocsBlocksAndMacroArgumentsRefreshInNativeDocumentation(): Unit = {
     project()
     add("macros/math.sql", "{% macro double(value) %}{{ value * 2 }}{% endmacro %}")
@@ -248,13 +282,16 @@ select * from {{ source('raw', 'missing_table') }}
     assertEquals(1, targets.size())
     val macroSymbol = workspace.symbols.find(s => s.kind == "macro" && !s.isProperty).get
     val html = DbtDocumentation.render(workspace, macroSymbol)
-    assertTrue(html.contains("double(value)")); assertTrue(html.contains("Doubles a value")); assertTrue(html.contains("integer"))
+    assertTrue(html.contains("double(value)"));
+    assertTrue(html.contains("Doubles a value"));
+    assertTrue(html.contains("integer"))
   }
 
   def testStaticExpressionsBuiltinsAndWrappersUseTheNavigationMissingProof(): Unit = {
     project()
     add("macros/lookup.sql", "{% macro lookup(name) %}{{ builtins.ref(name) }}{% endmacro %}")
-    val file = configure("models/report.sql", """{% set prefix = 'missing_' %}
+    val file = configure("models/report.sql",
+      """{% set prefix = 'missing_' %}
 {{ ref(prefix ~ 'model') }}
 {{ builtins.ref('missing_builtin', v=99) }}
 {{ lookup('missing_wrapper') }}
@@ -270,15 +307,17 @@ select * from {{ source('raw', 'missing_table') }}
 
   def testMissingConfiguredOrMalformedArtifactsSuppressMissingResourceClaims(): Unit = {
     project()
-    add(".dbt-navigation.yml", "manifest: unavailable/manifest.json\n")
+    configureSettings(_.manifestPath = "unavailable/manifest.json")
     val file = configure("models/report.sql", "{{ ref('mis<caret>sing') }}")
     val annotator = new DbtUnresolvedAnnotator
+
     def diagnosticCount(): Int = {
       val input = annotator.collectInformation(file)
       AppExecutorUtil.getAppExecutorService.submit(new Callable[DbtAnnotationResult] {
         override def call(): DbtAnnotationResult = annotator.doAnnotate(input)
       }).get(10, TimeUnit.SECONDS).diagnostics.size
     }
+
     assertEquals(0, diagnosticCount())
     add("unavailable/manifest.json", "{bad json")
     assertEquals(0, diagnosticCount())
@@ -291,11 +330,11 @@ select * from {{ source('raw', 'missing_table') }}
     settings.options(root).target = "dev"
     settings.options(root).executableArguments = "analytics"
     settings.options(root + "/another").target = "prod"
-    for (direction <- Vector("LR", "TB", "RL", "BT"); edge <- Vector("bezier", "taxi", "round-taxi", "segments", "straight", "unbundled-bezier", "haystack")) {
-      settings.getState.direction = direction; settings.getState.edgeStyle = edge
+    for (direction <- Vector("LR", "TB", "RL", "BT")) {
+      settings.getState.direction = direction
       val xml = com.intellij.util.xmlb.XmlSerializer.serialize(settings.getState)
       val restored = com.intellij.util.xmlb.XmlSerializer.deserialize(xml, classOf[DbtSettingsState])
-      assertEquals(direction, restored.direction); assertEquals(edge, restored.edgeStyle)
+      assertEquals(direction, restored.direction)
       assertEquals("dev", restored.projects.get(root).target); assertEquals("prod", restored.projects.get(root + "/another").target)
       assertEquals("analytics", restored.projects.get(root).executableArguments)
       assertEquals("", restored.projects.get(root + "/another").executableArguments)
@@ -338,7 +377,9 @@ select * from {{ source('raw', 'missing_table') }}
     project("profile: analytics\n")
     add("profiles.yml", "analytics:\n  target: dev\n  outputs:\n    dev: {schema: development}\n    prod: {schema: production}\n")
     val file = configure("models/report.sql", "select {{ target.sch<caret>ema }}")
+
     def current = DbtNavigation.at(file, myFixture.getCaretOffset).flatMap(_.candidates).map(_.getText).mkString
+
     assertTrue(current.contains("development"))
     val settings = DbtProjectSettings.get(getProject)
     settings.options(workspace.roots.head.directory.getPath).target = "prod"
@@ -395,4 +436,160 @@ select * from {{ source('raw', 'missing_table') }}
     }
   }
 
+  def testResourceDocumentationIncludesAllColumnsAndTestsWithoutASidebar(): Unit = {
+    project();
+    add("models/orders.sql", "select 1")
+    add("models/schema.yml", "models:\n- name: orders\n  description: Orders\n  columns:\n" +
+      (1 to 20).map(i => s"  - name: column_$i\n    description: Description $i\n").mkString + "  data_tests: [unique]\n")
+    val w = workspace;
+    val model = w.symbols.find(s => s.kind == "model" && s.isCode).get
+    val html = DbtDocumentation.render(w, model)
+    assertTrue(html.contains("column_20"));
+    assertTrue(html.contains("Description 20"));
+    assertTrue(html.contains("unique"))
+    assertFalse(html.contains("open the Lineage documentation sidebar"))
+    val target = new DbtBuiltinPsiDocumentationTargetProvider().documentationTarget(model.element, model.element)
+    assertNotNull("Declarations support native Quick Documentation", target)
+    assertNotNull(target.createPointer().dereference())
+  }
+
+  def testLineageDocumentationLinksTestsToTheirExactSourceDeclarations(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    val properties = add("models/test sources.yml", "models:\n- name: orders\n  data_tests:\n  - ab_test:\n      arguments: {value: 1}\n  columns:\n  - name: id\n    tests: [not_null]\n  - name: other_id\n    data_tests: [not_null]\n")
+    val w = workspace
+    val model = w.symbols.find(s => s.kind == "model" && s.isCode).get
+    val tests = DbtResourceData.get(w, model).tests
+    assertEquals(3, tests.size)
+    val html = org.jsoup.Jsoup.parse(DbtDocumentation.render(w, model, linkTestSources = true))
+    val links = html.select("a[href^=dbt-test:]")
+    assertEquals(3, links.size())
+    tests.foreach { test =>
+      val source = test.source.get
+      assertEquals(properties, source.getContainingFile)
+      assertEquals(test.name, source.getText)
+      val link = links.asScala.find(a => java.net.URLDecoder.decode(a.attr("href").stripPrefix("dbt-test:"),
+        java.nio.charset.StandardCharsets.UTF_8) == test.sourceId.get).get
+      assertEquals(test.name, link.text())
+    }
+    assertEquals(3, tests.flatMap(_.sourceId).distinct.size)
+    assertFalse("Native documentation does not use Lineage message links", DbtDocumentation.render(w, model).contains("dbt-test:"))
+    assertEquals(None, DbtTestData("unavailable").sourceId)
+  }
+
+  def testStructureViewNavigatesCteDefinitionsAndIgnoresUnrelatedSql(): Unit = {
+    project()
+    val file = configure("models/orders.sql", "with a as (select 1 as id), b as (select id from a) select * from b<caret>")
+    val factory = new DbtSqlStructureViewFactory
+    val builder = factory.getStructureViewBuilder(file).asInstanceOf[TreeBasedStructureViewBuilder]
+    val model = builder.createStructureViewModel(myFixture.getEditor)
+    try {
+      val nodes = model.getRoot.getChildren.map(_.asInstanceOf[StructureViewTreeElement])
+      assertEquals(Vector("a", "b"), nodes.map(_.getPresentation.getPresentableText.split("\\.").last).toVector)
+      nodes(1).navigate(true)
+      assertEquals(file.getText.indexOf("b as"), myFixture.getCaretOffset)
+    } finally model.dispose()
+    val plain = add("elsewhere/plain.sql", "select 1")
+    assertNull(factory.getStructureViewBuilder(plain))
+  }
+
+  def testGeneratedSqlOpensInReadOnlyEditorAndGenerationActionsAreNative(): Unit = {
+    project();
+    val source = configure("models/orders.sql", "select 1<caret>")
+    DbtSqlEditors.open(getProject, "orders compiled", "select 2")
+    val generated = FileEditorManager.getInstance(getProject).getSelectedFiles.head
+    assertFalse(generated.isWritable)
+    assertEquals("select 2", new String(generated.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8))
+    assertEquals("select 1", source.getText)
+    Vector("Dbt.GenerateColumns", "Dbt.InheritDescriptions", "Dbt.EditProperties", "Dbt.OpenCompiledSql", "Dbt.CompareSql")
+      .foreach(id => assertNotNull(id, ActionManager.getInstance.getAction(id)))
+  }
+
+  def testNativeDependencyHierarchyPreservesValueAndFilterOrigins(): Unit = {
+    project()
+    add("models/base.sql", "select 1 as id, 1 as active")
+    val file = add("models/report.sql", "select id from {{ ref('base') }} where active = 1")
+    val w = workspace;
+    val model = w.codeSymbols(file).head
+    val resourceEdges = DbtHierarchy.related(w, model, downstream = false)
+    assertTrue(resourceEdges.exists(_._1.name == "base"))
+    val column = DbtSqlAnalysis.get(w, file).get.columns.head
+    val symbol = DbtSymbol("sql_projection", column.name, model.namespace, file, column.range, owner = model.name)
+    val origins = DbtHierarchy.related(w, symbol, downstream = false)
+    assertTrue(origins.exists(_._2.startsWith("value")))
+    assertTrue(origins.exists(_._2.startsWith("filter")))
+  }
+
+  private var ui: Disposable = _
+
+  override protected def tearDown(): Unit = try if (ui != null) Disposer.dispose(ui) finally super.tearDown()
+
+  private def status(panel: DbtToolWindowPanel): String = panel.lastSnapshot.map { snapshot =>
+    val nodes = snapshot.payload.getAsJsonArray("nodes")
+    val focus = Option(snapshot.payload.get("focus")).map(_.getAsString).getOrElse("")
+    val name = snapshot.targets.get(focus).map(_.symbol.presentableText).getOrElse("None")
+    "Lineage focus: " + name + " Resources: " + nodes.size()
+  }.getOrElse("")
+
+  private def setupRestoringEditor(): (DbtToolWindowPanel, VirtualFile => Unit, VirtualFile) = {
+    ui = Disposer.newDisposable()
+    Disposer.register(getTestRootDisposable, ui)
+    project()
+    add("models/events.sql", "select 1")
+    val model = add("models/orders.sql", "select * from {{ ref('events') }}").getVirtualFile
+    add("models/report.sql", "select * from {{ ref('orders') }}")
+    add("models/unrelated.sql", "select 2")
+    var selected = Option.empty[VirtualFile]
+    ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
+      override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceFeaturesTest.this.getProject
+
+      override def getComposite(file: VirtualFile): com.intellij.openapi.fileEditor.impl.EditorComposite = null
+
+      override def getOpenFiles: Array[VirtualFile] = selected.toArray
+
+      override def getSelectedFiles: Array[VirtualFile] = selected.toArray
+    }, ui)
+    newRunner(service = true, parent = ui)
+    // Keep graph refresh tests independent of native browser availability and its ready callback.
+    val testMode = Registry.get("ide.browser.jcef.testMode.enabled")
+    val enabled = Registry.get("ide.browser.jcef.enabled")
+    val wasTestMode = testMode.asBoolean();
+    val wasEnabled = enabled.asBoolean()
+    val panel = try {
+      testMode.setValue(true);
+      enabled.setValue(false)
+      new DbtToolWindowPanel(getProject)
+    } finally {
+      enabled.setValue(wasEnabled)
+      JBCefApp.isSupported() // Restore the cached support result while test mode still forces a fresh check.
+      testMode.setValue(wasTestMode)
+    }
+    Disposer.register(ui, panel)
+    panel.refresh(follow = true)
+    await("Initial refresh precedes editor restoration")(status(panel).contains("Lineage focus: None") && status(panel).contains("Resources: 4"))
+    (panel, file => selected = Option(file), model)
+  }
+
+  def testBackgroundRefreshRetainsInitialModelFocusWhenItReplacesAFollowRequest(): Unit = {
+    val (panel, select, model) = setupRestoringEditor()
+    select(model)
+    panel.refresh(follow = true)
+    panel.refresh(follow = false)
+    await("Restored model reaches the panel")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue("Show the model's three connected resources, excluding the unrelated model", status(panel).contains("Resources: 3"))
+    val unrelated = model.getParent.findChild("unrelated.sql")
+    select(unrelated)
+    panel.refresh(follow = false)
+    await("Background refresh sees the new editor")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue("An established graph focus survives background refreshes", status(panel).contains("Resources: 3"))
+  }
+
+  def testRestoredEditorOpeningInitializesFocusWithoutASelectionChange(): Unit = {
+    val (panel, select, model) = setupRestoringEditor()
+    select(model)
+    getProject.getMessageBus.syncPublisher(FileEditorManagerListener.FILE_EDITOR_MANAGER)
+      .fileOpened(FileEditorManager.getInstance(getProject), model)
+    await("Opening the restored editor refreshes the panel")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue(status(panel).contains("Resources: 3"))
+  }
 }

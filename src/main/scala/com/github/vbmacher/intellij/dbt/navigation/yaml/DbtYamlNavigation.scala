@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.navigation.yaml
 
-import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigationContext, DbtNavigationReference, DbtReferenceProvider, DbtResolution, DbtSemantics, DbtStaticCalls}
-import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigationContext, DbtNavigationReference, DbtReferenceProvider, DbtResolution, DbtStaticCalls}
+import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.psi.{PsiElement, PsiRecursiveElementWalkingVisitor}
 import org.jetbrains.yaml.psi._
@@ -17,6 +17,8 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
 
     def add(e: PsiElement, targets: Iterable[PsiElement], name: String): Unit =
       result += new DbtNavigationReference(file, e.getTextRange, targets.toVector.distinct, name)
+
+    def addKey(kv: YAMLKeyValue, targets: => Iterable[PsiElement], name: String): Unit = Option(kv.getKey).foreach(add(_, targets, name))
 
     def lookup(kinds: Set[String], name: String): Vector[PsiElement] = {
       val split = name.split("\\.", 2)
@@ -38,9 +40,11 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
         if (!ancestry.contains("meta") && (r.supports(8) || !ancestry.contains("unit_tests"))) e match {
           case scalar: YAMLScalar if !ancestry.contains("vars") =>
             val name = scalar.getTextValue
-            def semantic(kind: String): Vector[PsiElement] = DbtSemantics.targets(w, r, file, scalar.getTextOffset, kind, name).map(_.element)
+
+            def semantic(kind: String): Vector[PsiElement] = DbtResolution.semantic(w, r, file, scalar.getTextOffset, kind, name).map(_.element)
+
             if (!name.contains("{{")) DbtYaml.key(scalar) match {
-              case key @ ("package" | "git" | "local") if Set("packages.yml", "dependencies.yml", "package-lock.yml").contains(file.getName) =>
+              case key@("package" | "git" | "local") if Set("packages.yml", "dependencies.yml", "package-lock.yml").contains(file.getName) =>
                 val declaration = DbtYaml.parentMapping(scalar)
                 val projectName = if (key == "local") {
                   Option(r.directory.findFileByRelativePath(name)).flatMap(d => DbtYaml.psiFile(w.project, d.findChild(DbtWorkspace.ProjectFileName)))
@@ -51,8 +55,9 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                 val installed = w.roots.filter(p => w.packageOwner(p).contains(r) &&
                   (projectName.contains(p.name) || installName.contains(p.directory.getName)))
                 add(scalar, installed.map(p => p.config.getContainingFile), name)
-              case key @ ("version" | "revision") if Set("packages.yml", "dependencies.yml").contains(file.getName) =>
+              case key@("version" | "revision") if Set("packages.yml", "dependencies.yml").contains(file.getName) =>
                 def identity(m: YAMLMapping): Option[String] = DbtYaml.string(m, "package").orElse(DbtYaml.string(m, "git"))
+
                 val declared = DbtYaml.parentMapping(scalar).flatMap(identity)
                 val entries = r.yaml("package-lock.yml").toVector.flatMap(DbtYaml.items(_, "packages")).filter(m => declared.exists(identity(m).contains))
                 add(scalar, entries.flatMap(DbtYaml.keyValue(_, key)), name)
@@ -116,7 +121,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
               case "profile" if file.getName == "dbt_project.yml" => add(scalar, r.profile.toVector, name)
               case "target" if file.getName == "profiles.yml" => add(scalar, DbtYaml.parentMapping(scalar).toVector.flatMap(p =>
                 DbtYaml.map(p, "outputs").flatMap(DbtYaml.keyValue(_, name))), name)
-              case "field" if ancestry.exists(Set("tests", "data_tests")) =>
+              case "field" if ancestry.exists(DbtSymbol.TestKeys) =>
                 // The relationships target must supply a proved ref/source identity.
                 val mapping = DbtYaml.parentMapping(scalar)
                 val to = mapping.flatMap(DbtYaml.value(_, "to")).collect { case s: YAMLScalar => s }
@@ -131,7 +136,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                 if (ancestry.exists(Set("metrics", "group_by", "dimensions", "entities")) && scalar.getParent.isInstanceOf[YAMLSequenceItem])
                   add(scalar, lookup(Set(if (ancestry.contains("metrics")) "metric" else if (ancestry.contains("entities")) "entity" else "dimension"), name), name)
             }
-            if (ancestry.exists(Set("tests", "data_tests")) && scalar.getParent.isInstanceOf[YAMLSequenceItem]) test(name, scalar)
+            if (ancestry.exists(DbtSymbol.TestKeys) && scalar.getParent.isInstanceOf[YAMLSequenceItem]) test(name, scalar)
           case kv: YAMLKeyValue if file.getName == "dbt_project.yml" && ancestry.lastOption.exists(DbtConfiguration.sections.contains) =>
             val key = kv.getKeyText
             val kind = ancestry.lastOption.flatMap(DbtConfiguration.sections.get)
@@ -142,24 +147,24 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
             val locations = if (key.startsWith("+")) targets.filter(_.isCode)
               .flatMap(s => DbtConfiguration.locations(w, s.file, key.drop(1))).filterNot(_ == kv)
             else DbtConfiguration.pathTargets(w, r, kv)
-            Option(kv.getKey).foreach(e => add(e, locations, key))
+            addKey(kv, locations, key)
           case kv: YAMLKeyValue if ancestry.contains("config") =>
             val owners = w.symbols.filter(s => s.file == file && s.isProperty && s.mapping.exists(_.getTextRange.contains(kv.getTextRange)))
             val code = owners.flatMap(p => w.declarations(Set(p.kind), p.name, r, Some(p.namespace))).filter(_.isCode)
-            Option(kv.getKey).foreach(e => add(e, code.flatMap(s => DbtConfiguration.locations(w, s.file, kv.getKeyText)).filterNot(_ == kv), kv.getKeyText))
-          case kv: YAMLKeyValue if ancestry.exists(Set("tests", "data_tests")) =>
+            addKey(kv, code.flatMap(s => DbtConfiguration.locations(w, s.file, kv.getKeyText)).filterNot(_ == kv), kv.getKeyText)
+          case kv: YAMLKeyValue if ancestry.exists(DbtSymbol.TestKeys) =>
             if (kv.getParent.isInstanceOf[YAMLMapping] && kv.getParent.getParent.isInstanceOf[YAMLSequenceItem])
               Option(kv.getKey).foreach(e => test(kv.getKeyText, e))
             else if ((!ancestry.contains("arguments") || r.supports(10, 5)) &&
               !Set("arguments", "config", "name", "alias", "where", "severity", "to", "field", "values").contains(kv.getKeyText)) {
               val testName = ancestry.find(n => w.symbols.exists(s => s.kind == "generic_test" && (s.name == n || s.namespace + "." + s.name == n)))
-              testName.foreach(n => Option(kv.getKey).foreach(e => add(e, w.symbols.filter(s => s.kind == "parameter" &&
-                s.owner == n.split("\\.").last && s.name == kv.getKeyText && lookup(Set("generic_test"), n).exists(d => d.getContainingFile == s.file)).map(_.element), kv.getKeyText)))
+              testName.foreach(n => addKey(kv, w.symbols.filter(s => s.kind == "parameter" && s.owner == n.split("\\.").last &&
+                s.name == kv.getKeyText && lookup(Set("generic_test"), n).exists(d => d.getContainingFile == s.file)).map(_.element), kv.getKeyText))
             }
           case kv: YAMLKeyValue if ancestry.contains("overrides") && ancestry.contains("macros") =>
-            Option(kv.getKey).foreach(e => add(e, lookup(Set("macro"), kv.getKeyText), kv.getKeyText))
+            addKey(kv, lookup(Set("macro"), kv.getKeyText), kv.getKeyText)
           case kv: YAMLKeyValue if ancestry.contains("overrides") && ancestry.contains("vars") =>
-            Option(kv.getKey).foreach(e => add(e, DbtResolution.variable(w, r, kv.getKeyText), kv.getKeyText))
+            addKey(kv, DbtResolution.variable(w, r, kv.getKeyText), kv.getKeyText)
           case _ => ()
         }
         super.visitElement(e)

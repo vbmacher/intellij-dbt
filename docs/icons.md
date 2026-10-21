@@ -1,26 +1,25 @@
-# dbt resource icons
+# Icons
 
-[User guide](README.md) · [Navigation](navigation.md)
+[User guide](getting_started.md)
 
-**Navigation results** below means the Go to Declaration chooser, Find Usages
-window, and applicable dbt Properties / dbt Dependencies popups. Ctrl+Click on a
-single target jumps directly. Dependency icons identify types; **Uses** / **Used by**
-shows direction, and indented `file:line` entries open references.
+**Navigation results** means the Go to Declaration chooser, the Find Usages window
+and the **dbt Properties** / **dbt Dependencies** popups. Completion suggestions use
+the same icons.
 
-## Declaration legend
+## Resource icons
 
-Paths come from the nearest `dbt_project.yml`; defaults appear in parentheses.
-[Engine/version settings](configuration.md#engine-and-version) control availability.
-Project-window files use their resource icon first; otherwise, top-level declarations
-must share one icon. Mixed icons retain the normal file-type icon. Ignored/generated
-files keep their normal icons. Declarations inside files have navigation icons, not
-separate Project-window entries.
+In the Project window, a file shows a resource icon when the resources it defines
+share one icon: resources defined by the file's code (SQL, Python, CSV and similar)
+take precedence; otherwise its top-level YAML declarations count. Files with mixed
+icons, ignored files and generated output keep their normal file-type icon.
+Declarations inside a file appear only in navigation results. Default resource
+paths are shown in parentheses. Availability follows the
+[engine and version](configuration.md#engine-and-version).
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Editor gutter: resource/declaration lines with related targets, ambiguous references or metadata-only targets. Click for a chooser; tooltips explain ambiguity/staleness. One marker per line. |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/model-dark.svg"><img src="icons/model.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/source-dark.svg"><img src="icons/source.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="table" width="20" height="20"></picture> | Source table, SQL CTE or Information Schema view | Navigation results: tables under `sources:`, SQL CTE definitions and views from selected Information Schema metadata. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/seed-dark.svg"><img src="icons/seed.svg" alt="seed" width="20" height="20"></picture> | Seed | Project window and navigation results: `.csv` files in `seed-paths` (`seeds/`) and their YAML properties. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/snapshot-dark.svg"><img src="icons/snapshot.svg" alt="snapshot" width="20" height="20"></picture> | Snapshot | Project window and navigation results: `.sql` files in `snapshot-paths` (`snapshots/`), legacy `{% snapshot %}` blocks and YAML properties. |
@@ -34,7 +33,7 @@ separate Project-window entries.
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/test-dark.svg"><img src="icons/test.svg" alt="test" width="20" height="20"></picture> | Attached data tests | Project window: YAML entries containing only model/seed/snapshot names and nonempty `data_tests:`/`tests:`, including column tests. Other properties keep the resource icon; declaration results always keep it. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/test-dark.svg"><img src="icons/test.svg" alt="unit test" width="20" height="20"></picture> | Unit test | Project window and navigation results: `unit_tests:` YAML entries with `model`, `given` and `expect`. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/test-dark.svg"><img src="icons/test.svg" alt="fixture" width="20" height="20"></picture> | Unit-test fixture | Project window and navigation results: `.csv`/`.sql` files under `<test-path>/fixtures/`; this rule takes precedence over data tests. |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/check-dark.svg"><img src="icons/check.svg" alt="check" width="20" height="20"></picture> | dbt v2 check | Project window and navigation results: `.sql` files in `check-paths` (`checks/`) and `checks:` YAML entries with `engine: v2`. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/check-dark.svg"><img src="icons/check.svg" alt="check" width="20" height="20"></picture> | dbt v2 check | Project window and navigation results: `.sql` files in `check-paths` (`checks/`) and `checks:` YAML entries with the [dbt v2 engine](configuration.md#engine-and-version). |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/doc-dark.svg"><img src="icons/doc.svg" alt="doc" width="20" height="20"></picture> | Docs block | Project window and navigation results: `{% docs %}` blocks in resource `.sql`/`.md` files. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/doc-dark.svg"><img src="icons/doc.svg" alt="doc" width="20" height="20"></picture> | Builtin documentation target | Navigation results: documentation targets for builtin names. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/semantic-model-dark.svg"><img src="icons/semantic-model.svg" alt="semantic model" width="20" height="20"></picture> | Semantic model | Project window and navigation results: top-level `semantic_models:` YAML entries. Model-embedded definitions appear in navigation results. |
@@ -55,17 +54,52 @@ separate Project-window entries.
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/materialization-dark.svg"><img src="icons/materialization.svg" alt="materialization" width="20" height="20"></picture> | Materialization | Project window and navigation results: `{% materialization %}` blocks in resource `.sql` files. |
 | Declared resource's icon | YAML resource properties | Project window and navigation results: named entries such as `models:`, `sources:`, `macros:` and `unit_tests:` in configured resource paths. Use the declared resource's icon, except test-only files above. |
 
-Every icon uses the original orange dbt mark at 80% opacity behind a small symbol. Each symbol has a
-colored outline and accents, a pale tint within its silhouette and a thin halo (white in light themes,
-dark in dark themes). The surrounding area stays transparent. Symbols sit on a 10 px grid in the
-bottom-right corner with 1 px strokes so they stay crisp at 16 px, and each uses a distinct silhouette.
+## Editor gutter icons
 
-Symbol colors group related resources:
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Lines of resources and declarations with related targets, ambiguous references or metadata-only targets. One marker per line; click it for a chooser, hover for ambiguity and staleness. See [Gutter markers](navigation.md#gutter-markers-and-popups). |
+| IDE Run icon | Run dbt model | First non-blank character of a model file. Opens the Run actions for that model. See [Run configurations](workspace.md#run-configurations). |
+| IDE Run icon | Run test, no current result | Beside a singular SQL test, unit-test name or attached data test with no compatible current result, including after source or execution settings change. See [Tests](workspace.md#tests). |
+| IDE green test icon | Test passed | Same places, when the latest compatible result passed. |
+| IDE red test icon | Test failed or errored | Same places, when a test on that line failed or errored; takes precedence over other results on the line. |
+| IDE yellow test icon | Test warned or skipped | Same places, when a result warned or was skipped and no test on that line failed. |
 
-| Color | Resources |
-| --- | --- |
-| Blue | Data relations: model, source, table, column, snapshot, analysis/saved query, alias, gutter navigation |
-| Green | Data quality and seeds: tests, unit tests, fixtures, checks, seeds |
-| Purple | Jinja and code: macros, builtin Jinja, UDFs, variables, parameters, statement results, materializations |
-| Teal | Semantic layer and consumers: semantic models, metrics, dimensions, entities, exposures/exports |
-| Gray | Project metadata: configuration, properties, selectors, packages, docs, groups |
+The test tree uses the IDE's standard test status icons.
+
+## dbt tool window icons
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/tool-window-dark.svg"><img src="icons/tool-window.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
+| IDE Close icon | **Clear search** | Lineage toolbar, next to **Search resources**. |
+| IDE Zoom In / Zoom Out icons | **Zoom in** / **Zoom out** | Lineage toolbar. |
+| IDE Pin icon | **Pin focus** / **Unpin focus** | Lineage toolbar; shown pressed while focus is pinned. |
+| IDE Copy icon | **Copy image** | Lineage toolbar. |
+| IDE Preview Details icon | **Open Documentation** | Lineage toolbar, right side. |
+| × | **Close documentation** | Header of the resource documentation pane, shown after opening Lineage details. |
+| IDE Refresh icon | **Regenerate Docs** | Lineage toolbar, right side. |
+| IDE Refresh icon | **Refresh Metabase metadata** | Exposures toolbar; disabled while a refresh is running. |
+| IDE Web icon | **Open consumer** | Exposures toolbar; enabled when the selected consumer has a browser URL. Also identifies Metabase rows in the consumer list. |
+| IDE Edit Source icon | **Go to exposure definition** | Exposures toolbar; enabled when the selected row has a local exposure declaration. |
+| IDE Settings icon | **Configure…** | Exposures toolbar; opens integration settings. |
+| IDE YAML file icon | Declared dbt exposure | Exposures list, beside each local exposure. |
+
+Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
+
+## Settings toolbar icons
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| IDE Add (+) icon | Add a row or folder | Above the environment-variable and builtin-source tables in General settings; above the DAG folder list in Integrations settings, with tooltip **Add folder…**. |
+| IDE Remove (−) icon | Remove selected entries | In the same toolbars; enabled when entries are selected. In the DAG list, the tooltip is **Remove folder**. |
+
+## Lineage card symbols
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| ▤ | Model or other resource | Model cards, and cards of resource kinds without their own symbol. |
+| ⇥ | Source table | Source-table cards. |
+| ▦ | Seed | Seed cards. |
+| ◷ | Snapshot | Snapshot cards. |
+| ◈ | Exposure | Exposure cards. |

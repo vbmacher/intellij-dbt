@@ -14,6 +14,7 @@ import scala.collection.mutable.ArrayBuffer
 private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
   private def ancestor(element: PsiElement, simpleName: String): Option[PsiElement] =
     Iterator.iterate(element.getParent)(_.getParent).takeWhile(_ != null).find(_.getClass.getSimpleName == simpleName)
+
   private def modelParameter(expression: PsiElement, visited: Set[PsiElement] = Set.empty): Boolean = {
     if (visited(expression) || visited.size >= 8) return false
     Option(expression.getReference).flatMap(r => Option(r.resolve())).exists { target =>
@@ -24,7 +25,8 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
       else false
     }
   }
-  private def literalRange(element: PsiElement, decoded: String): TextRange = {
+
+  private def literalRange(element: PsiElement): TextRange = {
     val source = element.getText
     val quote = source.indexWhere(c => c == '\'' || c == '"')
     val triple = quote >= 0 && source.drop(quote).startsWith(source(quote).toString * 3)
@@ -32,13 +34,16 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
     if (quote >= 0 && !source.take(quote).toLowerCase.contains("f")) new TextRange(element.getTextOffset + quote + margin, element.getTextRange.getEndOffset - margin)
     else element.getTextRange
   }
+
   override def references(context: DbtNavigationContext): Vector[DbtNavigationReference] = {
     import context.{file, root, workspace}
     if (!root.kind(file.getVirtualFile).contains("model") || file.getVirtualFile.getExtension != "py" || !DbtPython.isPython(file))
       return Vector.empty
     val result = ArrayBuffer.empty[DbtNavigationReference]
+
     def add(e: PsiElement, name: String, targets: Vector[PsiElement]): Unit =
-      result += new DbtNavigationReference(file, literalRange(e, name), targets, name)
+      result += new DbtNavigationReference(file, literalRange(e), targets, name)
+
     def walk(e: PsiElement): Unit = {
       ProgressManager.checkCanceled()
       if (e.getClass.getSimpleName == "PyCallExpressionImpl") {
@@ -52,7 +57,8 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
         val positional = arguments.filterNot(_.getClass.getSimpleName == "PyKeywordArgumentImpl")
         val literals = positional.map(arg => invoke(arg, "getStringValue").collect { case s: String if !invoke(arg, "isInterpolated").contains(java.lang.Boolean.TRUE) => arg -> s })
         val version = arguments.filter(_.getClass.getSimpleName == "PyKeywordArgumentImpl")
-          .find(a => invoke(a, "getName").exists(x => Set("v", "version").contains(x.toString))).flatMap(psi(_, "getValueExpression")).map(_.getText.stripPrefix("'").stripSuffix("'"))
+          .find(a => invoke(a, "getName").exists(x => Set("v", "version").contains(x.toString))).flatMap(psi(_, "getValueExpression"))
+          .map(v => invoke(v, "getStringValue").collect { case s: String => s }.getOrElse(v.getText))
         if (objectExpression.exists(modelParameter(_)) && Set("ref", "source", "config", "config.get").contains(operation)) operation match {
           case "ref" if literals.nonEmpty && literals.forall(_.nonEmpty) =>
             val ns = if (literals.size == 2) literals.head.map(_._2) else None
@@ -66,14 +72,17 @@ private[python] final class DbtPythonNavigation extends DbtReferenceProvider {
             add(table._1, table._2, DbtResolution.sourceTables(workspace, root, source._2, table._2).map(_.element))
           case "config.get" => literals.headOption.flatten.foreach { case (host, key) => add(host, key, DbtConfiguration.locations(workspace, file, key)) }
           case "config" => arguments.filter(_.getClass.getSimpleName == "PyKeywordArgumentImpl").foreach { argument =>
-            invoke(argument, "getName").foreach { key => result += new DbtNavigationReference(file,
-              new TextRange(argument.getTextOffset, argument.getTextOffset + key.toString.length), DbtConfiguration.locations(workspace, file, key.toString), key.toString) }
+            invoke(argument, "getName").foreach { key =>
+              result += new DbtNavigationReference(file,
+                new TextRange(argument.getTextOffset, argument.getTextOffset + key.toString.length), DbtConfiguration.locations(workspace, file, key.toString), key.toString)
+            }
           }
           case _ => ()
         }
       }
       e.getChildren.foreach(walk)
     }
+
     walk(file)
     result.toVector
   }

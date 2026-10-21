@@ -1,0 +1,15 @@
+<templateSet group="dbt">
+    <template name="dbtref" value="{{ ref('$MODEL$') }}$END$" description="dbt model reference" toReformat="false" toShortenFQNames="false">
+        <variable name="MODEL" expression="" defaultValue="&quot;model_name&quot;" alwaysStopAt="true"/>
+        <context><option name="OTHER" value="true"/></context>
+    </template>
+    <template name="dbtsource" value="{{ source('$SOURCE$', '$TABLE$') }}$END$" description="dbt source table" toReformat="false" toShortenFQNames="false">
+        <variable name="SOURCE" expression="" defaultValue="&quot;source_name&quot;" alwaysStopAt="true"/>
+        <variable name="TABLE" expression="" defaultValue="&quot;table_name&quot;" alwaysStopAt="true"/>
+        <context><option name="OTHER" value="true"/></context>
+    </template>
+    <template name="dbtconfig" value="{{ config(materialized='$MATERIALIZATION$') }}$END$" description="dbt model configuration" toReformat="false" toShortenFQNames="false">
+        <variable name="MATERIALIZATION" expression="" defaultValue="&quot;view&quot;" alwaysStopAt="true"/>
+        <context><option name="OTHER" value="true"/></context>
+    </template>
+</templateSet>

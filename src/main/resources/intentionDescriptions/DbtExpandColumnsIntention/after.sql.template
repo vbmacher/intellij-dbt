@@ -1,0 +1,1 @@
+select o.id, o.amount from {{ ref('orders') }} o

@@ -5,16 +5,17 @@ import com.intellij.openapi.vfs.{LocalFileSystem, VfsUtilCore, VirtualFile}
 import com.intellij.psi.PsiFile
 import org.jetbrains.yaml.psi.{YAMLKeyValue, YAMLMapping, YAMLScalar}
 
-import java.nio.file.{FileSystems, PathMatcher, Paths}
+import java.nio.file.{FileSystems, Path, PathMatcher, Paths}
 import scala.util.Try
 
-/** A dbt project directory with its `dbt_project.yml` and optional `.dbt-navigation.yml` settings. */
-private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping, settings: Option[YAMLMapping]) {
+/** A dbt project directory with its `dbt_project.yml` and per-root IntelliJ settings. */
+private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMapping) {
   val name: String = DbtYaml.string(config, "name").getOrElse(directory.getName)
+
+  private def base: Path = Paths.get(directory.getPath)
 
   def psiFile(path: String): Option[PsiFile] = {
     val requested = Paths.get(path).normalize()
-    val base = Paths.get(directory.getPath)
     val relative = if (requested.isAbsolute && requested.startsWith(base)) base.relativize(requested).toString else path
     Option(directory.findFileByRelativePath(relative)).orElse(
       if (requested.isAbsolute) Option(LocalFileSystem.getInstance.findFileByPath(path)) else None).flatMap(DbtYaml.psiFile(config.getProject, _))
@@ -22,40 +23,49 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   def yaml(path: String): Option[YAMLMapping] = psiFile(path).flatMap(DbtYaml.mapping)
 
-  def runOptions: DbtRunOptions = DbtProjectSettings.get(config.getProject).options(directory.getPath)
+  private var executionOptions: Option[DbtRunOptions] = None
 
-  def executionDirectory: java.nio.file.Path = {
-    val overridePath = Option(runOptions.projectRoot).filter(_.nonEmpty).map(Paths.get(_))
-    overridePath.map(p => if (p.isAbsolute) p else Paths.get(directory.getPath).resolve(p)).getOrElse(Paths.get(directory.getPath)).normalize()
+  def runOptions: DbtRunOptions = executionOptions.getOrElse(DbtProjectSettings.get(config.getProject).options(directory.getPath))
+
+  /** Execution overrides do not change this project's declaration/package identity. */
+  def withRunOptions(options: DbtRunOptions): DbtRoot = {
+    val configured = copy()
+    configured.executionOptions = Some(options)
+    configured
   }
 
-  def artifactDirectory: java.nio.file.Path = {
+  def executionDirectory: Path =
+    Option(runOptions.projectRoot).filter(_.nonEmpty).map(base.resolve).getOrElse(base).normalize()
+
+  def artifactDirectory: Path = {
     val path = Paths.get(runOptions.artifactDirectory)
     (if (path.isAbsolute) path else executionDirectory.resolve(path)).normalize()
   }
 
-  def setting(key: String): Option[String] = settings.flatMap(DbtYaml.string(_, key)).orElse(key match {
-    case "manifest" => Some(artifactDirectory.resolve("manifest.json").toString)
-    case "catalog" => Some(artifactDirectory.resolve("catalog.json").toString)
+  def setting(key: String): Option[String] = key match {
+    case "manifest" => Some(Option(runOptions.manifestPath).filter(_.nonEmpty)
+      .map(p => executionDirectory.resolve(p).normalize()).getOrElse(artifactDirectory.resolve("manifest.json")).toString)
+    case "catalog" => Some(Option(runOptions.catalogPath).filter(_.nonEmpty)
+      .getOrElse(artifactDirectory.resolve("catalog.json").toString))
+    case "engine" => Some(runOptions.engine)
+    case "dbt-version" => Option(runOptions.dbtVersion).filter(_.nonEmpty)
+    case "profiles-file" => Option(runOptions.profilesFile).filter(_.nonEmpty)
+    case "adapter" => Option(runOptions.adapter).filter(_.nonEmpty)
+    case "state-manifest" => Option(runOptions.stateManifestPath).filter(_.nonEmpty)
+    case "info-schema-dir" => Option(runOptions.infoSchemaDirectory).filter(_.nonEmpty)
     case "target" => Option(runOptions.target).filter(_.nonEmpty)
     case _ => None
-  })
+  }
 
-  def runConfiguration: Option[YAMLMapping] = setting("run-config").flatMap(yaml)
+  /** The target chosen in IntelliJ settings, before the profile default. */
+  def selectedTarget: Option[String] = setting("target")
 
-  def runtimeSetting(key: String): Option[String] = setting(key).orElse(runConfiguration.flatMap(DbtYaml.string(_, key)))
-
-  /** The target chosen in the IDE or the run configuration, before the profile default. */
-  def selectedTarget: Option[String] = Option(runOptions.target).filter(_.nonEmpty).orElse(runtimeSetting("target"))
-
-  def profilesFile: String = runtimeSetting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
+  def profilesFile: String = setting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
-    settings.map(DbtYaml.strings(_, "env-files", Vector(".env"))).getOrElse(Vector(".env")).flatMap(psiFile)
-
-  /** Whether a file holds node selection expressions, in addition to `selectors.yml`. */
-  def isSelectionFile(file: PsiFile): Boolean = relative(file.getVirtualFile)
-    .exists((settings.toVector.flatMap(DbtYaml.strings(_, "selection-files")) ++ setting("run-config")).contains)
+    (if (!runOptions.loadEnvironmentFiles) Vector.empty
+    else if (runOptions.environmentFiles.trim.nonEmpty) runOptions.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
+    else Vector(".env")).flatMap(psiFile)
 
   def profile: Option[YAMLMapping] = DbtYaml.string(config, "profile").flatMap(p => yaml(profilesFile).flatMap(DbtYaml.map(_, p)))
 
@@ -63,14 +73,13 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def target(key: String): Vector[YAMLKeyValue] = profile.toVector.flatMap { p =>
     if (key == "name") {
       if (runOptions.target.nonEmpty) DbtYaml.map(p, "outputs").flatMap(DbtYaml.keyValue(_, runOptions.target)).toVector
-      else settings.flatMap(DbtYaml.keyValue(_, "target")).orElse(runConfiguration.flatMap(DbtYaml.keyValue(_, "target")))
-        .orElse(DbtYaml.keyValue(p, "target")).toVector
+      else DbtYaml.keyValue(p, "target").toVector
     }
     else selectedTarget.orElse(DbtYaml.string(p, "target")).filterNot(_.contains("{{")).toVector
       .flatMap(t => DbtYaml.map(p, "outputs").flatMap(DbtYaml.map(_, t)).flatMap(DbtYaml.keyValue(_, key)))
   }
 
-  def adapter: Option[String] = runtimeSetting("adapter").orElse(target("type").headOption
+  def adapter: Option[String] = setting("adapter").orElse(target("type").headOption
     .flatMap(k => Option(k.getValue)).collect { case s: YAMLScalar => s.getTextValue })
 
   /** Adapters whose implementations apply, most specific first. */
@@ -79,8 +88,10 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val engine: String = setting("engine").getOrElse("core")
 
-  val version: String = setting("dbt-version").orElse(DbtYaml.string(config, "require-dbt-version")
-    .flatMap("[0-9]+\\.[0-9]+".r.findFirstIn)).getOrElse("1.10")
+  val version: String = setting("dbt-version").getOrElse {
+    val requirements = DbtYaml.strings(config, "require-dbt-version")
+    if (requirements.isEmpty) "1.10" else DbtRoot.requiredVersion(requirements).getOrElse("unknown")
+  }
 
   /** Whether the configured engine supports a dbt Core 1.x feature; dbt v2 supports all of them. */
   def supports(minor: Int, patch: Int = 0): Boolean = engine == "v2" || engine == "core" &&
@@ -111,23 +122,14 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val packagePath: String = DbtYaml.string(config, "packages-install-path").getOrElse("dbt_packages")
 
-  private val ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])] = psiFile(".dbtignore").map(_.getText).getOrElse("")
-    .linesIterator.map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>
-      val negated = pattern.startsWith("!")
-      val raw = if (negated) pattern.drop(1) else pattern
-      val relative = raw.stripPrefix("/").stripSuffix("/")
-      val patterns = Vector(relative) ++
-        (if (!raw.startsWith("/") && !relative.contains("/")) Vector("**/" + relative) else Vector.empty) ++
-        (if (relative.startsWith("**/")) Vector(relative.stripPrefix("**/")) else Vector.empty)
-      (negated, raw.endsWith("/"), patterns.flatMap(p => Try(FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
-    }.toVector
+  private val ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])] =
+    DbtRoot.ignorePatterns(psiFile(".dbtignore").map(_.getText).getOrElse(""))
 
-  private val configuredOutput = {
-    val base = Paths.get(directory.getPath)
+  private val configuredOutput =
     if (artifactDirectory.startsWith(base) && artifactDirectory != base) Vector(base.relativize(artifactDirectory).toString.replace('\\', '/'))
     else Vector.empty
-  }
-  val exclusions: Vector[String] = Vector(".git", ".idea", "logs", packagePath, DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
+  val exclusions: Vector[String] = Vector(".git", ".idea", ".venv", "venv", "logs", packagePath,
+    DbtYaml.string(config, "target-path").getOrElse("target")) ++ configuredOutput
 
   def relative(file: VirtualFile): Option[String] = Option(VfsUtilCore.getRelativePath(file, directory, '/'))
 
@@ -148,9 +150,19 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
     pathKinds.iterator.flatMap { case (k, path) => folders(path, r).map(k -> _) }.nextOption()
   }
 
-  def excluded(file: VirtualFile): Boolean = relative(file).exists { r =>
+  def excluded(file: VirtualFile): Boolean = relative(file).exists(r => excludedPath(r, file.isDirectory))
+
+  def excludedPath(r: String, directory: Boolean = false): Boolean = excludedPath(r, directory, ignores)
+
+  /** Exclusions for a path under another `.dbtignore` text, such as one from a baseline revision. */
+  def excludedPathWith(ignoreText: String): String => Boolean = {
+    val parsed = DbtRoot.ignorePatterns(ignoreText)
+    r => excludedPath(r, directory = false, parsed)
+  }
+
+  private def excludedPath(r: String, directory: Boolean, ignores: Vector[(Boolean, Boolean, Vector[PathMatcher])]): Boolean = {
     val parts = r.split("/").toVector
-    val paths = parts.indices.map(i => Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || file.isDirectory))
+    val paths = parts.indices.map(i => Paths.get(parts.take(i + 1).mkString("/")) -> (i < parts.size - 1 || directory))
     exclusions.exists(pathContains(_, r)) || ignores.foldLeft(false) { case (ignored, (negated, directoriesOnly, matchers)) =>
       if (paths.exists { case (path, directory) => (!directoriesOnly || directory) && matchers.exists(_.matches(path)) }) !negated
       else ignored
@@ -164,4 +176,48 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def kind(file: VirtualFile): Option[String] = resourceFolders(file).map(_._1)
 
   def resource(file: PsiFile): Boolean = !excluded(file.getVirtualFile) && kind(file.getVirtualFile).nonEmpty
+}
+
+private[dbt] object DbtRoot {
+  private val VersionConstraint = """(>=|<=|>|<|=)?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?""".r
+
+  /** Lowest stable version satisfying every bound; unsupported or inconsistent ranges have no hint. */
+  private def requiredVersion(requirements: Vector[String]): Option[String] = {
+    val parsed = requirements.flatMap(_.split(",", -1)).map(_.trim).map {
+      case VersionConstraint(operator, major, minor, patch) =>
+        Some(Option(operator).getOrElse("=") -> (BigInt(major), BigInt(minor), BigInt(Option(patch).getOrElse("0"))))
+      case _ => None
+    }
+    if (parsed.isEmpty || parsed.exists(_.isEmpty)) None
+    else {
+      val constraints = parsed.flatten
+      val lowest = constraints.collect {
+        case (">", (major, minor, patch)) => (major, minor, patch + 1)
+        case (">=" | "=", version) => version
+      }.maxOption.getOrElse((BigInt(0), BigInt(0), BigInt(0)))
+      val compatible = constraints.forall { case (operator, bound) =>
+        val comparison = Ordering[(BigInt, BigInt, BigInt)].compare(lowest, bound)
+        operator match {
+          case ">" => comparison > 0
+          case ">=" => comparison >= 0
+          case "<" => comparison < 0
+          case "<=" => comparison <= 0
+          case _ => comparison == 0
+        }
+      }
+      Option.when(compatible)(s"${lowest._1}.${lowest._2}.${lowest._3}")
+    }
+  }
+
+  /** Parsed `.dbtignore` rules as (negated, directories only, matchers). */
+  def ignorePatterns(text: String): Vector[(Boolean, Boolean, Vector[PathMatcher])] =
+    text.linesIterator.map(_.trim).filter(s => s.nonEmpty && !s.startsWith("#")).map { pattern =>
+      val negated = pattern.startsWith("!")
+      val raw = if (negated) pattern.drop(1) else pattern
+      val relative = raw.stripPrefix("/").stripSuffix("/")
+      val patterns = Vector(relative) ++
+        (if (!raw.startsWith("/") && !relative.contains("/")) Vector("**/" + relative) else Vector.empty) ++
+        (if (relative.startsWith("**/")) Vector(relative.stripPrefix("**/")) else Vector.empty)
+      (negated, raw.endsWith("/"), patterns.flatMap(p => Try(FileSystems.getDefault.getPathMatcher("glob:" + p)).toOption))
+    }.toVector
 }

@@ -1,8 +1,5 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.intellij.json.JsonFileType
-import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.PsiFile
 import com.intellij.usages.UsageInfo2UsageAdapter
 import org.junit.Assert._
@@ -10,7 +7,7 @@ import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
 /** Find Usages is invoked from the editor, just as in the Cucumber Scala fixture tests. */
-final class DbtFindUsagesActionTest extends DbtCodeInsightTestCase {
+final class DbtFindUsagesActionTest extends DbtTestCase {
   private def location(file: PsiFile, text: String, occurrence: Int = 0): (PsiFile, Int, String) = {
     val offset = Iterator.iterate(file.getText.indexOf(text))(i => file.getText.indexOf(text, i + 1))
       .drop(occurrence).next()
@@ -110,7 +107,7 @@ final class DbtFindUsagesActionTest extends DbtCodeInsightTestCase {
 
   def testEnvironmentUsagesHighlightTheKeyWithoutItsValueOrFallback(): Unit = {
     project()
-    add(".dbt-navigation.yml", "env-files: [.env]\n")
+    configureSettings(_.environmentFiles = ".env")
     val env = configure(".env", "DBT_<caret>SCHEMA=private_schema\n")
     val caller = add("models/report.sql", "{{ env_var('DBT_SCHEMA') }} {{ env_var('DBT_SCHEMA', 'private_schema') }}")
 
@@ -141,12 +138,7 @@ final class DbtFindUsagesActionTest extends DbtCodeInsightTestCase {
 
   def testFindUsagesWithAnExistingLanguageParserUsesThePublicSymbolSearch(): Unit = {
     project()
-    val fileTypes = FileTypeManager.getInstance
-    val original = fileTypes.getFileTypeByExtension("sql")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit = fileTypes.associateExtension(JsonFileType.INSTANCE, "sql")
-    })
-    try {
+    withSqlParsedAsJson {
       add("models/orders.sql", "{}")
       val first = configure("models/first.sql", "{\"value\": \"{{ ref('or<caret>ders') }}\"}")
       val second = add("models/second.sql", "{\"value\": \"{{ ref('orders') }}\"}")
@@ -155,13 +147,6 @@ final class DbtFindUsagesActionTest extends DbtCodeInsightTestCase {
       assertNull("This parser does not expose a legacy PSI reference", first.findReferenceAt(offset))
       open(first, offset)
       assertUsages(location(first, "orders"), location(second, "orders"))
-    } finally {
-      WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-        override def run(): Unit = {
-          fileTypes.removeAssociatedExtension(JsonFileType.INSTANCE, "sql")
-          fileTypes.associateExtension(original, "sql")
-        }
-      })
     }
   }
 }
