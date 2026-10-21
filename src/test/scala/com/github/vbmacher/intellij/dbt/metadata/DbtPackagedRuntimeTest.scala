@@ -1,9 +1,9 @@
 package com.github.vbmacher.intellij.dbt.metadata
 
+import com.github.vbmacher.intellij.dbt.ide.DbtTestCase
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.DbtSymbolElement
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.testFramework.{LightProjectDescriptor, fixtures}
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.junit.Assert._
@@ -12,7 +12,7 @@ import java.nio.file.{Files, Paths}
 import scala.jdk.CollectionConverters._
 
 /** Assert that the shipped reader runs without the original dependency archives on its classpath. */
-final class DbtPackagedRuntimeTest extends BasePlatformTestCase {
+final class DbtPackagedRuntimeTest extends DbtTestCase {
   override protected def getProjectDescriptor(): LightProjectDescriptor = DbtPackagedRuntimeTest.descriptor
   override protected def createTempDirTestFixture(): fixtures.TempDirTestFixture =
     new fixtures.impl.TempDirTestFixtureImpl()
@@ -28,9 +28,9 @@ final class DbtPackagedRuntimeTest extends BasePlatformTestCase {
       model.getContentEntries.foreach(model.removeContentEntry)
       model.addContentEntry(directory)
     })
-    myFixture.addFileToProject("dbt_project.yml", "name: analytics\ninfo_schema: {version: 1}\n")
-    myFixture.addFileToProject(".dbt-navigation.yml", "engine: v2\ninfo-schema-dir: target/info_schema/v1\n")
-    val use = myFixture.addFileToProject("models/use.sql", "{{ ref('remote_20') }}")
+    add("dbt_project.yml", "name: analytics\ninfo_schema: {version: 1}\n")
+    add(".dbt-navigation.yml", "engine: v2\ninfo-schema-dir: target/info_schema/v1\n")
+    val use = add("models/use.sql", "{{ ref('remote_20') }}")
     val parent = myFixture.getTempDirFixture.findOrCreateDir("target/info_schema/v1")
     val fixtures = Files.list(Paths.get(sys.props("dbt.packaged.fixtures")))
     try {

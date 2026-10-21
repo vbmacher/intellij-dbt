@@ -1,21 +1,24 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.intellij.execution.impl.ConsoleViewImpl
-import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.PlatformTestUtil
-import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.google.gson.JsonParser
 import com.github.vbmacher.intellij.dbt.project.DbtArtifactContext
+import com.google.gson.JsonParser
+import com.intellij.execution.impl.ConsoleViewImpl
+import com.intellij.execution.process.{ProcessOutputType, ProcessOutputTypes}
+import com.intellij.execution.ui.ConsoleViewContentType
+import com.intellij.openapi.util.{Disposer, Key}
 import org.junit.Assert._
+
 import java.nio.file.{Files, Path}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 
-/** Contract: features/workspace.md and query-preview.md: managed execution, cancellation and captured context. */
-final class DbtRunnerProcessTest extends BasePlatformTestCase {
+/**
+ * Contract: features/workspace.md and query-preview.md: managed execution, cancellation, captured context,
+ * and readable console output of dbt's structured log.
+ */
+final class DbtRunnerProcessTest extends DbtTestCase {
   private def fake(directory: Path): Path = {
-    val executable = directory.resolve("fake dbt")
-    Files.writeString(executable, """#!/usr/bin/python3
+    fakeTool(directory.resolve("fake dbt"), """#!/usr/bin/python3
 import json,os,sys,time
 with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'cwd':os.getcwd(),'target':os.environ.get('DBT_TARGET_PATH'),'profiles':os.environ.get('DBT_PROFILES_DIR'),'pid':os.getpid()},f)
 print('\x1b[31mstreamed output\x1b[0m',flush=True)
@@ -29,14 +32,10 @@ if 'ls' in sys.argv: print(json.dumps({'unique_id':'model.analytics.orders'}),fl
 if 'show' in sys.argv: print(json.dumps({'preview':json.dumps([{'id':1,'name':None}])}),flush=True)
 sys.exit(7 if '--fail' in sys.argv else 0)
 """)
-    executable.toFile.setExecutable(true); executable
   }
-  private def await(message: String)(condition: => Boolean): Unit = PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
   private def setup(): (DbtRunner, Path, Path, ArrayBuffer[DbtRunnerEvent]) = {
-    val directory = Files.createTempDirectory("dbt runner with spaces ")
-    val runner = new DbtRunner(getProject)
-    Disposer.register(getTestRootDisposable, runner)
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(directory.toFile))
+    val directory = tempDirectory("dbt runner with spaces ")
+    val runner = newRunner()
     val events = ArrayBuffer.empty[DbtRunnerEvent]
     runner.listen(getTestRootDisposable, e => events += e)
     (runner, directory, fake(directory), events)
@@ -177,4 +176,86 @@ sys.exit(7 if '--fail' in sys.argv else 0)
     assertTrue(events.last.result.isEmpty)
   }
 
+  private val chunks = ArrayBuffer.empty[(String, Key[_])]
+  private def output(): DbtConsoleOutput = new DbtConsoleOutput((text, kind) => { chunks += text -> kind; () })
+  private def text: String = chunks.map(_._1).mkString
+
+  def testDbtMessagesShowTimeLevelMultilineDetailsAndBlankSeparators(): Unit = {
+    val display = output()
+    display.textAvailable("""{"data":{"unused":"metadata"},"info":{"msg":"Running with dbt=1.12.5","level":"info","ts":"2026-10-20T12:34:56.123Z"}}
+{"data":{},"info":{"msg":"Unexpected rows\nexpected: 0\nactual: 3","level":"warn","ts":"2026-10-20T12:34:57Z"}}
+{"data":{"msg":""},"info":{"msg":"","level":"info"}}
+{"data":{},"info":{"msg":"Database error","level":"error"}}
+""", ProcessOutputTypes.STDOUT)
+    assertEquals("12:34:56  Running with dbt=1.12.5\n12:34:57  [WARN] Unexpected rows\nexpected: 0\nactual: 3\n\n[ERROR] Database error\n", text)
+  }
+
+  def testSplitJsonAndIndependentStreamsFlushFinalRecordWithoutNewline(): Unit = {
+    val display = output()
+    val record = """{"data":{},"info":{"msg":"PASS orders","level":"info"}}"""
+    record.dropRight(1).foreach(c => display.textAvailable(c.toString, ProcessOutputTypes.STDOUT))
+    assertEquals("", text)
+    display.textAvailable("stderr diagnostic\n", ProcessOutputTypes.STDERR)
+    display.textAvailable(record.takeRight(1), ProcessOutputTypes.STDOUT)
+    display.finish()
+    assertEquals("stderr diagnostic\nPASS orders\n", text)
+    assertTrue(ProcessOutputType.isStderr(chunks.head._2))
+    assertTrue(ProcessOutputType.isStdout(chunks.last._2))
+    display.finish()
+    assertEquals(2, chunks.size)
+  }
+
+  def testPlainTextStreamsImmediatelyAndOtherJsonAndMalformedRecordsRemainVisible(): Unit = {
+    val display = output()
+    display.textAvailable("Connecting...", ProcessOutputTypes.STDOUT)
+    assertEquals("Connecting...", text)
+    val raw = """
+{"preview":"[{\"id\":1}]"}
+{"unique_id":"model.analytics.orders"}
+{"data":{},"info":{"msg":null}}
+{"data":{},"info":{"msg":42}}
+{"data":{},"info":{"msg":{"unexpected":true}}}
+{"data":{},"info":"unexpected"}
+{"data":{},"info":{"msg":"truncated
+"""
+    display.textAvailable(raw, ProcessOutputTypes.STDOUT)
+    display.textAvailable("{unfinished", ProcessOutputTypes.STDERR)
+    display.finish()
+    assertEquals("Connecting..." + raw + "{unfinished", text)
+  }
+
+  def testAnsiInJsonMessagesAndPlainOutputProducesColoredTextWithoutEscapeCodes(): Unit = {
+    val display = output()
+    display.textAvailable("{\"data\":{},\"info\":{\"msg\":\"\\u001b[32mPASS\\u001b[0m orders\"}}\n", ProcessOutputTypes.STDOUT)
+    display.textAvailable("\u001b[31", ProcessOutputTypes.STDERR)
+    display.textAvailable("mFailure\u001b[0m\n", ProcessOutputTypes.STDERR)
+    assertEquals("PASS orders\nFailure\n", text)
+    val pass = chunks.find(_._1 == "PASS").get
+    val failure = chunks.find(_._1 == "Failure").get
+    assertTrue(ProcessOutputType.isStdout(pass._2))
+    assertTrue(ProcessOutputType.isStderr(failure._2))
+    assertNotEquals(ConsoleViewContentType.NORMAL_OUTPUT,
+      ConsoleViewContentType.getConsoleViewType(pass._2))
+    assertNotEquals(ConsoleViewContentType.ERROR_OUTPUT,
+      ConsoleViewContentType.getConsoleViewType(failure._2))
+  }
+
+  def testOversizedUnterminatedRecordDoesNotHideOutput(): Unit = {
+    val display = output()
+    val raw = "{" + "x" * 1000001
+    display.textAvailable(raw, ProcessOutputTypes.STDOUT)
+    assertEquals(raw, text)
+    display.finish()
+    assertEquals(raw, text)
+  }
+
+  def testJsonEmbeddedInPlainScriptOutputIsNotReformattedAcrossChunks(): Unit = {
+    val display = output()
+    val record = """{"data":{},"info":{"msg":"diagnostic payload"}}"""
+    display.textAvailable("Script payload: ", ProcessOutputTypes.STDOUT)
+    display.textAvailable(record + "\n", ProcessOutputTypes.STDOUT)
+    assertEquals("Script payload: " + record + "\n", text)
+    display.textAvailable(record + "\n", ProcessOutputTypes.STDOUT)
+    assertEquals("Script payload: " + record + "\ndiagnostic payload\n", text)
+  }
 }

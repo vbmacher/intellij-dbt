@@ -1,28 +1,18 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project._
-import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
 import com.intellij.openapi.progress.EmptyProgressIndicator
-import com.intellij.openapi.util.{Disposer, TextRange}
-import com.intellij.psi.PsiDocumentManager
+import com.intellij.openapi.util.TextRange
 import org.junit.Assert._
+
 import java.nio.file.{Files, Path}
 import java.util.concurrent.{CompletableFuture, TimeUnit}
 import scala.jdk.CollectionConverters._
 
-final class DbtFormattingTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
+final class DbtFormattingTest extends DbtTestCase {
   private def background[A](body: => A): A = CompletableFuture.supplyAsync(() => body).get(10, TimeUnit.SECONDS)
-  private def directory(): Path = {
-    val dir = Files.createTempDirectory("dbt formatter with spaces ")
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(dir.toFile))
-    dir
-  }
-  private def script(dir: Path, content: String): Path = {
-    val path = Files.writeString(dir.resolve("tool with spaces"), "#!/bin/sh\n" + content)
-    assertTrue(path.toFile.setExecutable(true)); path
-  }
+  private def directory(): Path = tempDirectory("dbt formatter with spaces ")
+  private def script(dir: Path, content: String): Path = fakeTool(dir.resolve("tool with spaces"), "#!/bin/sh\n" + content)
   def testFakeFormatterReceivesArgumentVectorCwdEnvironmentAndRawMultilineJinja(): Unit = {
     val dir = directory()
     val executable = script(dir, """printf '%s\n' "$@" > arguments
@@ -44,7 +34,7 @@ cat input
   def testCommandUsesOwningProjectConfigurationAndStdinSourceFilename(): Unit = {
     project()
     val file = add("models/a file.sql", "select 1")
-    val root = DbtWorkspace.get(getProject).root(file).get
+    val root = workspace.root(file).get
     root.runOptions.formatter = "sqlfluff"; root.runOptions.formatterExecutable = "bin/a tool"
     val command = DbtToolCommand.create(file, lint = true).toOption.get
     assertEquals(root.executionDirectory.resolve("bin/a tool").toString, command.arguments.head)
@@ -74,9 +64,7 @@ cat input
     val executable = script(dir, "cat > input\nprintf ready > ready\nexec sleep 30\n")
     val process = new DbtToolProcess
     val future = CompletableFuture.supplyAsync(() => process.run(DbtToolCommand(Vector(executable.toString), dir.toString, Map.empty), "select 1"))
-    val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-    while (!Files.exists(dir.resolve("ready")) && System.nanoTime() < until) Thread.sleep(10)
-    assertTrue("Fake process should start", Files.exists(dir.resolve("ready")))
+    await("Fake process should start", 5)(Files.exists(dir.resolve("ready")))
     process.cancel()
     assertTrue(future.get(5, TimeUnit.SECONDS).left.toOption.get.contains("canceled"))
   }
@@ -107,9 +95,7 @@ cat input
       Vector(DbtSqlFluffEdit(new TextRange(0, 6), "SELECT")))
     assertTrue(DbtSqlFluff.applyEdits(file, result, diagnostic))
     assertEquals(before.replace("select", "SELECT"), document.getText)
-    val editor = TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor)
-    assertTrue(UndoManager.getInstance(getProject).isUndoAvailable(editor))
-    UndoManager.getInstance(getProject).undo(editor)
+    undo(TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor))
     assertEquals(before, document.getText)
     // IntelliJ Undo may restore the original modification stamp. A real source edit must invalidate the old result.
     edit(file, before + "-- concurrent edit\n")
@@ -119,7 +105,7 @@ cat input
   def testFormatOnSaveRequiresExplicitSettingAndPreservesConcurrentEdits(): Unit = {
     project()
     val file = configure("models/orders.sql", "select <caret>1\n")
-    val root = DbtWorkspace.get(getProject).root(file).get
+    val root = workspace.root(file).get
     root.runOptions.formatterExecutable = "configured-tool"
     assertFalse(DbtFormatOnSave.enabled(getProject, file.getVirtualFile))
     root.runOptions.formatOnSave = true
@@ -143,21 +129,19 @@ cat <<'JSON'
 JSON
 exit 1
 """)
-    val root = DbtWorkspace.get(getProject).root(file).get
+    val root = workspace.root(file).get
     root.runOptions.formatter = "sqlfluff"; root.runOptions.formatterExecutable = executable.toString
     root.runOptions.projectRoot = dir.toString
     myFixture.enableInspections(new DbtSqlFluffInspection)
     new DbtInspectSqlAction().inspect(getProject, file)
-    com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("SQLFluff publishes its explicit result",
-      () => file.getUserData(DbtSqlFluff.Result) != null, 10)
+    await("SQLFluff publishes its explicit result")(file.getUserData(DbtSqlFluff.Result) != null)
     val diagnostics = myFixture.doHighlighting().asScala.filter(h => Option(h.getDescription).exists(_.startsWith("SQLFluff CP01:")))
     assertEquals(1, diagnostics.size)
     assertEquals(0, diagnostics.head.getStartOffset); assertEquals(6, diagnostics.head.getEndOffset)
     val before = myFixture.getEditor.getDocument.getText
     myFixture.launchAction(myFixture.findSingleIntention("Apply SQLFluff CP01 fix"))
     assertEquals(before.replace("select", "SELECT"), myFixture.getEditor.getDocument.getText)
-    val editor = TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor)
-    UndoManager.getInstance(getProject).undo(editor)
+    undo(TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor))
     assertEquals(before, myFixture.getEditor.getDocument.getText)
   }
   def testNativeSaveFormatsAndSavesOnlyWhenExplicitlyEnabled(): Unit = {
@@ -165,15 +149,14 @@ exit 1
     val file = configure("models/orders.sql", "select <caret>1\n")
     val dir = directory()
     val executable = script(dir, "cat > input\nsed 's/^select/SELECT/' input\n")
-    val root = DbtWorkspace.get(getProject).root(file).get
+    val root = workspace.root(file).get
     root.runOptions.formatterExecutable = executable.toString; root.runOptions.projectRoot = dir.toString
     root.runOptions.formatOnSave = true
     edit(file, "select 2\n")
     val document = myFixture.getEditor.getDocument
     val manager = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
     manager.saveDocument(document)
-    com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Format-on-save applies its background result",
-      () => document.getText == "SELECT 2\n", 10)
+    await("Format-on-save applies its background result")(document.getText == "SELECT 2\n")
     assertEquals("SELECT 2\n", file.getText)
     assertEquals("SELECT 2\n", new String(file.getVirtualFile.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8))
     root.runOptions.formatOnSave = false
@@ -187,15 +170,12 @@ exit 1
     val file = configure("models/orders.sql", "<caret>select   {{ ref('orders') }}\n")
     val dir = directory()
     val executable = script(dir, "cat > input\nsed 's/^select   /select /' input\n")
-    val root = DbtWorkspace.get(getProject).root(file).get
+    val root = workspace.root(file).get
     root.runOptions.formatterExecutable = executable.toString; root.runOptions.projectRoot = dir.toString
     val document = myFixture.getEditor.getDocument; val before = document.getText
     myFixture.performEditorAction(com.intellij.openapi.actionSystem.IdeActions.ACTION_EDITOR_REFORMAT)
-    com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Native Reformat Code uses the configured formatter",
-      () => document.getText == "select {{ ref('orders') }}\n", 10)
-    val editor = TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor)
-    assertTrue(UndoManager.getInstance(getProject).isUndoAvailable(editor))
-    UndoManager.getInstance(getProject).undo(editor)
+    await("Native Reformat Code uses the configured formatter")(document.getText == "select {{ ref('orders') }}\n")
+    undo(TextEditorProvider.getInstance().getTextEditor(myFixture.getEditor))
     assertEquals(before, document.getText)
   }
 

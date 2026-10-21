@@ -2,10 +2,8 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.JsonParser
-import com.intellij.execution.impl.ConsoleViewImpl
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.{PlatformTestUtil, PsiTestUtil}
+import com.intellij.testFramework.PsiTestUtil
 import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestFixture}
 import org.junit.Assert._
 
@@ -14,11 +12,9 @@ import java.nio.file.{Files, Paths}
 import javax.swing.{JComboBox, JScrollPane, JTabbedPane}
 
 /** Contract: features/configuration.md and external-command.md: configured environment reaches child tools. */
-final class DbtEnvironmentTest extends DbtCodeInsightTestCase {
+final class DbtEnvironmentTest extends DbtTestCase {
   override protected def createTempDirTestFixture(): TempDirTestFixture = IdeaTestFixtureFactory.getFixtureFactory.createTempDirTestFixture()
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
 
-  private def workspace: DbtWorkspace = DbtWorkspace.get(getProject)
   private def setupRoot(): DbtRoot = {
     val config = project("profile: analytics\n")
     PsiTestUtil.addContentRoot(getModule, config.getVirtualFile.getParent)
@@ -138,11 +134,10 @@ with open('environment.json', 'w') as f:
     assertTrue(Paths.get(executable.getPath).toFile.setExecutable(true))
     root.runOptions.executable = executable.getPath
     root.runOptions.notifications = false
-    val runner = new DbtRunner(getProject)
-    Disposer.register(getTestRootDisposable, runner)
+    val runner = newRunner()
     val output = new StringBuffer
     assertTrue(runner.start(command(root), (text, _) => { output.append(text); () }))
-    PlatformTestUtil.waitWithEventsDispatching("dbt completes with configured environment", () => !runner.isRunning, 15)
+    await("dbt completes with configured environment")(!runner.isRunning)
     val invocation = JsonParser.parseString(Files.readString(root.executionDirectory.resolve("environment.json"))).getAsJsonObject
     assertEquals("private-workgroup", invocation.get("workgroup").getAsString)
     assertFalse(invocation.get("home").isJsonNull)

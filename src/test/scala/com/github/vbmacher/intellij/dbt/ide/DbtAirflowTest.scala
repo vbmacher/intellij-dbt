@@ -1,27 +1,27 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
-import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.{LocalFileSystem, VirtualFile}
+import com.intellij.psi.PsiFile
+import com.intellij.testFramework.PsiTestUtil
 import com.intellij.testFramework.fixtures.{IdeaTestFixtureFactory, TempDirTestFixture}
 import org.junit.Assert._
+
 import java.nio.file.Files
 import scala.jdk.CollectionConverters._
 
-final class DbtAirflowDetailsTest extends DbtCodeInsightTestCase {
-  private var contentRoot: com.intellij.openapi.vfs.VirtualFile = _
+/** Airflow DAG integration: static DAG parsing and task details for dbt resources in real project directories. */
+final class DbtAirflowTest extends DbtTestCase {
+  private var contentRoot: VirtualFile = _
   override protected def createTempDirTestFixture(): TempDirTestFixture = IdeaTestFixtureFactory.getFixtureFactory.createTempDirTestFixture()
-  override protected def project(config: String): com.intellij.psi.PsiFile = {
-    val file = super.project(config)
+  override protected def project(config: String, path: String): PsiFile = {
+    val file = super.project(config, path)
     contentRoot = file.getVirtualFile.getParent
-    com.intellij.testFramework.PsiTestUtil.addContentRoot(getModule, contentRoot)
+    PsiTestUtil.addContentRoot(getModule, contentRoot)
     file
   }
-  override protected def tearDown(): Unit = try {
-    if (contentRoot != null) com.intellij.testFramework.PsiTestUtil.removeContentEntry(getModule, contentRoot)
-    getProject.getService(classOf[DbtConsumersSettings]).loadState(new DbtConsumersState)
-    DbtProjectSettings.get(getProject).loadState(new DbtSettingsState)
-  } finally super.tearDown()
-  private def workspace = DbtWorkspace.get(getProject)
+  override protected def tearDown(): Unit = try if (contentRoot != null) PsiTestUtil.removeContentEntry(getModule, contentRoot)
+  finally super.tearDown()
   private def resource(w: DbtWorkspace, suffix: String) = w.symbols.find(s => s.isCode && s.file.getVirtualFile.getPath.endsWith(suffix)).get
   private def settings = getProject.getService(classOf[DbtConsumersSettings]).getState
   private def enable(path: String): Unit = {
@@ -97,29 +97,24 @@ Cfg(dag_id="finance /daily", task_id="build & report", dbt_selector="orders")
 
   def testExternalCheckoutRecursionSkipDirectoriesAndDiskRefresh(): Unit = {
     project(); add("models/orders.sql", "select 1")
-    val directory = Files.createTempDirectory("dbt-airflow-external-")
-    try {
-      val nested = Files.createDirectories(directory.resolve("nested"))
-      val dag = nested.resolve("daily.py")
-      Files.writeString(dag, "Cfg(name='daily', dbt_selector='orders')")
-      Files.writeString(directory.resolve("unrelated.py"), "raise RuntimeError('never execute DAG code')")
-      Files.writeString(Files.createDirectories(directory.resolve(".venv")).resolve("hidden.py"), "Cfg(dbt_selector='orders')")
-      enable(directory.toString)
-      assertEquals(Vector("daily"), DbtAirflow.tasks(workspace).map(_.dag))
-      val virtual = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(directory)
-      virtual.refresh(false, true)
-      Files.writeString(dag, "Cfg(name='changed', dbt_selector='orders')")
-      virtual.refresh(false, true)
-      assertEquals(Vector("changed"), DbtAirflow.tasks(workspace).map(_.dag))
-      Files.delete(dag); virtual.refresh(false, true)
-      assertTrue(DbtAirflow.tasks(workspace).isEmpty)
-      Files.writeString(nested.resolve("new.py"), "Cfg(name='new', dbt_selector='orders')")
-      virtual.refresh(false, true)
-      assertEquals(Vector("new"), DbtAirflow.tasks(workspace).map(_.dag))
-    } finally {
-      val files = Files.walk(directory)
-      try files.iterator().asScala.toVector.reverse.foreach(Files.deleteIfExists) finally files.close()
-    }
+    val directory = tempDirectory("dbt-airflow-external-")
+    val nested = Files.createDirectories(directory.resolve("nested"))
+    val dag = nested.resolve("daily.py")
+    Files.writeString(dag, "Cfg(name='daily', dbt_selector='orders')")
+    Files.writeString(directory.resolve("unrelated.py"), "raise RuntimeError('never execute DAG code')")
+    Files.writeString(Files.createDirectories(directory.resolve(".venv")).resolve("hidden.py"), "Cfg(dbt_selector='orders')")
+    enable(directory.toString)
+    assertEquals(Vector("daily"), DbtAirflow.tasks(workspace).map(_.dag))
+    val virtual = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(directory)
+    virtual.refresh(false, true)
+    Files.writeString(dag, "Cfg(name='changed', dbt_selector='orders')")
+    virtual.refresh(false, true)
+    assertEquals(Vector("changed"), DbtAirflow.tasks(workspace).map(_.dag))
+    Files.delete(dag); virtual.refresh(false, true)
+    assertTrue(DbtAirflow.tasks(workspace).isEmpty)
+    Files.writeString(nested.resolve("new.py"), "Cfg(name='new', dbt_selector='orders')")
+    virtual.refresh(false, true)
+    assertEquals(Vector("new"), DbtAirflow.tasks(workspace).map(_.dag))
   }
 
   def testAutomaticProjectDetectionKeepsAmbiguousExternalDagsUnresolvedAndIgnoresManualYaml(): Unit = {
@@ -130,14 +125,12 @@ Cfg(dag_id="finance /daily", task_id="build & report", dbt_selector="orders")
     assertEquals(Vector("model.analytics.orders"), DbtAirflow.tasks(workspace).head.resources.map(_.uniqueId))
     add(".dbt-airflow.yml", "tasks: [{dag: ignored, task: ignored, project: analytics, select: '*'}]\n")
     assertEquals(Vector("daily"), DbtAirflow.tasks(workspace).map(_.dag))
-    val external = Files.createTempDirectory("dbt-airflow-ambiguous-")
-    try {
-      Files.writeString(external.resolve("ambiguous.py"), "Cfg(name='ambiguous', dbt_selector='orders')")
-      enable(external.toString)
-      val task = DbtAirflow.tasks(workspace).head
-      assertTrue(task.problems.exists(_.contains("ambiguous")))
-      assertTrue(task.resources.isEmpty)
-    } finally { Files.delete(external.resolve("ambiguous.py")); Files.delete(external) }
+    val external = tempDirectory("dbt-airflow-ambiguous-")
+    Files.writeString(external.resolve("ambiguous.py"), "Cfg(name='ambiguous', dbt_selector='orders')")
+    enable(external.toString)
+    val task = DbtAirflow.tasks(workspace).head
+    assertTrue(task.problems.exists(_.contains("ambiguous")))
+    assertTrue(task.resources.isEmpty)
   }
 
   def testIngestionMatchesPhysicalDestinationsAndFindsUpstreamPipelines(): Unit = {
@@ -180,24 +173,20 @@ Cfg(dag_id="finance /daily", task_id="build & report", dbt_selector="orders")
 
   def testExternalDbtContentRootIsDetectedAutomatically(): Unit = {
     project(); add("models/local.sql", "select 1")
-    val directory = Files.createTempDirectory("dbt-airflow-project-")
-    var externalRoot: com.intellij.openapi.vfs.VirtualFile = null
+    val directory = tempDirectory("dbt-airflow-project-")
+    var externalRoot: VirtualFile = null
     try {
       Files.writeString(directory.resolve("dbt_project.yml"), "name: external\nconfig-version: 2\n")
       Files.writeString(Files.createDirectories(directory.resolve("models")).resolve("orders.sql"), "select 2")
       Files.writeString(directory.resolve("remote.py"), "Cfg(name='remote_build', dbt_selector='orders')")
       externalRoot = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(directory)
       externalRoot.refresh(false, true)
-      com.intellij.testFramework.PsiTestUtil.addContentRoot(getModule, externalRoot)
+      PsiTestUtil.addContentRoot(getModule, externalRoot)
       enable(directory.toString)
       val tasks = DbtAirflow.tasks(workspace)
       assertEquals(Vector("model.external.orders"), tasks.head.resources.map(_.uniqueId))
       assertEquals(Some(directory.toString), tasks.head.projectRoot)
-    } finally {
-      if (externalRoot != null) com.intellij.testFramework.PsiTestUtil.removeContentEntry(getModule, externalRoot)
-      val files = Files.walk(directory)
-      try files.iterator().asScala.toVector.reverse.foreach(Files.deleteIfExists) finally files.close()
-    }
+    } finally if (externalRoot != null) PsiTestUtil.removeContentEntry(getModule, externalRoot)
   }
 
   def testIngestionConfidenceAndUniqueTableFallbackRemainExplicit(): Unit = {
@@ -259,5 +248,102 @@ Cfg(dag_id="finance /daily", task_id="build & report", dbt_selector="orders")
     assertTrue(details.get("truncated").getAsBoolean)
     enable(config.getVirtualFile.getParent.getPath + "/missing")
     assertTrue(DbtAirflow.problems(workspace).exists(_.contains("missing")))
+  }
+
+
+  private def parse(source: String) = DbtAirflowParser.parse("/dags/example.py", source)
+
+  def testReadsConfigObjectsAndIgnoresFunctionDefaultsAndNone(): Unit = {
+    val pipelines = parse("""
+def helper(dbt_selector=None, dbt_exclude=None): pass
+def get():
+    return [
+        DbtTransformationConfig(name="dbt_gtm", schedule="57 9 * * *",
+            dbt_selector="tag:gtm_1000WIB", dbt_exclude="tag:slow tag:flaky",
+            dbt_indirect_selection=DbtIndirectSelection.CAUTIOUS),
+        DbtTransformationConfig(name="noop", dbt_selector=None),
+    ]
+""")
+    assertEquals(1, pipelines.size)
+    val p = pipelines.head
+    assertEquals("dbt_gtm", p.name); assertEquals("57 9 * * *", p.schedule)
+    assertEquals("tag:gtm_1000WIB", p.sites.head.select)
+    assertEquals("tag:slow tag:flaky", p.sites.head.exclude)
+    assertEquals("DbtIndirectSelection.CAUTIOUS", p.sites.head.indirect)
+  }
+
+  def testEvaluatesConstantsConcatenationListsJoinsAndAdjacentStrings(): Unit = {
+    val p = parse("""
+BASE = ["tag:a", "tag:b"]
+NAME = "night" + "ly"
+X = Cfg(name=NAME, dbt_selector=" ".join(BASE + ["m1+"]), dbt_exclude=",".join(["tag:x", "tag:y"]))
+Y = Cfg(name="other", dbt_selector=("tag:" "finance"))
+""")
+    assertEquals("nightly", p.head.name)
+    assertEquals("tag:a tag:b m1+", p.head.sites.head.select)
+    assertEquals("tag:x,tag:y", p.head.sites.head.exclude)
+    assertEquals("tag:finance", p(1).sites.head.select)
+  }
+
+  def testNestedJobsInheritExcludesScheduleAndPipelineName(): Unit = {
+    val p = parse("""
+dag_definitions = [
+  {"dag_name_suffix": "hourly", "schedule": "0 * * * *", "excludes": ["tag:skip"],
+   "dbt_jobs": [{"selector": "tag:hourly"}, {"name": "j2", "selector": "1+m2"}]},
+]
+""").head
+    assertEquals("hourly", p.name); assertEquals("0 * * * *", p.schedule)
+    assertEquals(Vector("tag:hourly", "1+m2"), p.sites.map(_.select))
+    assertEquals(Vector("tag:skip", "tag:skip"), p.sites.map(_.exclude))
+    assertEquals("j2", p.sites(1).task)
+  }
+
+  def testShellFlagsNamedSelectorsAndSourceLocations(): Unit = {
+    val source = """with DAG(dag_id="daily", schedule_interval="@daily"):
+    task = BashOperator(task_id="build", bash_command="dbt build --select tag:a +m1 --exclude m2 --target prod")
+"""
+    val p = parse(source).head
+    assertEquals("daily", p.name); assertEquals("@daily", p.schedule)
+    assertEquals("build", p.sites.head.task)
+    assertEquals("tag:a +m1", p.sites.head.select); assertEquals("m2", p.sites.head.exclude)
+    assertEquals(2, p.sites.head.line)
+    assertTrue(source.substring(p.sites.head.offset).startsWith("\"dbt build"))
+    assertEquals(Some(("", "", "nightly")), DbtAirflowParser.shell("dbt run --selector nightly"))
+    assertEquals(Some(("tag:a", "", "")), DbtAirflowParser.shell("dbt ls -s tag:a"))
+    assertEquals(Some(("tag:a tag:b", "tag:c", "")), DbtAirflowParser.shell("dbt run --models='tag:a tag:b' --exclude=tag:c"))
+    assertTrue(DbtAirflowParser.shell("echo hi").isEmpty)
+    assertEquals("nightly", parse("Cfg(dbt_selector_name='nightly')").head.sites.head.named)
+  }
+
+  def testDynamicValuesNeverBecomeAllModelsAndCommentsAreIgnored(): Unit = {
+    val p = parse("""
+# Cfg(dbt_selector="must_not_exist")
+X = Cfg(name="n", dbt_selector=f"tag:{team}")
+Y = Cfg(name="exclude", dbt_select="orders", dbt_exclude=get_excludes())
+Z = Cfg(name="named", selector_name=read_name())
+""")
+    assertEquals(3, p.size)
+    assertTrue(p.forall(_.sites.head.dynamic))
+    assertEquals("", p.head.sites.head.select)
+    assertEquals("orders", p(1).sites.head.select)
+    assertTrue(parse("def helper(select='orders'): pass\nCfg(select=None, exclude=dynamic_value)").isEmpty)
+    assertTrue(parse("SELECTION = 'tag:' + team\nCfg(select=SELECTION)").head.sites.head.dynamic)
+  }
+
+  def testDiscoversIngestionTargetsWithoutTreatingReadersAsWriters(): Unit = {
+    val source = """
+T = [{"name": "tia", "bq_dataset": "raw", "bq_table": "Orders"},
+     {"bq_table": "submitted", "load": {"full_table_schema_reference": f"{PROJECT}.raw.submitted"}},
+     {"name": "partition_check", "dataset": "raw", "table": "ignore_me"},
+     {"bq_dataset": ds, "bq_table": f"table_{n}"}]
+@dag(dag_id=get_dag_id(__file__), schedule="@hourly")
+def ingest(): pass
+"""
+    val p = parse(source).head
+    assertEquals("example", p.name); assertEquals("@hourly", p.schedule)
+    assertEquals(Set((Some("raw"), "Orders"), (None, "submitted"), (Some("raw"), "submitted")),
+      p.ingests.map(r => r.dataset -> r.table).toSet)
+    assertTrue(p.sites.isEmpty)
+    assertTrue(parse("X={'dataset':'d','table':'t'}").isEmpty)
   }
 }

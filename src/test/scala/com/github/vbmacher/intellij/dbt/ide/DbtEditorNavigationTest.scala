@@ -1,14 +1,18 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.github.vbmacher.intellij.dbt.lineage.DbtLineage
+import com.github.vbmacher.intellij.dbt.project.{DbtSymbol, DbtWorkspace}
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiPolyVariantReference
-import com.intellij.testFramework.PlatformTestUtil
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.{PsiDocumentManager, PsiFile, PsiPolyVariantReference}
 import org.junit.Assert._
 
-/** User-guide navigation contracts exercised through IntelliJ's Go to Declaration helpers. */
-final class DbtEditorNavigationTest extends DbtCodeInsightTestCase {
+import java.awt.Component
+import javax.swing.{JLabel, JList}
+
+/** User-guide navigation contracts exercised through Go to Declaration, and the presentation of navigation targets. */
+final class DbtEditorNavigationTest extends DbtTestCase {
   def testModelReferenceInPlainSqlSelectsOnlyTheName(): Unit = {
     project()
     val orders = add("models/orders.sql", "select 1 as order_id")
@@ -25,8 +29,7 @@ final class DbtEditorNavigationTest extends DbtCodeInsightTestCase {
 
     myFixture.performEditorAction("GotoDeclaration")
     val expected = PsiDocumentManager.getInstance(getProject).getDocument(orders)
-    PlatformTestUtil.waitWithEventsDispatching("Go to Declaration should open orders.sql", () =>
-      Option(FileEditorManager.getInstance(getProject).getSelectedTextEditor).exists(_.getDocument == expected), 5)
+    await("Go to Declaration should open orders.sql")(Option(FileEditorManager.getInstance(getProject).getSelectedTextEditor).exists(_.getDocument == expected))
   }
 
   def testSeedReferenceOpensTheCsvFile(): Unit = {
@@ -290,5 +293,73 @@ final class DbtEditorNavigationTest extends DbtCodeInsightTestCase {
     configure("nested/models/report.sql", "select * from {{ ref('or<caret>ders') }}")
 
     assertNoTarget()
+  }
+
+  private def model(workspace: DbtWorkspace, file: PsiFile): DbtSymbol =
+    workspace.symbols.find(s => s.file == file && s.attributes.contains("code")).getOrElse(
+      throw new AssertionError(s"Missing model in ${file.getName}"))
+
+  def testResourceIconsAreSharedByDeclarationsAndNativePresentation(): Unit = {
+    bareProject()
+    val orders = add("models/orders.sql", "select 1 as id")
+    val yaml = add("models/schema.yml", "models:\n- name: orders\n  columns:\n  - name: id\nsources:\n- name: raw\n  tables:\n  - name: events\n")
+    val declaration = model(workspace, orders).element
+    val properties = workspace.properties(declaration.symbol)
+    assertFalse(properties.isEmpty)
+    properties.foreach(s => assertSame(declaration.getIcon(0), s.element.getIcon(0)))
+    assertSame(declaration.getIcon(0), declaration.getPresentation.getIcon(false))
+    assertEquals("analytics.orders", declaration.getPresentation.getPresentableText)
+    val source = workspace.symbols.find(s => s.file == yaml && s.kind == "source").get
+    val table = workspace.symbols.find(s => s.file == yaml && s.kind == "source_table").get
+    assertSame(declaration.getIcon(0), source.element.getIcon(0))
+    assertSame(source.element.getIcon(0), table.element.getIcon(0))
+  }
+
+  def testDependenciesGroupReferencesAndKeepDirectionAndExactTargets(): Unit = {
+    bareProject()
+    val orders = add("models/orders.sql", "select 1 as id")
+    val events = add("models/events.sql", "\nselect * from {{ ref('orders') }}\nunion all select * from {{ ref('orders') }}")
+    val report = add("models/report.sql", "select * from {{ ref('events') }}")
+    val edges = DbtLineage.edges(workspace)
+    val downstream = DbtDependenciesAction.choices(edges, Set(model(workspace, orders).id))
+    assertEquals(Vector("analytics.events", "events.sql:2", "events.sql:3"), downstream.map(_.text))
+    assertEquals(Some("Used by"), downstream.head.separator)
+    assertFalse(downstream.head.reference)
+    assertTrue(downstream.drop(1).forall(_.reference))
+    assertEquals(events, downstream.head.target.getContainingFile)
+    assertEquals(events.getText.indexOf("orders"), downstream(1).target.getTextOffset)
+    assertEquals(events.getText.lastIndexOf("orders"), downstream(2).target.getTextOffset)
+    val both = DbtDependenciesAction.choices(edges, Set(model(workspace, events).id))
+    assertEquals(Vector("Uses", "Used by"), both.flatMap(_.separator))
+    assertEquals(Vector(orders, report), both.filterNot(_.reference).map(_.target.getContainingFile))
+  }
+
+  def testIdenticalReferenceLabelsKeepTheirOwnNavigationTargets(): Unit = {
+    bareProject()
+    val orders = add("models/orders.sql", "select 1")
+    val first = add("models/a/use.sql", "{{ ref('orders') }}")
+    val second = add("models/b/use.sql", "{{ ref('orders') }}")
+    val choices = DbtDependenciesAction.choices(DbtLineage.edges(workspace), Set(model(workspace, orders).id))
+    val references = choices.filter(_.reference)
+    assertEquals(Vector("use.sql:1", "use.sql:1"), references.map(_.text))
+    assertEquals(Set(first, second), references.map(_.target.getContainingFile).toSet)
+  }
+
+  def testRendererIndentsReferencesAndRestoresResourceIcon(): Unit = {
+    val file = add("models/orders.sql", "select 1")
+    val symbol = DbtSymbol("model", "orders", "analytics", file, TextRange.EMPTY_RANGE).element
+    val renderer = new DbtNavigationItemRenderer
+    val list = new JList[DbtNavigationItem]()
+    def labels(component: Component): Vector[JLabel] = components(component).collect { case label: JLabel => label }
+    val reference = DbtNavigationItem(symbol, "orders.sql:1", reference = true)
+    val referenceLabel = labels(renderer.getListCellRendererComponent(list, reference, 0, false, false))
+      .find(_.getText == reference.text).get
+    val referenceIndent = referenceLabel.getInsets.left
+    assertNull(referenceLabel.getIcon)
+    val resource = DbtNavigationItem(symbol, "analytics.orders")
+    val resourceLabel = labels(renderer.getListCellRendererComponent(list, resource, 1, false, false))
+      .find(_.getText == resource.text).get
+    assertTrue(referenceIndent > resourceLabel.getInsets.left)
+    assertNotNull(resourceLabel.getIcon)
   }
 }

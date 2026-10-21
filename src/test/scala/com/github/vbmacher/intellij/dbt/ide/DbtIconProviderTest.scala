@@ -13,7 +13,7 @@ import java.awt.image.BufferedImage
 import javax.swing.Icon
 import scala.jdk.CollectionConverters._
 
-final class DbtIconProviderTest extends DbtCodeInsightTestCase {
+final class DbtIconProviderTest extends DbtTestCase {
   private def icon(file: PsiFile): Icon = IconProvider.EXTENSION_POINT_NAME.getExtensionList.asScala
     .collectFirst { case provider: DbtIconProvider => provider.getIcon(file, 0) }
     .getOrElse(throw new AssertionError("dbt file icon provider is not registered"))

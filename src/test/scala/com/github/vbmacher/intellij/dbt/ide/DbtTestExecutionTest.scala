@@ -2,36 +2,29 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.JsonParser
-import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.PlatformTestUtil
 import org.junit.Assert._
+
 import java.nio.file.{Files, Path}
 import java.time.Instant
 import scala.jdk.CollectionConverters._
 
-/** Real managed-process execution and Community native test-tree fixtures. No warehouse or dbt installation is used. */
-/** Contract: features/test-execution.md and execution-evidence.md: exact reruns, context and result provenance. */
-final class DbtTestExecutionTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def await(message: String)(condition: => Boolean): Unit =
-    PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 20)
-  private def temporary(): Path = {
-    val path = Files.createTempDirectory("dbt execution evidence ")
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(path.toFile)); path
-  }
+/**
+ * Contract: features/test-execution.md and execution-evidence.md: test discovery, exact reruns, context and result provenance.
+ * Real managed-process execution and Community native test-tree fixtures. No warehouse or dbt installation is used.
+ */
+final class DbtTestExecutionTest extends DbtTestCase {
+  private def temporary(): Path = tempDirectory("dbt execution evidence ")
   private def artifact(path: Path, results: String, invocation: String = "run-1", target: String = "dev", kind: String = "run-results/v6"): Unit = {
     Files.createDirectories(path.getParent)
     Files.writeString(path, s"""{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/$kind.json","invocation_id":"$invocation","generated_at":"${Instant.now}"},"args":{"target":"$target"},"results":$results}""")
   }
-  private def workspace = DbtWorkspace.get(getProject)
   private def command(directory: Path, script: Path, mode: String = "run"): DbtCommand =
     DbtCommand(Vector(script.toString), DbtCommandRequest(DbtCommandAction.Test, extraArguments = Vector(mode)), directory.toString,
       Map("DBT_TARGET_PATH" -> directory.resolve("target").toString, "DBT_PROFILES_DIR" -> directory.resolve("profiles").toString),
       "dev", notifySystem = false, directory.resolve("target").toString,
       Vector(workspace.roots.head.directory.getPath, "dev", "configuration"))
   private def fake(directory: Path): Path = {
-    val script = directory.resolve("fake dbt")
-    Files.writeString(script, """#!/usr/bin/python3
+    fakeTool(directory.resolve("fake dbt"), """#!/usr/bin/python3
 import json,os,sys,time,datetime
 with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'profiles':os.environ.get('DBT_PROFILES_DIR')},f)
 if 'show' in sys.argv:
@@ -47,7 +40,6 @@ if 'no-write' not in sys.argv:
   json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/run-results/v6.json','invocation_id':'current-run','generated_at':datetime.datetime.now(datetime.timezone.utc).isoformat()},'args':{'target':'dev'},'results':[{'unique_id':'test.analytics.check_orders','status':'fail' if 'fail' in sys.argv else 'pass','message':'3 unexpected rows','failures':3,'execution_time':.02,'relation_name':'audit.failed_orders'}]},f)
 sys.exit(1 if 'fail' in sys.argv else 0)
 """)
-    script.toFile.setExecutable(true); script
   }
   def testSupportedArtifactStatesAndMalformedPartialResults(): Unit = {
     val path = temporary().resolve("run_results.json")
@@ -211,6 +203,113 @@ unit_tests:
     assertEquals(captured.environment("DBT_PROFILES_DIR"), invoked.get("profiles").getAsString)
   }
 
+  def testMixedMalformedResultRecordsAreExplicitlyPartialWithoutDroppingValidEvidence(): Unit = {
+    val directory = tempDirectory("dbt partial evidence ")
+    val path = directory.resolve("run_results.json")
+    def write(results: String): Unit = Files.writeString(path,
+      s"""{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/run-results/v6.json","invocation_id":"run-1","generated_at":"2026-10-18T10:00:00Z"},"args":{"target":"dev"},"results":$results}""")
+    write("""[{"unique_id":"model.analytics.orders","status":"success"},null,7]""")
+    val partial = DbtExecutionEvidence.parse(path, Vector("root"), "dev")
+    assertTrue(partial.problem, partial.problem.contains("Partial results"))
+    assertEquals(Vector("model.analytics.orders"), partial.results.map(_.id))
+    assertEquals("passed", partial.results.head.status)
+    write("null")
+    assertTrue(DbtExecutionEvidence.parse(path, Vector("root"), "dev").problem.contains("Partial results"))
+    write("[]")
+    assertEquals("A genuinely empty result array remains distinguishable from malformed records", "",
+      DbtExecutionEvidence.parse(path, Vector("root"), "dev").problem)
+  }
+
+  def testTestOnlyFailureBadgeRetainsExactProvenanceWithoutClaimingModelBuildSuccess(): Unit = {
+    project()
+    val file = add("models/orders.sql", "select 1 as id")
+    val w = workspace
+    val model = w.codeSymbols(file).find(_.kind == "model").get
+    val definition = DbtTestDefinition("test.analytics.unique_orders.hash", "unique orders", "Data tests", model.uniqueId,
+      w.owner(model).get.directory.getPath, file.getVirtualFile, 0, "fqn:analytics.unique_orders", Vector(model.uniqueId))
+    val execution = DbtExecutionRun(Vector("root", "prod"), "prod", "exact-test-invocation", "2026-10-18T10:00:00Z",
+      "/project/target/run_results.json", Vector(DbtExecutionResult(definition.id, "failed", "3 duplicate ids", 3)))
+    val overlay = getProject.getService(classOf[DbtExecutionEvidence]).overlay(model, Vector(execution), Vector(definition))
+    assertEquals("unknown", overlay.get("status").getAsString)
+    assertEquals("Not run / result unavailable", overlay.get("label").getAsString)
+    assertEquals(1, overlay.get("failingTests").getAsInt)
+    val details = overlay.get("details").getAsString
+    Vector("prod", "exact-test-invocation", execution.timestamp, execution.artifact, definition.id, "3 duplicate ids").foreach(value =>
+      assertTrue(value + " should be present in badge details: " + details, details.contains(value)))
+    val anotherVersion = model.copy(version = Some("2"))
+    assertEquals(0, getProject.getService(classOf[DbtExecutionEvidence]).overlay(anotherVersion, Vector(execution), Vector(definition))
+      .get("failingTests").getAsInt)
+    val freshPass = execution.copy(invocation = "new-run", results = Vector(DbtExecutionResult(definition.id, "passed", "")))
+    assertEquals(0, getProject.getService(classOf[DbtExecutionEvidence]).overlay(model, Vector(freshPass, execution), Vector(definition))
+      .get("failingTests").getAsInt)
+  }
 
 
+  def testSourceOnlyTestFailureFlowsThroughManagedExecutionIntoTheExactModelGraphBadge(): Unit = {
+    project()
+    val modelFile = add("models/stg_orders.sql", "select 1 as id")
+    val otherFile = add("models/other_model.sql", "select 2 as id")
+    add("tests/check_orders.sql", "select * from {{ ref('stg_orders') }} where id is null")
+    add("independent/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
+    add("independent/models/stg_orders.sql", "select 3 as id")
+    add("independent/models/other_model.sql", "select 4 as id")
+    add("independent/tests/check_orders.sql", "select * from {{ ref('other_model') }} where id is null")
+    val w = workspace
+    val root = w.root(modelFile).get
+    val model = w.codeSymbols(modelFile).find(_.kind == "model").get
+    val definitions = DbtTestDiscovery.discover(w)
+    val test = definitions.find(t => t.root == root.directory.getPath && t.id == "test.analytics.check_orders").get
+    assertEquals(Vector(model.uniqueId), test.dependencies)
+    assertEquals("Source declaration", test.provenance)
+    assertTrue("No manifest containing a test identity is needed", root.setting("manifest").flatMap(root.psiFile).isEmpty)
+
+    val directory = tempDirectory("dbt source test badge ")
+    Files.writeString(directory.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
+    val executable = fakeTool(directory.resolve("fake dbt"), """#!/usr/bin/python3
+import datetime,json,os,sys
+os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
+with open(os.path.join(os.environ['DBT_TARGET_PATH'],'run_results.json'),'w') as output:
+ json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/run-results/v6.json','invocation_id':'source-only-test-run','generated_at':datetime.datetime.now(datetime.timezone.utc).isoformat()},'args':{'target':'dev'},'results':[{'unique_id':'test.analytics.check_orders','status':'fail','failures':3,'message':'3 invalid orders'}]},output)
+sys.exit(1)
+""")
+    root.runOptions.executable = executable.toString
+    root.runOptions.projectRoot = directory.toString
+    root.runOptions.target = "dev"
+    root.runOptions.notifications = false
+    val command = DbtCommand.create(w, DbtRunSelection.all(w, root.directory.getPath).get, "Test", fullRefresh = false).toOption.get
+    val runner = newRunner(service = true)
+    var completed = Option.empty[DbtExecutionRun]
+    runner.listen(getTestRootDisposable, event => if (!event.running) completed = event.execution)
+    assertTrue(runner.start(command))
+    await("A source-only test writes a managed failure result")(completed.nonEmpty && !runner.isRunning)
+    assertEquals(Vector("test.analytics.check_orders"), completed.get.results.map(_.id))
+    assertEquals("failed", completed.get.results.head.status)
+    assertEquals("", completed.get.problem)
+    val graph = DbtGraphData.build(workspace, None, 5, 5)
+    val nodes = graph.payload.getAsJsonArray("nodes").asScala.map(_.getAsJsonObject).toVector
+    def execution(id: String) = nodes.find(_.get("id").getAsString == id).get.getAsJsonObject("execution")
+    val badge = execution(DbtResourceIdentity.key(w, model))
+    assertEquals(1, badge.get("failingTests").getAsInt)
+    assertEquals("unknown", badge.get("status").getAsString)
+    assertTrue(badge.get("details").getAsString.contains("source-only-test-run"))
+    val other = w.codeSymbols(otherFile).find(_.kind == "model").get
+    assertEquals("A same-name test in an independent project must not attach this run to another model", 0,
+      execution(DbtResourceIdentity.key(w, other)).get("failingTests").getAsInt)
+    assertTrue(nodes.filter(_.get("id").getAsString.contains("/independent|")).forall(n => n.getAsJsonObject("execution").get("failingTests").getAsInt == 0))
+  }
+
+  def testSourceDependenciesRetainExplicitPackageVersionAndSourceIdentityWithoutGuessingDynamicRefs(): Unit = {
+    project()
+    add("models/orders_v1.sql", "select 1 as id")
+    add("models/orders_v2.sql", "select 2 as id")
+    add("models/schema.yml", "models: [{name: orders, latest_version: 2, versions: [{v: 1, defined_in: orders_v1}, {v: 2, defined_in: orders_v2}]}]\nsources: [{name: raw, tables: [{name: orders}]}]\n")
+    add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    add("dbt_packages/util/models/orders.sql", "select 3 as id")
+    add("tests/check_exact.sql", "select * from {{ ref('orders', v=1) }} union all select * from {{ ref('util', 'orders') }} union all select * from {{ source('raw', 'orders') }}")
+    add("tests/check_dynamic.sql", "select * from {{ ref(var('runtime_model')) }}")
+    val definitions = DbtTestDiscovery.discover(workspace)
+    assertEquals(Set("model.analytics.orders.v1", "model.util.orders", "source.analytics.raw.orders"),
+      definitions.find(_.id == "test.analytics.check_exact").get.dependencies.toSet)
+    assertTrue(definitions.find(_.id == "test.analytics.check_dynamic").get.dependencies.isEmpty)
+  }
 }

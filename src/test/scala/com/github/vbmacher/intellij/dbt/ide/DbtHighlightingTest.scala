@@ -17,7 +17,7 @@ import org.junit.Assert._
 import java.util.concurrent.{Callable, TimeUnit}
 import scala.jdk.CollectionConverters._
 
-final class DbtHighlightingTest extends DbtCodeInsightTestCase {
+final class DbtHighlightingTest extends DbtTestCase {
   override protected def open(file: PsiFile, offset: Int): Unit = {
     super.open(file, offset)
     val highlighter = EditorHighlighterFactory.getInstance.createEditorHighlighter(getProject, file.getVirtualFile)

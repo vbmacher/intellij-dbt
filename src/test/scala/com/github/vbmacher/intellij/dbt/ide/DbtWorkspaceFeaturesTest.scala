@@ -1,19 +1,25 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
+import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigation, DbtSqlAnalysis}
 import com.github.vbmacher.intellij.dbt.project._
-import com.google.gson.{JsonArray, JsonObject}
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.util.TextRange
+import com.intellij.ide.structureView.{StructureViewTreeElement, TreeBasedStructureViewBuilder}
+import com.intellij.mock.Mock
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.fileEditor.{FileEditorManager, FileEditorManagerListener}
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.registry.Registry
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.testFramework.ServiceContainerUtil
+import com.intellij.ui.jcef.JBCefApp
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.junit.Assert._
+
 import java.util.concurrent.{Callable, TimeUnit}
 import scala.jdk.CollectionConverters._
 
 /** Fixtures describe visible resource identities and metadata rather than the implementation's internal steps. */
-final class DbtWorkspaceFeaturesTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def workspace = DbtWorkspace.get(getProject)
+final class DbtWorkspaceFeaturesTest extends DbtTestCase {
   private def resource(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
   def testVirtualEnvironmentsDoNotIntroduceDbtProjectsOrWorkspaceFiles(): Unit = {
     project()
@@ -411,4 +417,121 @@ select * from {{ source('raw', 'missing_table') }}
     }
   }
 
+  def testResourceDocumentationIncludesAllColumnsAndTestsWithoutASidebar(): Unit = {
+    project(); add("models/orders.sql", "select 1")
+    add("models/schema.yml", "models:\n- name: orders\n  description: Orders\n  columns:\n" +
+      (1 to 20).map(i => s"  - name: column_$i\n    description: Description $i\n").mkString + "  data_tests: [unique]\n")
+    val w = workspace; val model = w.symbols.find(s => s.kind == "model" && s.isCode).get
+    val html = DbtDocumentation.render(w, model)
+    assertTrue(html.contains("column_20")); assertTrue(html.contains("Description 20")); assertTrue(html.contains("unique"))
+    assertFalse(html.contains("open the Lineage documentation sidebar"))
+    val target = new DbtBuiltinPsiDocumentationTargetProvider().documentationTarget(model.element, model.element)
+    assertNotNull("Declarations support native Quick Documentation", target)
+    assertNotNull(target.createPointer().dereference())
+  }
+  def testStructureViewNavigatesCteDefinitionsAndIgnoresUnrelatedSql(): Unit = {
+    project()
+    val file = configure("models/orders.sql", "with a as (select 1 as id), b as (select id from a) select * from b<caret>")
+    val factory = new DbtSqlStructureViewFactory
+    val builder = factory.getStructureViewBuilder(file).asInstanceOf[TreeBasedStructureViewBuilder]
+    val model = builder.createStructureViewModel(myFixture.getEditor)
+    try {
+      val nodes = model.getRoot.getChildren.map(_.asInstanceOf[StructureViewTreeElement])
+      assertEquals(Vector("a", "b"), nodes.map(_.getPresentation.getPresentableText.split("\\.").last).toVector)
+      nodes(1).navigate(true)
+      assertEquals(file.getText.indexOf("b as"), myFixture.getCaretOffset)
+    } finally model.dispose()
+    val plain = add("elsewhere/plain.sql", "select 1")
+    assertNull(factory.getStructureViewBuilder(plain))
+  }
+  def testGeneratedSqlOpensInReadOnlyEditorAndGenerationActionsAreNative(): Unit = {
+    project(); val source = configure("models/orders.sql", "select 1<caret>")
+    DbtSqlEditors.open(getProject, "orders compiled", "select 2")
+    val generated = FileEditorManager.getInstance(getProject).getSelectedFiles.head
+    assertFalse(generated.isWritable)
+    assertEquals("select 2", new String(generated.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8))
+    assertEquals("select 1", source.getText)
+    Vector("Dbt.GenerateColumns", "Dbt.InheritDescriptions", "Dbt.EditProperties", "Dbt.OpenCompiledSql", "Dbt.CompareSql")
+      .foreach(id => assertNotNull(id, ActionManager.getInstance.getAction(id)))
+  }
+  def testNativeDependencyHierarchyPreservesValueAndFilterOrigins(): Unit = {
+    project()
+    add("models/base.sql", "select 1 as id, 1 as active")
+    val file = add("models/report.sql", "select id from {{ ref('base') }} where active = 1")
+    val w = workspace; val model = w.codeSymbols(file).head
+    val resourceEdges = DbtHierarchy.related(w, model, downstream = false)
+    assertTrue(resourceEdges.exists(_._1.name == "base"))
+    val column = DbtSqlAnalysis.get(w, file).get.columns.head
+    val symbol = DbtSymbol("sql_projection", column.name, model.namespace, file, column.range, owner = model.name)
+    val origins = DbtHierarchy.related(w, symbol, downstream = false)
+    assertTrue(origins.exists(_._2.startsWith("value")))
+    assertTrue(origins.exists(_._2.startsWith("filter")))
+  }
+
+  private var ui: Disposable = _
+  override protected def tearDown(): Unit = try if (ui != null) Disposer.dispose(ui) finally super.tearDown()
+
+  private def status(panel: DbtToolWindowPanel): String = panel.lastSnapshot.map { snapshot =>
+    val nodes = snapshot.payload.getAsJsonArray("nodes")
+    val focus = Option(snapshot.payload.get("focus")).map(_.getAsString).getOrElse("")
+    val name = snapshot.targets.get(focus).map(_.symbol.presentableText).getOrElse("None")
+    "Lineage focus: " + name + " Resources: " + nodes.size()
+  }.getOrElse("")
+
+  private def setupRestoringEditor(): (DbtToolWindowPanel, VirtualFile => Unit, VirtualFile) = {
+    ui = Disposer.newDisposable()
+    Disposer.register(getTestRootDisposable, ui)
+    project()
+    add("models/events.sql", "select 1")
+    val model = add("models/orders.sql", "select * from {{ ref('events') }}").getVirtualFile
+    add("models/report.sql", "select * from {{ ref('orders') }}")
+    add("models/unrelated.sql", "select 2")
+    var selected = Option.empty[VirtualFile]
+    ServiceContainerUtil.replaceService(getProject, classOf[FileEditorManager], new Mock.MyFileEditorManager {
+      override def getProject: com.intellij.openapi.project.Project = DbtWorkspaceFeaturesTest.this.getProject
+      override def getComposite(file: VirtualFile): com.intellij.openapi.fileEditor.impl.EditorComposite = null
+      override def getOpenFiles: Array[VirtualFile] = selected.toArray
+      override def getSelectedFiles: Array[VirtualFile] = selected.toArray
+    }, ui)
+    newRunner(service = true, parent = ui)
+    // Keep graph refresh tests independent of native browser availability and its ready callback.
+    val testMode = Registry.get("ide.browser.jcef.testMode.enabled")
+    val enabled = Registry.get("ide.browser.jcef.enabled")
+    val wasTestMode = testMode.asBoolean(); val wasEnabled = enabled.asBoolean()
+    val panel = try {
+      testMode.setValue(true); enabled.setValue(false)
+      new DbtToolWindowPanel(getProject)
+    } finally {
+      enabled.setValue(wasEnabled)
+      JBCefApp.isSupported() // Restore the cached support result while test mode still forces a fresh check.
+      testMode.setValue(wasTestMode)
+    }
+    Disposer.register(ui, panel)
+    panel.refresh(follow = true)
+    await("Initial refresh precedes editor restoration")(status(panel).contains("Lineage focus: None") && status(panel).contains("Resources: 4"))
+    (panel, file => selected = Option(file), model)
+  }
+
+  def testBackgroundRefreshRetainsInitialModelFocusWhenItReplacesAFollowRequest(): Unit = {
+    val (panel, select, model) = setupRestoringEditor()
+    select(model)
+    panel.refresh(follow = true)
+    panel.refresh(follow = false)
+    await("Restored model reaches the panel")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue("Show the model's three connected resources, excluding the unrelated model", status(panel).contains("Resources: 3"))
+    val unrelated = model.getParent.findChild("unrelated.sql")
+    select(unrelated)
+    panel.refresh(follow = false)
+    await("Background refresh sees the new editor")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue("An established graph focus survives background refreshes", status(panel).contains("Resources: 3"))
+  }
+
+  def testRestoredEditorOpeningInitializesFocusWithoutASelectionChange(): Unit = {
+    val (panel, select, model) = setupRestoringEditor()
+    select(model)
+    getProject.getMessageBus.syncPublisher(FileEditorManagerListener.FILE_EDITOR_MANAGER)
+      .fileOpened(FileEditorManager.getInstance(getProject), model)
+    await("Opening the restored editor refreshes the panel")(status(panel).contains("Lineage focus: analytics.orders"))
+    assertTrue(status(panel).contains("Resources: 3"))
+  }
 }

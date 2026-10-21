@@ -3,23 +3,29 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.application.WriteAction
+import com.intellij.psi.{PsiErrorElement, PsiFile, PsiFileFactory}
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.refactoring.rename.RenameProcessor
+import org.jetbrains.yaml.YAMLFileType
+import org.jetbrains.yaml.psi.YAMLMapping
 import org.junit.Assert._
 
-final class DbtWorkflowTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def w = DbtWorkspace.get(getProject)
-  private def model(name: String) = w.symbols.find(s => s.isCode && s.name == name).get
+import scala.jdk.CollectionConverters._
+
+/** End-to-end authoring workflows: rename, resource creation, properties editing, previews and selection commands. */
+final class DbtWorkflowTest extends DbtTestCase {
+  private def model(name: String) = workspace.symbols.find(s => s.isCode && s.name == name).get
   def testSelectionIntersectionExcludesAndNamedSelectors(): Unit = {
     project()
     add("models/a.sql", "{{ config(tags=['finance']) }} select 1")
     add("models/b.sql", "select * from {{ ref('a') }}")
     add("models/c.sql", "select 3")
     add("selectors.yml", "selectors:\n- name: finance\n  definition:\n    union:\n    - a+\n    - exclude: b\n")
-    assertEquals(Set("a", "b"), DbtSelection.resolve(w, w.roots.head, "a+").resources.map(_.name).toSet)
-    assertEquals(Vector("a"), DbtSelection.resolve(w, w.roots.head, "selector:finance").resources.map(_.name))
-    assertTrue(DbtSelection.resolve(w, w.roots.head, "unsupported:foo").problems.nonEmpty)
+    assertEquals(Set("a", "b"), DbtSelection.resolve(workspace, workspace.roots.head, "a+").resources.map(_.name).toSet)
+    assertEquals(Vector("a"), DbtSelection.resolve(workspace, workspace.roots.head, "selector:finance").resources.map(_.name))
+    assertTrue(DbtSelection.resolve(workspace, workspace.roots.head, "unsupported:foo").problems.nonEmpty)
   }
   def testNativeRenameUpdatesOnlyResolvingReferencesAndYaml(): Unit = {
     project()
@@ -35,11 +41,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     assertTrue(properties.getText.contains("# preserve"))
     assertTrue(source.getText.contains("alias='warehouse_orders'"))
     assertTrue(unrelated.getText.contains("ref('orders')"))
-    val undo = com.intellij.openapi.command.undo.UndoManager.getInstance(getProject)
-    assertTrue(undo.isUndoAvailable(null))
-    val previous = com.intellij.openapi.ui.TestDialogManager.setTestDialog(com.intellij.openapi.ui.TestDialog.OK)
-    try undo.undo(null) finally com.intellij.openapi.ui.TestDialogManager.setTestDialog(previous)
-    com.intellij.psi.PsiDocumentManager.getInstance(getProject).commitAllDocuments()
+    undo(null)
     assertEquals("orders.sql", source.getName); assertTrue(consumer.getText.contains("ref('orders')"))
   }
   def testVersionFamilyRenamePreservesDefinedInAndPhysicalAliases(): Unit = {
@@ -48,7 +50,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     val second = add("models/custom_orders.sql", "{{ config(alias='physical_orders') }} select 2 as id")
     val yaml = add("models/schema.yml", "models:\n- name: orders\n  latest_version: 2\n  versions:\n  - v: 1\n  - {v: 2, defined_in: custom_orders}\n")
     val report = add("models/report.sql", "select * from {{ ref('orders', v=1) }} union all select * from {{ ref('orders') }}")
-    val selected = w.symbols.find(s => s.isCode && s.name == "orders" && s.version.contains("1")).get
+    val selected = workspace.symbols.find(s => s.isCode && s.name == "orders" && s.version.contains("1")).get
     new RenameProcessor(getProject, selected.element, "customer_orders", false, false).run()
     assertEquals("customer_orders_v1.sql", first.getName); assertEquals("custom_orders.sql", second.getName)
     assertTrue(second.getText.contains("alias='physical_orders'")); assertTrue(yaml.getText.contains("name: customer_orders"))
@@ -60,7 +62,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     val source = add("models/orders.sql", "select customer_id from {{ source('raw', 'events') }}")
     val yaml = add("models/schema.yml", "models: [{name: orders, columns: [{name: customer_id}]}]\nsources: [{name: raw, tables: [{name: events, columns: [{name: customer_id}]}]}]\n")
     val report = add("models/report.sql", "select customer_id from {{ ref('orders') }}")
-    val column = w.columns(model("orders")).find(_.name == "customer_id").get
+    val column = workspace.columns(model("orders")).find(_.name == "customer_id").get
     new RenameProcessor(getProject, column.element, "customer_key", false, false).run()
     assertEquals("select customer_id as customer_key from {{ source('raw', 'events') }}", source.getText)
     assertEquals("select customer_key from {{ ref('orders') }}", report.getText)
@@ -79,34 +81,34 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     val table = DbtCreateResourceFix.proposal(consumer, myFixture.getCaretOffset).get
     assertTrue(DbtCreateResourceFix.create(table, table.path).isRight)
     assertTrue(source.getText.contains("# retain")); assertTrue(source.getText.contains("owner: Finance"))
-    assertTrue(w.symbols.exists(s => s.kind == "source_table" && s.name == "new_table"))
+    assertTrue(workspace.symbols.exists(s => s.kind == "source_table" && s.name == "new_table"))
   }
   def testPropertiesEditPreservesCommentsAndCustomFields(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id, 2 as amount")
     val properties = add("models/schema.yml", "# preserve this\nmodels:\n  - name: orders\n    meta: {owner: Finance}\n    description: \"{{ doc('orders') }}\"\n    columns:\n      - name: id\n        tests: [unique]\n")
     var editPlan: Either[String, DbtPropertyEdit] = Left("not calculated")
-    WriteAction.run(() => editPlan = DbtPropertiesEditor.plan(w, model("orders"), "{{ doc('orders') }}", Vector(
+    WriteAction.run(() => editPlan = DbtPropertiesEditor.plan(workspace, model("orders"), "{{ doc('orders') }}", Vector(
       DbtColumnData("id", "int", "Identifier"), DbtColumnData("amount", "decimal", "Amount")), Vector.empty, Vector.empty))
     val plan = editPlan.toOption.get
     assertTrue(plan.after, plan.after.contains("# preserve this")); assertTrue(plan.after, plan.after.contains("owner: Finance"))
     assertTrue(plan.after, plan.after.contains("tests: [unique]")); assertTrue(plan.after, plan.after.contains("doc('orders')"))
     assertEquals(plan.before, properties.getText)
     plan.apply(getProject)
-    assertEquals(Set("id", "amount"), w.columns(model("orders")).map(_.name).toSet)
-    assertEquals("Amount", DbtResourceData.get(w, model("orders")).columns.find(_.name == "amount").get.description)
+    assertEquals(Set("id", "amount"), workspace.columns(model("orders")).map(_.name).toSet)
+    assertEquals("Amount", DbtResourceData.get(workspace, model("orders")).columns.find(_.name == "amount").get.description)
   }
   def testInheritedDescriptionsRequireProvenPassthrough(): Unit = {
     project()
     add("models/orders.sql", "select 1 as id, 2 as amount")
     add("models/schema.yml", "models: [{name: orders, columns: [{name: id, description: Identifier}, {name: amount, description: Amount}]}]")
     add("models/report.sql", "with a as (select id, amount * 2 as gross from {{ ref('orders') }}) select id as key, gross from a")
-    assertEquals(Vector("key"), DbtColumnLineage.inherited(w, model("report")).map(_._1))
+    assertEquals(Vector("key"), DbtColumnLineage.inherited(workspace, model("report")).map(_._1))
   }
   def testCtePreviewUsesOnlyDependenciesAndKeepsJinja(): Unit = {
     project()
     val file = configure("models/report.sql", "with a as (select * from {{ ref('orders') }}), unused as (select 9), b as (select * from a) select * from b<caret>")
-    val analysis = DbtSqlAnalysis.get(w, file).get
+    val analysis = DbtSqlAnalysis.get(workspace, file).get
     val sql = DbtCteInspection.sql(file.getText, analysis, analysis.ctes.find(_.name == "b").get).toOption.get
     assertTrue(sql.contains("ref('orders')")); assertFalse(sql.contains("unused")); assertTrue(sql.endsWith("select * from b"))
     assertTrue(DbtCteInspection.sql(file.getText, analysis, analysis.ctes.find(_.name == "b").get, count = true).toOption.get.contains("count(*) as full_row_count"))
@@ -123,19 +125,19 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     add("models/orders.sql", "select 1 as id")
     add("dbt_packages/pkg/dbt_project.yml", "name: pkg\n")
     add("dbt_packages/pkg/models/orders.sql", "select 2 as id")
-    val root = w.roots.find(_.name == "analytics").get
+    val root = workspace.roots.find(_.name == "analytics").get
     val options = root.runOptions; options.selection = "orders"
-    val command = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
+    val command = DbtCommand.selection(workspace, root, "Build", fullRefresh = false).toOption.get
     assertTrue(command.arguments.contains("fqn:analytics.orders")); assertFalse(command.arguments.contains("fqn:pkg.orders"))
-    val modelSelection = DbtRunSelection.available(w).find(_.path == root.directory.getPath + "/models/orders.sql").get
-    assertEquals("select 1 as id", DbtCommand.create(w, modelSelection, "Preview", fullRefresh = false).toOption.get.sourceSql)
+    val modelSelection = DbtRunSelection.available(workspace).find(_.path == root.directory.getPath + "/models/orders.sql").get
+    assertEquals("select 1 as id", DbtCommand.create(workspace, modelSelection, "Preview", fullRefresh = false).toOption.get.sourceSql)
     options.stateDirectory = "target"; options.defer = true
-    assertTrue(DbtCommand.selection(w, root, "Build", fullRefresh = false).left.toOption.get.contains("separate"))
+    assertTrue(DbtCommand.selection(workspace, root, "Build", fullRefresh = false).left.toOption.get.contains("separate"))
     options.stateDirectory = "baseline"
     add("baseline/manifest.json", "{\"metadata\":{\"dbt_schema_version\":\"https://schemas.getdbt.com/dbt/manifest/v12.json\"},\"nodes\":{\"model.analytics.orders\":{\"raw_code\":\"select 0 as id\",\"columns\":{\"id\":{}},\"relation_name\":\"PROD.ANALYTICS.ORDERS\"}}}")
-    val changes = DbtState.compare(w, root).toOption.get
+    val changes = DbtState.compare(workspace, root).toOption.get
     assertTrue(changes.exists(c => c.id == "model.analytics.orders" && c.status == "modified"))
-    val deferred = DbtCommand.selection(w, root, "Build", fullRefresh = false).toOption.get
+    val deferred = DbtCommand.selection(workspace, root, "Build", fullRefresh = false).toOption.get
     assertTrue(deferred.arguments.contains("--defer")); assertTrue(deferred.arguments.contains(root.directory.getPath + "/baseline"))
   }
   def testCteSessionInvalidatesDescendantsAndTargetButKeepsIndependentCache(): Unit = {
@@ -168,7 +170,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
   def testQuotedCteRenamePreservesQuotesAndPhysicalColumnNames(): Unit = {
     project()
     val file = add("models/orders.sql", "with \"Orders\" as (select 1 as physical_id) select physical_id from \"Orders\"")
-    val definition = DbtSqlAnalysis.get(w, file).get.declarations.find(_.kind == "cte").get
+    val definition = DbtSqlAnalysis.get(workspace, file).get.declarations.find(_.kind == "cte").get
     new RenameProcessor(getProject, definition.element, "customer_orders", false, false).run()
     assertEquals("with \"customer_orders\" as (select 1 as physical_id) select physical_id from \"customer_orders\"", file.getText)
   }
@@ -177,7 +179,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     add("models/upstream.sql", "select 1 as id")
     val source = add("models/report.sql", "select id from {{ ref('upstream') }}")
     val downstream = add("models/downstream.sql", "select id from {{ ref('report') }}")
-    val column = w.columns(model("report")).find(_.name == "id").get
+    val column = workspace.columns(model("report")).find(_.name == "id").get
     new RenameProcessor(getProject, column.element, "customer_id", false, false).run()
     assertEquals("select id as customer_id from {{ ref('upstream') }}", source.getText)
     assertEquals("select customer_id from {{ ref('report') }}", downstream.getText)
@@ -187,7 +189,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     val source = add("macros/money.sql", "{% macro money(amount) %}{{ amount }}{% endmacro %}\n{% macro other() %}2{% endmacro %}")
     val yaml = add("macros/schema.yml", "macros: [{name: money, description: Converts money}]")
     val report = add("models/report.sql", "select {{ money(1) }} as amount")
-    val definition = w.symbols.find(s => s.kind == "macro" && s.isProperty && s.name == "money").get
+    val definition = workspace.symbols.find(s => s.kind == "macro" && s.isProperty && s.name == "money").get
     new RenameProcessor(getProject, definition.element, "currency", false, false).run()
     assertTrue(source.getText, source.getText.contains("macro currency(amount)"))
     assertTrue(source.getText, source.getText.contains("macro other()"))
@@ -199,37 +201,37 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     add("models/orders_v1.sql", "select 1 as id")
     add("models/orders_v2.sql", "select 2 as id")
     val source = add("models/schema.yml", "models:\n  - name: orders\n    description: Old description # preserve inline\n    columns:\n      - name: id\n        data_type: &identifier_type int\n        description: Identifier\n        tests: [unique]\n        meta: {owner: Finance}\n    versions: [{v: 1}, {v: 2}]\n")
-    val resource = w.symbols.find(s => s.isCode && s.name == "orders" && s.version.contains("2")).get
-    val columns = DbtResourceData.get(w, resource).columns
+    val resource = workspace.symbols.find(s => s.isCode && s.name == "orders" && s.version.contains("2")).get
+    val columns = DbtResourceData.get(workspace, resource).columns
     var planned: Either[String, DbtPropertyEdit] = Left("not planned")
-    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, resource, "Version two", columns, Vector.empty, Vector.empty))
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(workspace, resource, "Version two", columns, Vector.empty, Vector.empty))
     val after = planned.toOption.get.after
     assertEquals(1, "columns:".r.findAllIn(after).size)
     assertTrue(after, after.contains("&identifier_type int")); assertTrue(after, after.contains("tests: [unique]"))
     assertTrue(after, after.contains("# preserve inline")); assertTrue(after, after.contains("owner: Finance"))
     assertEquals("Source must remain unchanged before Apply", source.getText, planned.toOption.get.before)
-    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, resource, "Version two", columns.map(_.copy(description = "Changed")), Vector.empty, Vector.empty))
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(workspace, resource, "Version two", columns.map(_.copy(description = "Changed")), Vector.empty, Vector.empty))
     assertTrue(planned.isLeft)
   }
   def testNewSeedPropertiesUseTheSeedSection(): Unit = {
     project()
     add("seeds/countries.csv", "code,name\nSK,Slovakia\n")
-    val seed = w.symbols.find(s => s.isCode && s.kind == "seed").get
+    val seed = workspace.symbols.find(s => s.isCode && s.kind == "seed").get
     var planned: Either[String, DbtPropertyEdit] = Left("not planned")
-    WriteAction.run(() => planned = DbtPropertiesEditor.plan(w, seed, "Countries", Vector.empty, Vector.empty, Vector.empty))
+    WriteAction.run(() => planned = DbtPropertiesEditor.plan(workspace, seed, "Countries", Vector.empty, Vector.empty, Vector.empty))
     assertTrue(planned.toOption.get.after, planned.toOption.get.after.contains("seeds:"))
     assertFalse(planned.toOption.get.after.contains("models:"))
   }
   def testUnsafePhysicalColumnsAndExplicitCteColumnListsHaveNativeConflicts(): Unit = {
     project()
     val yaml = add("models/sources.yml", "sources: [{name: raw, tables: [{name: events, columns: [{name: event_id}]}]}]")
-    val column = w.symbols.find(s => s.kind == "column" && s.name == "event_id").get
+    val column = workspace.symbols.find(s => s.kind == "column" && s.name == "event_id").get
     val before = yaml.getText
     assertThrows(classOf[com.intellij.refactoring.BaseRefactoringProcessor.ConflictsInTestsException],
       () => new RenameProcessor(getProject, column.element, "event_key", false, false).run())
     assertEquals(before, yaml.getText)
     val file = add("models/report.sql", "with x(x) as (select 1 as value) select * from x")
-    val analysis = DbtSqlAnalysis.get(w, file).get
+    val analysis = DbtSqlAnalysis.get(workspace, file).get
     val cte = analysis.declarations.find(_.kind == "cte").get
     assertEquals(file.getText.indexOf("x(x)"), cte.range.getStartOffset)
     assertTrue(analysis.issues.exists(_.startsWith("Explicit CTE column lists")))
@@ -241,7 +243,7 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     project()
     val source = add("models/orders.sql", "select 1 as id")
     val yaml = add("models/schema.yml", "models: [{name: orders, description: Orders}, {name: kept}]\n")
-    val property = w.symbols.find(s => s.isProperty && s.kind == "model" && s.name == "orders").get
+    val property = workspace.symbols.find(s => s.isProperty && s.kind == "model" && s.name == "orders").get
     val processor = com.intellij.refactoring.safeDelete.SafeDeleteProcessor.createInstance(getProject, null, Array(property.element), false, false, false)
     processor.setPreviewUsages(false); processor.run()
     assertFalse(source.isValid)
@@ -257,7 +259,80 @@ final class DbtWorkflowTest extends DbtCodeInsightTestCase {
     project()
     add("dbt_packages/pkg/dbt_project.yml", "name: pkg\n")
     add("dbt_packages/pkg/models/orders.sql", "select 1 as id")
-    val resource = w.symbols.find(s => s.isCode && s.namespace == "pkg" && s.name == "orders").get
-    assertTrue(DbtCteInspection.command(w, resource, "select 1").left.toOption.get.contains("installed-package context"))
+    val resource = workspace.symbols.find(s => s.isCode && s.namespace == "pkg" && s.name == "orders").get
+    assertTrue(DbtCteInspection.command(workspace, resource, "select 1").left.toOption.get.contains("installed-package context"))
+  }
+
+  private def parsed(text: String): PsiFile = {
+    val file = PsiFileFactory.getInstance(getProject).createFileFromText("review.yml", YAMLFileType.YML, text)
+    val errors = PsiTreeUtil.findChildrenOfType(file, classOf[PsiErrorElement]).asScala.toVector
+    assertTrue(text + "\nParser errors: " + errors.map(_.getErrorDescription).mkString(", "), errors.isEmpty)
+    file
+  }
+  private def orders(file: PsiFile): YAMLMapping = DbtYaml.items(DbtYaml.mapping(file).get, "models")
+    .find(m => DbtYaml.string(m, "name").contains("orders")).get
+
+  def testAddingDescriptionsToExistingFlowColumnsPreservesValidYamlFieldsCommentsAndUndo(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id, 2 as gross_amount, 'kept' as kept")
+    val before = """# retain file comment
+version: 2
+models:
+  - name: orders
+    description: Existing model
+    meta: {owner: Finance}
+    columns:
+      - {name: id, data_type: integer, meta: {flag: keep}} # identity comment
+      - {name: gross_amount, # retain amount comment
+         data_type: decimal,}
+      - {name: kept, data_type: varchar, description: Preserved}
+  - {name: unrelated, description: Unchanged, meta: {custom: retained}}
+"""
+    val source = add("models/schema.yml", before)
+    parsed(before)
+    val w = workspace
+    val resource = workspace.symbols.find(s => s.isCode && s.name == "orders").get
+    var result: Either[String, DbtPropertyEdit] = Left("not calculated")
+    WriteAction.run(() => result = DbtPropertiesEditor.plan(workspace, resource, "Existing model", Vector(
+      DbtColumnData("id", "integer", "Order identifier"), DbtColumnData("gross_amount", "decimal", ""),
+      DbtColumnData("kept", "varchar", "Preserved")), Vector.empty, Vector.empty))
+    val plan = result.fold(error => throw new AssertionError(error), identity)
+    assertEquals("Review must not change source", before, source.getText)
+    val mapping = orders(parsed(plan.after))
+    val columns = DbtYaml.items(mapping, "columns")
+    assertEquals(Vector("id", "gross_amount", "kept"), columns.flatMap(DbtYaml.string(_, "name")))
+    assertEquals(Vector("integer", "decimal", "varchar"), columns.flatMap(DbtYaml.string(_, "data_type")))
+    assertEquals(Vector("Order identifier", "", "Preserved"), columns.flatMap(DbtYaml.string(_, "description")))
+    assertEquals(Vector("name", "data_type", "meta", "description"), columns.head.getKeyValues.asScala.map(_.getKeyText).toVector)
+    assertEquals(Some("keep"), DbtYaml.map(columns.head, "meta").flatMap(DbtYaml.string(_, "flag")))
+    assertEquals(Some("Finance"), DbtYaml.map(mapping, "meta").flatMap(DbtYaml.string(_, "owner")))
+    Vector("# retain file comment", "# identity comment", "# retain amount comment",
+      "{name: unrelated, description: Unchanged, meta: {custom: retained}}").foreach(value => assertTrue(plan.after, plan.after.contains(value)))
+    open(source, 0)
+    plan.apply(getProject)
+    assertEquals(plan.after, source.getText)
+    assertEquals(Some("Order identifier"), DbtYaml.string(DbtYaml.items(orders(parsed(source.getText)), "columns").head, "description"))
+    undo()
+    assertEquals("One undo restores the entire prior YAML", before, source.getText)
+    parsed(source.getText)
+  }
+
+  def testAddingMultipleResourceKeysToFlowMappingRetainsSeparatorsAndCustomFields(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    val source = add("models/schema.yml", "models: [{name: orders, columns: [{name: id, data_type: integer}], meta: {custom: retained},}]\n")
+    val w = workspace
+    val resource = workspace.symbols.find(s => s.isCode && s.name == "orders").get
+    var result: Either[String, DbtPropertyEdit] = Left("not calculated")
+    WriteAction.run(() => result = DbtPropertiesEditor.plan(workspace, resource, "Orders", Vector(DbtColumnData("id", "integer", "Identifier")),
+      Vector("finance"), Vector("unique"), updateTags = true, updateTests = true))
+    val plan = result.fold(error => throw new AssertionError(error), identity)
+    val mapping = orders(parsed(plan.after))
+    assertEquals(Some("Orders"), DbtYaml.string(mapping, "description"))
+    assertEquals(Vector("finance"), DbtYaml.strings(mapping, "tags"))
+    assertEquals(Vector("unique"), DbtYaml.strings(mapping, "data_tests"))
+    assertEquals(Some("retained"), DbtYaml.map(mapping, "meta").flatMap(DbtYaml.string(_, "custom")))
+    assertEquals(Some("id"), DbtYaml.items(mapping, "columns").headOption.flatMap(DbtYaml.string(_, "name")))
+    assertEquals("Review is read-only", plan.before, source.getText)
   }
 }

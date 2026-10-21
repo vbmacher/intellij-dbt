@@ -1,14 +1,12 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtSettingsState}
 import com.intellij.lang.annotation.HighlightSeverity
 import org.jetbrains.yaml.schema.YamlJsonSchemaHighlightingInspection
 import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
 /** Exercise IntelliJ's actual YAML schema completion/inspection, including local $ref resolution. */
-final class DbtYamlSchemaAcceptanceTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
+final class DbtYamlSchemaAcceptanceTest extends DbtTestCase {
   private def details: String = {
     val service = com.jetbrains.jsonSchema.ide.JsonSchemaService.Impl.get(getProject)
     val file = myFixture.getFile

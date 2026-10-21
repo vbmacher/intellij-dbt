@@ -1,13 +1,12 @@
 package com.github.vbmacher.intellij.dbt.navigation.python
 
+import com.github.vbmacher.intellij.dbt.ide.DbtTestCase
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.intellij.codeInsight.navigation.CtrlMouseData
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationAction
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.util.TextRange
 import com.intellij.util.concurrency.AppExecutorUtil
-import com.intellij.psi.PsiFile
-import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.psi.search.searches.ReferencesSearch
 import org.junit.Assert._
 
@@ -15,11 +14,9 @@ import java.util.concurrent.{Callable, TimeUnit}
 import scala.jdk.CollectionConverters._
 
 /** Run with the free Python Community plugin enabled; the main suite also runs without it. */
-final class DbtPythonNavigationTest extends BasePlatformTestCase {
-  private def add(path: String, text: String): PsiFile = myFixture.addFileToProject(path, text)
+final class DbtPythonNavigationTest extends DbtTestCase {
   private def setupProject(): Unit = {
-
-    add("dbt_project.yml", "name: analytics\n")
+    bareProject()
     add("models/orders.sql", "select 1")
     add("models/schema.yml", "sources:\n- name: raw\n  tables:\n  - name: events\nmodels:\n- name: python_model\n  config:\n    region: us\n")
   }
@@ -118,10 +115,7 @@ final class DbtPythonNavigationTest extends BasePlatformTestCase {
     assertTrue(py.getText.contains("# dbt.ref('orders')"))
     assertTrue(py.getText.contains("note = \"orders\""))
     assertTrue(unrelated.getText.contains("return dbt.ref('orders')"))
-    val previous = com.intellij.openapi.ui.TestDialogManager.setTestDialog(com.intellij.openapi.ui.TestDialog.OK)
-    try com.intellij.openapi.command.undo.UndoManager.getInstance(getProject).undo(null)
-    finally com.intellij.openapi.ui.TestDialogManager.setTestDialog(previous)
-    com.intellij.psi.PsiDocumentManager.getInstance(getProject).commitAllDocuments()
+    undo(null)
     assertEquals("orders.sql", source.getName)
     assertEquals(before, py.getText)
     val restored = DbtNavigation.inFile(py).find(_.label == "orders").get.candidates.head
