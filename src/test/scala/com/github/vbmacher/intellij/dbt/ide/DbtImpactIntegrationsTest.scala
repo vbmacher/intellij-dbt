@@ -1,21 +1,18 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonObject, JsonParser}
 import org.junit.Assert._
+
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.nio.file.Files
 import java.time.Duration
 import scala.jdk.CollectionConverters._
 
-final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
-  private def workspace = DbtWorkspace.get(getProject)
-  private def root = workspace.roots.find(_.name == "analytics").get
+/** Impact review against a Git baseline, offline and Metabase consumers, and the local agent (MCP) server. */
+final class DbtImpactIntegrationsTest extends DbtTestCase {
   private def model(name: String) = workspace.symbols.find(s => s.name == name && s.isCode).get
-  override protected def tearDown(): Unit = try {
-    getProject.getService(classOf[DbtAgent]).stop()
-    getProject.getService(classOf[DbtConsumersSettings]).loadState(new DbtConsumersState)
-  } finally super.tearDown()
+  override protected def tearDown(): Unit = try getProject.getService(classOf[DbtAgent]).stop() finally super.tearDown()
 
   def testImpactComparisonDistinguishesAddRemoveMoveAndOutputChanges(): Unit = {
     val old = Vector(DbtImpactResource("model.a.orders.v1", "old.sql", "one", Vector("amount")),
@@ -244,8 +241,7 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
     try {
       val request = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + endpoint._2 + "\r\nContent-Length: 1000\r\n\r\n{"
       socket.getOutputStream.write(request.getBytes(java.nio.charset.StandardCharsets.UTF_8)); socket.getOutputStream.flush()
-      val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
-      while (service.activeRequestCount == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+      await("The stalled request reaches the agent", 2)(service.activeRequestCount > 0)
       assertEquals(1, service.activeRequestCount)
       service.stop()
       try assertEquals(-1, socket.getInputStream.read()) catch { case _: java.net.SocketException => () }
@@ -329,5 +325,24 @@ final class DbtImpactIntegrationsTest extends DbtCodeInsightTestCase {
       assertEquals(202, notificationStatus)
       assertEquals(400, send("{not json")._1)
     } finally service.stop()
+  }
+
+  /** Real Git reads use an isolated throwaway repository, never the user's index. */
+  def testSelectedRevisionReadsBaselineAndLeavesWorkingFilesUntouched(): Unit = {
+    val directory = tempDirectory("dbt-impact-git-")
+    def git(arguments: String*): String = DbtImpact.git(directory.toString, arguments.toVector).fold(error => throw new AssertionError(error), identity)
+    git("init", "--quiet")
+    val model = directory.resolve("orders.sql")
+    Files.writeString(model, "select 1 as amount\n")
+    git("add", "orders.sql")
+    git("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "user.name=dbt fixture", "-c", "user.email=dbt-fixture@example.test", "commit", "--quiet", "-m", "baseline fixture")
+    git("tag", "impact-baseline")
+    Files.writeString(model, "select 2 as gross_amount\n")
+    val revision = git("rev-parse", "--verify", "--end-of-options", "impact-baseline^{commit}").trim
+    assertTrue(revision.matches("[0-9a-f]{40,64}"))
+    assertEquals("select 1 as amount\n", git("show", revision + ":orders.sql"))
+    assertEquals("select 2 as gross_amount\n", Files.readString(model))
+    assertEquals(" M orders.sql\n", git("status", "--porcelain"))
+    assertTrue(DbtImpact.git(directory.toString, Vector("rev-parse", "--verify", "--end-of-options", "--help^{commit}")).isLeft)
   }
 }

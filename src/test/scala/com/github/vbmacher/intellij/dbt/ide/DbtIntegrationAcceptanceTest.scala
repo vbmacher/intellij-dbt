@@ -2,17 +2,22 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonObject, JsonParser}
+import com.intellij.openapi.options.ConfigurationException
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.util.JDOMUtil
 import com.intellij.util.xmlb.XmlSerializer
 import org.junit.Assert._
-import javax.swing.{JPanel, JPasswordField}
+
+import java.awt.Component
+import javax.swing.{JButton, JComboBox, JList, JPanel, JPasswordField, JTabbedPane, JTextField}
 import scala.jdk.CollectionConverters._
 
-/** Acceptance boundaries across project ownership, uncertain metadata and read-only clients. */
-/** Contract: features/project-context.md and local-mcp-server.md: owning identities and read-only integrations. */
-final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
-  private def workspace = DbtWorkspace.get(getProject)
-  private def root = workspace.roots.find(r => r.name == "analytics" && !r.directory.getPath.endsWith("/other")).get
+/**
+ * Contract: features/project-context.md and local-mcp-server.md: owning identities, supported metadata, source authority,
+ * uncertain metadata, read-only integrations and their settings.
+ */
+final class DbtIntegrationAcceptanceTest extends DbtTestCase {
+  override protected def root: DbtRoot = workspace.roots.find(r => r.name == "analytics" && !r.directory.getPath.endsWith("/other")).get
   private def json(text: String): JsonObject = JsonParser.parseString(text).getAsJsonObject
   private def model(w: DbtWorkspace, name: String, prefix: String = ""): DbtSymbol =
     w.symbols.find(s => s.name == name && s.isCode && (if (prefix.isEmpty) w.owner(s).contains(root) else s.file.getVirtualFile.getPath.contains(prefix))).get
@@ -20,8 +25,6 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     getProject.getService(classOf[DbtAgent]).stop()
     val consumers = getProject.getService(classOf[DbtConsumers])
     consumers.setSecret(""); consumers.clear()
-    getProject.getService(classOf[DbtConsumersSettings]).loadState(new DbtConsumersState)
-    DbtProjectSettings.get(getProject).loadState(new DbtSettingsState)
   } finally super.tearDown()
 
   def testImpactColumnPathsStayWithinTheOwningProjectWhenNamesCollide(): Unit = {
@@ -243,5 +246,137 @@ final class DbtIntegrationAcceptanceTest extends DbtCodeInsightTestCase {
     val lineage = DbtAgentProtocol.call(w, "get_lineage", DbtAgentProtocol.obj("project" -> root.directory.getPath, "resource_id" -> "model.analytics.orders"))
     assertEquals("partial", lineage.get("status").getAsString)
     assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
+  }
+
+  def testOneResourceSharesIdentityAcrossDeclarationsButIndependentOwnersRemainSeparate(): Unit = {
+    project()
+    val code = add("models/orders.sql", "select 1")
+    val properties = add("models/schema.yml", "models: [{name: orders}]\n")
+    val other = add("other/dbt_project.yml", "name: analytics\nconfig-version: 2\n")
+    val otherCode = add("other/models/orders.sql", "select 2")
+    add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    val packageCode = add("dbt_packages/util/models/orders.sql", "select 3")
+    val w = workspace
+    val source = w.symbols.find(s => s.file == code && s.isCode).get
+    val property = w.symbols.find(s => s.file == properties && s.kind == "model").get
+    val independent = w.symbols.find(s => s.file == otherCode && s.isCode).get
+    val installed = w.symbols.find(s => s.file == packageCode && s.isCode).get
+    assertNotEquals(source.id, property.id)
+    assertEquals(DbtResourceIdentity.key(w, source), DbtResourceIdentity.key(w, property))
+    assertEquals(source.uniqueId, independent.uniqueId)
+    assertNotEquals(DbtResourceIdentity.key(w, source), DbtResourceIdentity.key(w, independent))
+    assertNotEquals(DbtResourceIdentity.key(w, source), DbtResourceIdentity.key(w, installed))
+    assertEquals(w.executionRoot(w.owner(source).get), w.executionRoot(w.owner(installed).get))
+    assertEquals(other.getVirtualFile.getParent, w.owner(independent).get.directory)
+  }
+
+  private def reader = DbtManifestReader.get(getProject)
+  private def manifest(version: Int, nodes: String, project: String = "analytics"): String =
+    s"""{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v$version.json","project_name":"$project"},"nodes":$nodes}"""
+
+  def testConsumersShareSupportedSchemasAndResourceIdentityWhileBaselineValidationIsStricter(): Unit = {
+    val nodes = """{"model.analytics.orders":{"unique_id":"model.analytics.orders","name":"orders"}}"""
+    for (version <- 9 to 12; policy <- Vector(DbtManifestPolicy.Navigation, DbtManifestPolicy.TestDiscovery, DbtManifestPolicy.Baseline)) {
+      val result = reader.parse(manifest(version, nodes), policy).toOption.get
+      assertEquals(version, result.schemaVersion)
+      assertEquals(Vector("model.analytics.orders"), result.in("nodes").map(_.id))
+    }
+    Vector(DbtManifestPolicy.Navigation, DbtManifestPolicy.TestDiscovery, DbtManifestPolicy.Baseline).foreach { policy =>
+      assertTrue(reader.parse(manifest(99, nodes), policy).isLeft)
+    }
+    val incomplete = manifest(12, """{"model.analytics.orders":{"config":[]}}""")
+    assertTrue(reader.parse(incomplete, DbtManifestPolicy.Navigation).isRight)
+    assertTrue(reader.parse(incomplete, DbtManifestPolicy.Baseline).isLeft)
+  }
+
+  def testUnsavedManifestEditsInvalidateCachedRecordsAndDiscoveryChecksTheProject(): Unit = {
+    project()
+    val file = add("metadata/manifest.json", manifest(12, """{"model.analytics.old":{"name":"old"}}"""))
+    val root = workspace.roots.head
+    val path = file.getVirtualFile.getPath
+    assertEquals(Vector("model.analytics.old"), reader.read(root, path, DbtManifestPolicy.Navigation).toOption.get.resources.map(_.id))
+    edit(file, manifest(12, """{"model.analytics.new":{"name":"new"}}"""))
+    Vector(DbtManifestPolicy.Navigation, DbtManifestPolicy.TestDiscovery).foreach { policy =>
+      assertEquals(Vector("model.analytics.new"), reader.read(root, path, policy).toOption.get.resources.map(_.id))
+    }
+    edit(file, manifest(12, "{}", "another_project"))
+    assertTrue(reader.read(root, path, DbtManifestPolicy.TestDiscovery).isLeft)
+    assertTrue(reader.read(root, path, DbtManifestPolicy.Navigation).isRight)
+  }
+
+  private def settings = getProject.getService(classOf[DbtConsumersSettings]).getState
+  /** Selects `root` in the settings project chooser and returns its manifest picker. */
+  private def manifestPicker(fields: Vector[Component], root: DbtRoot): TextFieldWithBrowseButton = {
+    fields.collectFirst { case combo: JComboBox[_] if (0 until combo.getItemCount).exists(i => combo.getItemAt(i) == root.directory.getPath) => combo }.get
+      .setSelectedItem(root.directory.getPath)
+    fields.collectFirst {
+      case picker: TextFieldWithBrowseButton if Option(picker.getToolTipText).exists(_.startsWith("Optional manifest file")) => picker
+    }.get
+  }
+
+  def testDagProjectsApplyResetAndAllowEmptyFolders(): Unit = {
+    project()
+    settings.airflowPaths.add("dags")
+    val root = workspace.roots.head
+    val configurable = new DbtSettingsConfigurable(getProject)
+    try {
+      val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
+      assertEquals(Vector("General", "Integrations"), (0 until tabs.getTabCount).map(tabs.getTitleAt).toVector)
+      val fields = components(tabs)
+      val manifest = manifestPicker(fields, root)
+      assertTrue(fields.exists { case button: JButton => button.getText == "Add folder…"; case _ => false })
+      val folders = fields.collectFirst { case list: JList[_] => list }.get
+      val url = fields.collectFirst { case text: JTextField if Option(text.getToolTipText).exists(_.startsWith("Optional HTTP")) => text }.get
+      assertFalse(configurable.isModified)
+      manifest.setText("artifacts/current.json")
+      tabs.setSelectedIndex(1)
+      url.setText("https://airflow.test")
+      assertTrue(configurable.isModified)
+      configurable.apply()
+      assertEquals("https://airflow.test", settings.airflowUrl)
+      assertEquals("artifacts/current.json", DbtProjectSettings.get(getProject).options(root.directory.getPath).manifestPath)
+      assertFalse(configurable.isModified)
+      folders.setSelectedIndex(0)
+      fields.collectFirst { case button: JButton if button.getText == "Remove" => button }.get.doClick()
+      assertTrue(configurable.isModified)
+      manifest.setText("discarded.json")
+      configurable.reset()
+      assertEquals(1, folders.getModel.getSize)
+      assertEquals("artifacts/current.json", manifest.getText)
+      folders.setSelectedIndex(0)
+      fields.collectFirst { case button: JButton if button.getText == "Remove" => button }.get.doClick()
+      configurable.apply()
+      assertTrue(settings.airflowPaths.isEmpty)
+      configurable.reset()
+      assertEquals(0, folders.getModel.getSize)
+      assertFalse(configurable.isModified)
+      manifest.setText("must-not-save.json")
+      url.setText("https://user:password@airflow.test")
+      try { configurable.apply(); fail("Credential-bearing browser links must be rejected") } catch { case _: ConfigurationException => () }
+      assertEquals("https://airflow.test", settings.airflowUrl)
+      assertEquals("artifacts/current.json", DbtProjectSettings.get(getProject).options(root.directory.getPath).manifestPath)
+      val secret = fields.collectFirst { case field: JPasswordField => field }.get
+      secret.setText("unsaved-secret")
+      configurable.disposeUIResources()
+      assertEquals(0, secret.getPassword.length)
+    } finally configurable.disposeUIResources()
+  }
+
+  def testManifestPickerSavesPerProjectAndCopiesWithRunOptions(): Unit = {
+    val config = project()
+    val root = workspace.roots.head
+    val configurable = new DbtSettingsConfigurable(getProject)
+    try {
+      val fields = components(configurable.createComponent())
+      val manifest = manifestPicker(fields, root)
+      manifest.setText("artifacts/current.json")
+      assertTrue(configurable.isModified)
+      configurable.apply()
+      val options = DbtProjectSettings.get(getProject).options(config.getVirtualFile.getParent.getPath)
+      assertEquals("artifacts/current.json", options.manifestPath)
+      assertEquals("artifacts/current.json", options.copy().manifestPath)
+      configurable.reset()
+      assertEquals("artifacts/current.json", manifest.getText)
+    } finally configurable.disposeUIResources()
   }
 }

@@ -2,16 +2,11 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonObject, JsonParser}
-import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.PlatformTestUtil
 import org.junit.Assert._
 import java.nio.file.Files
 import scala.jdk.CollectionConverters._
 
-final class DbtStateTest extends DbtCodeInsightTestCase {
-  private def workspace = DbtWorkspace.get(getProject)
-  private def root = workspace.roots.find(_.name == "analytics").get
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
+final class DbtStateTest extends DbtTestCase {
   private def json(text: String): JsonObject = JsonParser.parseString(text).getAsJsonObject
   private def parse(text: String): Either[String, DbtManifest] = DbtManifestReader.get(getProject).parse(text, DbtManifestPolicy.Baseline)
   private def manifest(nodes: String, extra: String = ""): String =
@@ -35,27 +30,22 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
   }
 
   def testBaselineDirectoryCannotAliasOutputThroughSymlinksOrManifestLinks(): Unit = {
-    val directory = Files.createTempDirectory("dbt-state-paths-")
-    try {
-      val output = Files.createDirectory(directory.resolve("target"))
-      val state = Files.createDirectory(directory.resolve("state"))
-      val manifest = Files.writeString(state.resolve("manifest.json"), "{}")
-      val alias = Files.createSymbolicLink(directory.resolve("alias"), output)
-      assertTrue(DbtState.separate(alias, output).isLeft)
-      assertTrue(DbtState.separate(state, alias.resolve("future")).isRight)
-      val stateAlias = Files.createSymbolicLink(directory.resolve("state-alias"), state)
-      assertTrue(DbtState.separate(state, stateAlias.resolve("future")).isLeft)
-      Files.createSymbolicLink(output.resolve("manifest.json"), manifest)
-      assertTrue(DbtState.separate(state, output).isLeft)
-      Files.delete(output.resolve("manifest.json"))
-      Files.createSymbolicLink(state.resolve("indirect"), output)
-      Files.delete(manifest)
-      Files.createSymbolicLink(state.resolve("manifest.json"), output.resolve("future-manifest.json"))
-      assertTrue(DbtState.separate(state, output).isLeft)
-    } finally {
-      val stream = Files.walk(directory)
-      try stream.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists) finally stream.close()
-    }
+    val directory = tempDirectory("dbt-state-paths-")
+    val output = Files.createDirectory(directory.resolve("target"))
+    val state = Files.createDirectory(directory.resolve("state"))
+    val manifest = Files.writeString(state.resolve("manifest.json"), "{}")
+    val alias = Files.createSymbolicLink(directory.resolve("alias"), output)
+    assertTrue(DbtState.separate(alias, output).isLeft)
+    assertTrue(DbtState.separate(state, alias.resolve("future")).isRight)
+    val stateAlias = Files.createSymbolicLink(directory.resolve("state-alias"), state)
+    assertTrue(DbtState.separate(state, stateAlias.resolve("future")).isLeft)
+    Files.createSymbolicLink(output.resolve("manifest.json"), manifest)
+    assertTrue(DbtState.separate(state, output).isLeft)
+    Files.delete(output.resolve("manifest.json"))
+    Files.createSymbolicLink(state.resolve("indirect"), output)
+    Files.delete(manifest)
+    Files.createSymbolicLink(state.resolve("manifest.json"), output.resolve("future-manifest.json"))
+    assertTrue(DbtState.separate(state, output).isLeft)
   }
 
   def testConfigAndColumnMetadataChangesAreVisibleWithBaselineRelations(): Unit = {
@@ -127,22 +117,19 @@ final class DbtStateTest extends DbtCodeInsightTestCase {
   def testNormalModelBuildPassesExactStateFlagsToFakeExecutableAndKeepsBaselineReadOnly(): Unit = {
     project()
     val code = add("models/orders.sql", "select 1")
-    val directory = Files.createTempDirectory("dbt state command ")
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(directory.toFile))
+    val directory = tempDirectory("dbt state command ")
     Files.writeString(directory.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
     val state = Files.createDirectory(directory.resolve("state with spaces"))
     val stateFile = Files.writeString(state.resolve("manifest.json"), manifest("{}"))
     val original = Files.readString(stateFile)
     val profiles = Files.createDirectory(directory.resolve("profiles with spaces"))
     val target = directory.resolve("active target")
-    val executable = directory.resolve("fake dbt")
-    Files.writeString(executable, """#!/usr/bin/python3
+    val executable = fakeTool(directory.resolve("fake dbt"), """#!/usr/bin/python3
 import json,os,sys
 with open('invocation.json','w') as f: json.dump({'args':sys.argv[1:],'profiles':os.environ['DBT_PROFILES_DIR'],'target':os.environ['DBT_TARGET_PATH']},f)
 os.makedirs(os.environ['DBT_TARGET_PATH'],exist_ok=True)
 with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f: json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/manifest/v12.json'},'nodes':{}},f)
 """)
-    assertTrue(executable.toFile.setExecutable(true))
     val options = root.runOptions
     options.projectRoot = directory.toString; options.executable = executable.toString; options.target = "dev"
     options.profilesDirectory = profiles.toString; options.artifactDirectory = target.toString
@@ -151,9 +138,9 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'manifest.json'),'w') as f:
     val selection = DbtRunSelection.available(w).find(_.path == code.getVirtualFile.getPath).get
     val command = DbtCommand.create(w, selection, "Build", fullRefresh = false).toOption.get
     assertEquals(1, command.arguments.count(_ == "--state"))
-    val runner = new DbtRunner(getProject); Disposer.register(getTestRootDisposable, runner)
+    val runner = newRunner()
     assertTrue(runner.start(command))
-    PlatformTestUtil.waitWithEventsDispatching("State build fake executable completes", () => !runner.isRunning, 15)
+    await("State build fake executable completes")(!runner.isRunning)
     val invocation = json(Files.readString(directory.resolve("invocation.json")))
     val arguments = invocation.getAsJsonArray("args").asScala.map(_.getAsString).toVector
     assertTrue(arguments.sliding(2).exists(_ == Vector("--state", state.toRealPath().toString)))

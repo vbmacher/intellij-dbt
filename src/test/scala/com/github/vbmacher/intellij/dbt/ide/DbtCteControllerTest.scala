@@ -6,21 +6,15 @@ import com.google.gson.JsonParser
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
-import java.awt.{Component, Container}
 import java.nio.file.{Files, Path}
-import javax.swing.{JButton, JCheckBox, JLabel, JList, JSpinner, JTable}
+import javax.swing.JButton
 import org.junit.Assert._
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 
-final class DbtCteControllerTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
+final class DbtCteControllerTest extends DbtTestCase {
   private final case class Fixture(panel: DbtCteController, file: com.intellij.psi.PsiFile, root: DbtRoot, directory: Path,
     runner: DbtRunner, events: ArrayBuffer[DbtRunnerEvent])
-  private def components(component: Component): Vector[Component] = Vector(component) ++ (component match {
-    case c: Container => c.getComponents.toVector.flatMap(components)
-    case _ => Vector.empty
-  })
   private var breakpoints = Set.empty[String]
   private def click(panel: DbtCteController, name: String): Unit = name match {
     case "Step" => panel.step()
@@ -34,7 +28,6 @@ final class DbtCteControllerTest extends DbtCodeInsightTestCase {
   private def rows(panel: DbtCteController): Int = panel.result.map(_.rows.size).getOrElse(0)
   private def controller(path: String, frames: Vector[com.github.vbmacher.intellij.dbt.navigation.DbtCte]): DbtCteController =
     new DbtCteController(getProject, path, frames, () => (), (_, _) => (), c => breakpoints(c.name))
-  private def await(message: String)(condition: => Boolean): Unit = PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 15)
   private def flushReads(): Unit = {
     com.intellij.openapi.application.impl.NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
     PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
@@ -42,13 +35,11 @@ final class DbtCteControllerTest extends DbtCodeInsightTestCase {
   private def setup(sql: String = "with a as (select 1 as id), b as (select id from a) select * from b"): Fixture = {
     project()
     val file = configure("models/report.sql", sql + "<caret>")
-    val w = DbtWorkspace.get(getProject)
+    val w = workspace
     val root = w.root(file).get
-    val dir = Files.createTempDirectory("dbt cte session with spaces ")
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(dir.toFile))
+    val dir = tempDirectory("dbt cte session with spaces ")
     Files.writeString(dir.resolve("dbt_project.yml"), "name: analytics\n")
-    val executable = dir.resolve("fake dbt")
-    Files.writeString(executable, """#!/usr/bin/python3
+    val executable = fakeTool(dir.resolve("fake dbt"), """#!/usr/bin/python3
 import json,os,sys,time
 args=sys.argv[1:]
 with open('calls.jsonl','a') as f: f.write(json.dumps(args)+'\n')
@@ -73,13 +64,10 @@ if os.path.exists('fail'):
  sys.exit(1)
 print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True)
 """)
-    assertTrue(executable.toFile.setExecutable(true))
     root.runOptions.projectRoot = dir.toString
     root.runOptions.executable = executable.toString
     root.runOptions.target = "dev"
-    val runner = new DbtRunner(getProject)
-    Disposer.register(getTestRootDisposable, runner)
-    com.intellij.testFramework.ServiceContainerUtil.replaceService(getProject, classOf[DbtRunner], runner, getTestRootDisposable)
+    val runner = newRunner(service = true)
     val events = ArrayBuffer.empty[DbtRunnerEvent]
     runner.listen(getTestRootDisposable, event => events += event)
     val panel = controller(file.getVirtualFile.getPath, DbtSqlAnalysis.get(w, file).get.ctes)
@@ -192,7 +180,7 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     val f = setup()
     WriteAction.run(() => { click(f.panel, "Step"); Disposer.dispose(f.panel) })
     flushReads(); assertEquals(Vector.empty, calls(f))
-    val next = controller(f.file.getVirtualFile.getPath, DbtSqlAnalysis.get(DbtWorkspace.get(getProject), f.file).get.ctes)
+    val next = controller(f.file.getVirtualFile.getPath, DbtSqlAnalysis.get(workspace, f.file).get.ctes)
     Disposer.register(getTestRootDisposable, next)
     Files.writeString(f.directory.resolve("hold"), "")
     click(next, "Step")
@@ -269,7 +257,7 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
 
   def testPlanningAtFinalSelectCteReferenceUsesItsExactDefinitionAndDependencies(): Unit = {
     val f = setup()
-    val w = DbtWorkspace.get(getProject)
+    val w = workspace
     val analysis = DbtSqlAnalysis.get(w, f.file).get
     val cte = DbtCteInspection.at(w, f.file, analysis, f.file.getText.lastIndexOf("b")).get
     assertEquals("b", cte.name)
@@ -283,14 +271,14 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
   def testLeadingSetAndConfigSetupSurviveCteExtractionWithoutOmittingUnusedSql(): Unit = {
     val setupSql = "{% set chosen = 'orders' %}\n{{ config(materialized='view') }}\n-- preserve setup\n"
     val f = setup(setupSql + "with unused as (select 0), chosen_cte as (select * from {{ ref(chosen) }}) select * from chosen_cte")
-    val analysis = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), f.file).get
+    val analysis = DbtSqlAnalysis.get(workspace, f.file).get
     val query = DbtCteInspection.sql(f.file.getText, analysis, analysis.ctes.find(_.name == "chosen_cte").get).toOption.get
     assertTrue(query.startsWith(setupSql + "with chosen_cte"))
     assertTrue(query.contains("{{ ref(chosen) }}")); assertFalse(query.contains("unused as"))
   }
   def testTemplateSetupBetweenCteDeclarationsIsRejectedInsteadOfSilentlyLost(): Unit = {
     val f = setup("with a as (select 1), {% set chosen = 'orders' %} b as (select * from {{ ref(chosen) }}) select * from b")
-    val analysis = DbtSqlAnalysis.get(DbtWorkspace.get(getProject), f.file).get
+    val analysis = DbtSqlAnalysis.get(workspace, f.file).get
     val query = DbtCteInspection.sql(f.file.getText, analysis, analysis.ctes.find(_.name == "b").get)
     assertTrue(query.left.toOption.get.contains("Template setup between CTE"))
     assertTrue(calls(f).isEmpty)
@@ -305,7 +293,7 @@ print(json.dumps({'show':[{'value':args[args.index('--inline')+1]}]}),flush=True
     val config = new DbtRunConfiguration(getProject, factory, "preview")
     val console = new DbtCommandConsole(config)
     Disposer.register(getTestRootDisposable, console)
-    val command = DbtCteInspection.command(DbtWorkspace.get(getProject), DbtWorkspace.get(getProject).codeSymbols(f.file).head, f.file.getText).toOption.get
+    val command = DbtCteInspection.command(workspace, workspace.codeSymbols(f.file).head, f.file.getText).toOption.get
     console.start(command)
     assertTrue(console.process.isProcessTerminated)
     assertEquals(1, console.process.getExitCode.intValue())

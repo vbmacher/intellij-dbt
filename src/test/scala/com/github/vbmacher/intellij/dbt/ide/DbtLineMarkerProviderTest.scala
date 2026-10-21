@@ -9,7 +9,7 @@ import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
 /** Native highlighting proves placement in Community plain-text files and YAML. */
-final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
+final class DbtLineMarkerProviderTest extends DbtTestCase {
   private def gutters: Vector[LineMarkerGutterIconRenderer[_]] =
     myFixture.findAllGutters().asScala.collect {
       case renderer: LineMarkerGutterIconRenderer[_] if renderer.getTooltipText.startsWith("dbt:") => renderer

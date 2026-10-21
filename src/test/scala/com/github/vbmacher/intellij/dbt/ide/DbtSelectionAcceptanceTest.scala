@@ -3,21 +3,38 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.lineage.DbtSelection
 import com.github.vbmacher.intellij.dbt.project._
 import org.junit.Assert._
+
 import scala.jdk.CollectionConverters._
 
-/** Contract: features/selection-review.md and state-comparison.md: exact scope, partial selections and execution gates. */
-final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
-  private def workspace = DbtWorkspace.get(getProject)
-  private def root = workspace.roots.find(_.name == "analytics").get
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-
-  def testGraphDepthIntersectionsNamedSelectorsAndCyclesRemainReviewable(): Unit = {
+/**
+ * Contract: features/selection-review.md and state-comparison.md: exact scope, partial selections, CLI-reviewed selections
+ * and execution gates.
+ */
+final class DbtSelectionAcceptanceTest extends DbtTestCase {
+  /** Models a -> b -> c -> d, with b and c tagged `finance`, and the given `selectors.yml`. */
+  private def chainProject(selectors: String): Unit = {
     project()
     add("models/a.sql", "select 1 as id")
     add("models/b.sql", "{{ config(tags=['finance']) }} select * from {{ ref('a') }}")
     add("models/c.sql", "{{ config(tags=['finance']) }} select * from {{ ref('b') }}")
     add("models/d.sql", "select * from {{ ref('c') }}")
-    add("selectors.yml", """selectors:
+    add("selectors.yml", selectors)
+  }
+
+  /** Versioned `orders` plus same-named models in an installed package and in an independent project. */
+  private def sameNamedOrders(): Unit = {
+    project()
+    add("models/orders_v1.sql", "select 1")
+    add("models/orders_v2.sql", "select 2")
+    add("models/schema.yml", "models: [{name: orders, versions: [{v: 1}, {v: 2}]}]\n")
+    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
+    add("dbt_packages/pkg/models/orders.sql", "select 3")
+    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
+    add("other/models/orders.sql", "select 4")
+  }
+
+  def testGraphDepthIntersectionsNamedSelectorsAndCyclesRemainReviewable(): Unit = {
+    chainProject("""selectors:
 - name: window
   definition: {method: fqn, value: c, parents: true, parents_depth: 1, children: true, children_depth: 1}
 - name: cycle_a
@@ -53,14 +70,7 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
   }
 
   def testMatchedVersionAndPackageIdentitiesAgreeWithAllSelectionCommands(): Unit = {
-    project()
-    add("models/orders_v1.sql", "select 1")
-    add("models/orders_v2.sql", "select 2")
-    add("models/schema.yml", "models: [{name: orders, versions: [{v: 1}, {v: 2}]}]\n")
-    add("dbt_packages/pkg/dbt_project.yml", "name: pkg\nconfig-version: 2\n")
-    add("dbt_packages/pkg/models/orders.sql", "select 3")
-    add("other/dbt_project.yml", "name: other\nconfig-version: 2\n")
-    add("other/models/orders.sql", "select 4")
+    sameNamedOrders()
     val w = workspace
     val options = root.runOptions
     options.selection = "fqn:analytics.orders.v2 package:pkg"
@@ -240,4 +250,87 @@ final class DbtSelectionAcceptanceTest extends DbtCodeInsightTestCase {
     assertTrue(DbtCommand.resolveSelection(w, root, None).toOption.get.arguments.contains("fqn:analytics.slow"))
   }
 
+
+  def testCliSelectionKeepsExactGenericAndUnitTestIdentitiesAndSourceLocations(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    val yaml = add("models/schema.yml", """models:
+- name: orders
+  columns: [{name: id, data_tests: [unique]}]
+unit_tests:
+- name: input_is_valid
+  model: orders
+""")
+    add("target/manifest.json", """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","dbt_version":"1.10.0","generated_at":"2099-01-01T00:00:00Z"},"nodes":{
+      "test.analytics.unique_orders_id.abc":{"unique_id":"test.analytics.unique_orders_id.abc","resource_type":"test","name":"unique_orders_id","package_name":"analytics","original_file_path":"models/schema.yml","column_name":"id","fqn":["analytics","unique_orders_id"],"test_metadata":{"name":"unique"},"config":{},"depends_on":{"nodes":["model.analytics.orders"]}}},"unit_tests":{}}
+""")
+    val w = workspace
+    val ids = Vector("test.analytics.unique_orders_id.abc", "unit_test.analytics.orders.input_is_valid")
+    val known = DbtSelectionReview.knownCliResources(w, root).filter(r => ids.contains(r.id))
+    assertEquals(ids.toSet, known.map(_.id).toSet)
+    assertTrue(known.forall(_.file == yaml))
+    assertEquals(yaml.getText.indexOf("unique"), known.find(_.id == ids.head).get.range.getStartOffset)
+    val command = DbtCommand.selection(w, root, "Test", fullRefresh = false, cliIds = Some(ids)).toOption.get
+    assertEquals(DbtCommandScope.Selected(known.map(_.selector).distinct), command.request.scope)
+    assertTrue(DbtCommand.selection(w, root, "Test", fullRefresh = false, cliIds = Some(ids :+ "test.analytics.missing.hash")).isLeft)
+  }
+
+  def testNamedExclusionsRetainPackageVersionAndIndependentRootIdentity(): Unit = {
+    sameNamedOrders()
+    add("selectors.yml", """selectors:
+- name: omit
+  definition:
+    union: [fqn:analytics.orders.v2, package:pkg]
+""")
+    val w = workspace
+    val terms = DbtSelectionReview.cliTerms(w, root, "selector:omit").toOption.get
+    assertEquals(Set("fqn:analytics.orders.v2", "fqn:pkg.orders"), terms.toSet)
+    assertFalse(terms.exists(_.contains("other")))
+    assertFalse(terms.exists(_.endsWith("v1")))
+    assertFalse(terms.exists(_.startsWith("selector:")))
+  }
+
+  def testNamedGraphDepthsIntersectionsAndUnionsBecomeExactCliTerms(): Unit = {
+    chainProject("""selectors:
+- {name: center, definition: c}
+- {name: window, definition: '1+c+1'}
+""")
+    val w = workspace
+    assertEquals(Set("fqn:analytics.a", "fqn:analytics.b", "fqn:analytics.c", "fqn:analytics.d"),
+      DbtSelectionReview.cliTerms(w, root, "@selector:center").toOption.get.toSet)
+    assertEquals(Set("fqn:analytics.b", "fqn:analytics.c", "fqn:analytics.d"),
+      DbtSelectionReview.cliTerms(w, root, "1+selector:center+1").toOption.get.toSet)
+    assertEquals(Set("fqn:analytics.a", "fqn:analytics.b", "fqn:analytics.c"),
+      DbtSelectionReview.cliTerms(w, root, "selector:window,tag:finance fqn:analytics.a").toOption.get.toSet)
+  }
+
+  def testCyclicMissingAndMixedRuntimeNamedExclusionsAreRejected(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("selectors.yml", """selectors:
+- {name: ordinary, definition: orders}
+- {name: runtime, definition: 'state:modified'}
+- {name: cycle_a, definition: 'selector:cycle_b'}
+- {name: cycle_b, definition: 'selector:cycle_a'}
+""")
+    val w = workspace
+    Vector("selector:cycle_a", "selector:missing", "selector:runtime", "selector:ordinary result:error",
+      "selector:ordinary,state:modified", "selector:ordinary,,orders").foreach { expression =>
+      val result = DbtSelectionReview.cliTerms(w, root, expression)
+      assertTrue(expression + " must not be sent to dbt as a named exclusion", result.isLeft)
+      assertTrue(result.left.toOption.get.contains("resolve completely"))
+    }
+  }
+
+  def testOrdinaryExplicitCliExclusionsStayUnchangedAndEmptyNamedSetsStayEmpty(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    add("selectors.yml", "selectors: [{name: none, definition: 'tag:absent'}]\n")
+    val w = workspace
+    assertEquals(Right(Vector.empty), DbtSelectionReview.cliTerms(w, root, " \n\t "))
+    assertEquals(Right(Vector.empty), DbtSelectionReview.cliTerms(w, root, "selector:none"))
+    assertEquals(Right(Vector("config.materialized:incremental", "state:modified,tag:slow", "@orders")),
+      DbtSelectionReview.cliTerms(w, root, "config.materialized:incremental\n state:modified,tag:slow\t@orders"))
+    assertEquals(Right(Vector("tag:selector:literal")), DbtSelectionReview.cliTerms(w, root, "tag:selector:literal"))
+  }
 }

@@ -15,10 +15,14 @@ before(async()=>{
  await page.setContent(html); await page.evaluate(p=>window.dbtUpdate(p),fixture);
 });
 after(async()=>{await browser.close()});
+const update=payload=>page.evaluate(p=>dbtUpdate(p),payload);
+const lastExport=id=>page.evaluate(id=>events.filter(e=>e.type==='export'&&e.id===id).at(-1).value,id);
+const exportedSvg=async()=>Buffer.from((await lastExport('svg')).split(',')[1],'base64').toString('latin1');
+const hasEvent=(type,id)=>page.evaluate(([type,id])=>events.some(e=>e.type===type&&e.id===id),[type,id]);
 async function nodePosition(id){return page.evaluate(id=>{const p=cy.getElementById(id).renderedPosition(),r=document.getElementById('cy').getBoundingClientRect();return{x:r.x+p.x,y:r.y+p.y}},id)}
 test('bundled graph loads and cards show resource identity',async()=>{assert.deepEqual(errors,[]);assert.equal(await page.locator('.card:not(.boundary)').count(),4);assert.match(await page.locator('#cards').innerText(),/orders/)});
 test('resource hover shows available details',async()=>{const p=await nodePosition('source');await page.mouse.move(p.x,p.y);assert.match(await page.locator('#tooltip').innerText(),/analytics.events/);await page.mouse.move(10,800)});
-test('single click selects docs and dims unrelated resources without focusing',async()=>{const p=await nodePosition('model');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),0);assert.ok(await page.evaluate(()=>events.some(e=>e.type==='select'&&e.id==='model')));assert.equal(await page.locator('.card.dim').count(),1);assert.equal(await page.locator('#docs').count(),0)});
+test('single click selects docs and dims unrelated resources without focusing',async()=>{const p=await nodePosition('model');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),0);assert.ok(await hasEvent('select','model'));assert.equal(await page.locator('.card.dim').count(),1);assert.equal(await page.locator('#docs').count(),0)});
 test('button tooltips appear on hover and keyboard focus inside the panel',async()=>{
  for(const [name,text]of [['Zoom in','Zoom in'],['Open Documentation','Open native Documentation for the selected resource'],['Regenerate Docs','Configure Generate Docs for this execution project']]){
   const button=page.getByRole('button',{name,exact:true});
@@ -42,15 +46,15 @@ test('Regenerate Docs requests generation and is disabled while a command runs',
  assert.equal(await page.locator('#regenerate').isEnabled(),true);
 });
 test('Regenerate Docs requires an an identified execution project',async()=>{
- await page.evaluate(p=>dbtUpdate({...p,canGenerateDocs:false}),fixture);
+ await update({...fixture,canGenerateDocs:false});
  assert.equal(await page.locator('#regenerate').isDisabled(),true);
  await page.evaluate(()=>dbtRunnerState(false,'Choose an execution project'));
  assert.equal(await page.locator('#regenerate').isDisabled(),true);
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
  assert.equal(await page.locator('#regenerate').isEnabled(),true);
 });
 test('zoom, fit and search controls work',async()=>{const zoom=await page.evaluate(()=>cy.zoom());await page.locator('#zoom-in').click();assert.ok(await page.evaluate(()=>cy.zoom())>zoom);await page.locator('#fit').click();await page.locator('#search').fill('orders');assert.equal(await page.locator('.card:not(.dim):not(.boundary)').count(),1);await page.locator('#clear-search').click()});
-test('viewport survives same-focus artifact and theme refresh',async()=>{await page.evaluate(()=>{cy.zoom(.75);cy.pan({x:123,y:65})});await page.evaluate(p=>dbtUpdate({...p,theme:{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}}),fixture);assert.equal(await page.evaluate(()=>cy.zoom()),.75);assert.deepEqual(await page.evaluate(()=>cy.pan()),{x:123,y:65});assert.equal(await page.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(250, 250, 250)')});
+test('viewport survives same-focus artifact and theme refresh',async()=>{await page.evaluate(()=>{cy.zoom(.75);cy.pan({x:123,y:65})});await update({...fixture,theme:{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}});assert.equal(await page.evaluate(()=>cy.zoom()),.75);assert.deepEqual(await page.evaluate(()=>cy.pan()),{x:123,y:65});assert.equal(await page.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(250, 250, 250)')});
 test('mouse wheel zoom responds promptly in both directions and keeps the cursor anchored',async()=>{
  const original=await page.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()}));
  try{
@@ -66,12 +70,12 @@ test('mouse wheel zoom responds promptly in both directions and keeps the cursor
   const after=await anchor();assert.ok(Math.abs(after.x-before.x)<1e-6&&Math.abs(after.y-before.y)<1e-6);
  }finally{await page.evaluate(v=>{cy.zoom(v.zoom);cy.pan(v.pan)},original)}
 });
-test('boundary click expands without refocusing; double click focuses',async()=>{await page.locator('#fit').click();const p=await nodePosition('boundary:upstream');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.ok(await page.evaluate(()=>events.some(e=>e.type==='expand'&&e.id==='upstream')));const n=await nodePosition('report');await page.mouse.dblclick(n.x,n.y,{delay:80});await page.waitForTimeout(230);assert.ok(await page.evaluate(()=>events.some(e=>e.type==='focus'&&e.id==='report')))});
+test('boundary click expands without refocusing; double click focuses',async()=>{await page.locator('#fit').click();const p=await nodePosition('boundary:upstream');await page.mouse.click(p.x,p.y);await page.waitForTimeout(230);assert.ok(await hasEvent('expand','upstream'));const n=await nodePosition('report');await page.mouse.dblclick(n.x,n.y,{delay:80});await page.waitForTimeout(230);assert.ok(await hasEvent('focus','report'))});
 test('drag moves a card without navigation and background clears dimming',async()=>{const p=await nodePosition('model');const before=await page.evaluate(()=>events.filter(e=>e.type==='focus').length);await page.mouse.move(p.x,p.y);await page.mouse.down();await page.mouse.move(p.x+45,p.y+70,{steps:8});await page.mouse.up();await page.waitForTimeout(230);assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='focus').length),before);await page.mouse.click(10,800);assert.equal(await page.locator('.card.dim').count(),0)});
-test('every direction renders without script errors',async()=>{for(const direction of ['LR','TB','RL','BT'])await page.evaluate(p=>dbtUpdate(p),{...fixture,direction});assert.deepEqual(errors,[])});
+test('every direction renders without script errors',async()=>{for(const direction of ['LR','TB','RL','BT'])await update({...fixture,direction});assert.deepEqual(errors,[])});
 test('schema, folder and tag grouping collapse without changing canonical resource identities',async()=>{
  const grouped={...fixture,nodes:fixture.nodes.map((n,i)=>({...n,folder:i<2?'models/staging':'models/marts',tags:i<2?['zebra','finance']:[]}))};
- await page.evaluate(p=>dbtUpdate(p),grouped);
+ await update(grouped);
 
  await page.locator('#group-by').selectOption('schema');
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),3);
@@ -92,7 +96,7 @@ test('schema, folder and tag grouping collapse without changing canonical resour
  assert.equal(await page.evaluate(()=>cy.getElementById('model').data('parent')),'group:tag:finance');
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.id()==='model').length),1);
 
- await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);
+ await page.locator('#group-by').selectOption('');await update(fixture);
 });
 test('selector filtering reuses backend resolution, marks adjacent boundaries and rejects stale results',async()=>{
 
@@ -111,7 +115,7 @@ test('selector filtering reuses backend resolution, marks adjacent boundaries an
 test('pin focus sends the current identity and survives backend refresh',async()=>{
  await page.locator('#pin-focus').click();assert.equal(await page.locator('#pin-focus').getAttribute('aria-pressed'),'true');
  assert.ok(await page.evaluate(()=>events.some(e=>e.type==='pin'&&e.id==='model'&&e.value==='true')));
- await page.evaluate(p=>dbtUpdate({...p,pinned:true}),fixture);assert.equal(await page.locator('#pin-focus').getAttribute('aria-label'),'Unpin focus');
+ await update({...fixture,pinned:true});assert.equal(await page.locator('#pin-focus').getAttribute('aria-label'),'Unpin focus');
  await page.locator('#pin-focus').click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='pin'&&e.value==='false')));
 });
 test('minimap click, keyboard and toggle navigate the existing viewport',async()=>{
@@ -125,32 +129,32 @@ test('minimap click, keyboard and toggle navigate the existing viewport',async()
  await page.locator('#show-minimap').check();assert.equal(await page.locator('#minimap').isVisible(),true);await page.locator('#fit').click();
 });
 test('SVG, PNG and clipboard exports include local visible labels, Unicode, theme and optional legend',async()=>{
- await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>n.id==='model'?{...n,name:'objednávky 日本語 & <orders>'}:n)}),fixture);
+ await update({...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,name:'objednávky 日本語 & <orders>'}:n)});
 
  await page.locator('#selector').fill('orders');await page.evaluate(()=>dbtShowFilter({expression:'orders',exclude:'',ids:['model'],diagnostics:[]}));
 
  await page.locator('#export-svg').click();
- const svg=await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1]));
+ const svg=await exportedSvg();
  const decoded=Buffer.from(svg,'binary').toString('utf8');
  assert.match(decoded,/objednávky 日本語 &amp; &lt;orders&gt;/);assert.doesNotMatch(decoded,/unrelated/);assert.match(decoded,/downstream dependency/);
  assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/var\(--/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
 
  await page.locator('#export-legend').uncheck();
  await page.locator('#export-svg').click();
- assert.doesNotMatch(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/downstream dependency/);
+ assert.doesNotMatch(await exportedSvg(),/downstream dependency/);
 
  await page.locator('#export-png').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='png'));
- const png=await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='png').at(-1).value);assert.ok(png.startsWith('data:image/png;base64,iVBOR'));
+ const png=await lastExport('png');assert.ok(png.startsWith('data:image/png;base64,iVBOR'));
 
- await page.locator('#copy-image').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok(await page.evaluate(()=>events.filter(e=>e.type==='export'&&e.id==='clipboard').at(-1).value.startsWith('data:image/png;base64,')));
+ await page.locator('#copy-image').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok((await lastExport('clipboard')).startsWith('data:image/png;base64,'));
 
  await page.locator('#export-legend').check();
- await page.locator('#clear-filter').click();await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+ await page.locator('#clear-filter').click();await update(fixture);assert.deepEqual(errors,[]);
 });
 test('grouping preserves package and version collisions on representative large graphs',async()=>{
  const nodes=Array.from({length:180},(_,i)=>({id:'model:package'+(i%3)+':orders:v'+i,name:'orders',package:'package'+(i%3),kind:'model',schema:'schema'+(i%6),tags:['shared'],folder:'models/'+(i%10)}));
  const edges=nodes.slice(1).map((n,i)=>({source:nodes[i].id,target:n.id}));
- await page.evaluate(p=>dbtUpdate(p),{...fixture,focus:nodes[0].id,nodes,edges,boundary:[]});
+ await update({...fixture,focus:nodes[0].id,nodes,edges,boundary:[]});
 
  await page.locator('#group-by').selectOption('schema');assert.equal(await page.locator('.card:not(.boundary)').count(),180);
  assert.equal(await page.evaluate(()=>cy.nodes().filter(n=>n.data('group')).length),6);
@@ -159,24 +163,24 @@ test('grouping preserves package and version collisions on representative large 
  await page.getByRole('button',{name:'▾ shared (180)',exact:true}).click();assert.equal(await page.locator('.card.collapsed').count(),1);
  await page.getByRole('button',{name:'▸ shared (180)',exact:true}).click();assert.equal(await page.locator('.card:not(.boundary)').count(),180);
 
- await page.locator('#group-by').selectOption('');await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+ await page.locator('#group-by').selectOption('');await update(fixture);assert.deepEqual(errors,[]);
 });
 test('execution badges expose provenance and route failed tests without relying on colors',async()=>{
  const execution={status:'failed',label:'Build failed',failingTests:2,details:'target: dev; invocation: run-1; run_results.json'};
  await page.evaluate(({fixture,execution})=>dbtUpdate({...fixture,nodes:fixture.nodes.map(n=>({...n,execution:n.id==='model'?execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'No compatible result artifact'}}))}),{fixture,execution});
  const badge=page.getByRole('button',{name:/orders: 2 failing tests · Build failed/});assert.equal(await badge.count(),1);assert.match(await badge.getAttribute('aria-label'),/run_results.json/);
- await badge.click();assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
+ await badge.click();assert.ok(await hasEvent('execution','model'));
 
 
- await page.locator('#export-svg').click();assert.match(await page.evaluate(()=>atob(events.filter(e=>e.type==='export'&&e.id==='svg').at(-1).value.split(',')[1])),/Build failed/);
- await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))}),fixture);
+ await page.locator('#export-svg').click();assert.match(await exportedSvg(),/Build failed/);
+ await update({...fixture,nodes:fixture.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))});
  assert.equal(await page.getByRole('button',{name:/Build failed/}).count(),0);
  assert.equal(await page.locator('.execution-badge[data-status=unknown]').count(),0);
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
 });
 test('exports support every layout direction without invalid geometry',async()=>{
  for(const direction of ['LR','TB','RL','BT']){
-  await page.evaluate(p=>dbtUpdate(p),{...fixture,direction});
+  await update({...fixture,direction});
   const svg=await page.evaluate(()=>graphSvg());assert.doesNotMatch(svg,/NaN|undefined/);
  }
  assert.deepEqual(errors,[]);
@@ -184,24 +188,24 @@ test('exports support every layout direction without invalid geometry',async()=>
 test('test-only failure counts are visible and remain accurate across theme and evidence refresh',async()=>{
  const execution={status:'unknown',label:'Not run / result unavailable',failingTests:3,details:'prod · run-test-only · run_results.json'};
  const payload={...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,execution}:n)};
- await page.evaluate(p=>dbtUpdate(p),payload);
+ await update(payload);
  const badge=page.getByRole('button',{name:/orders: 3 failing tests/});
  assert.match(await badge.innerText(),/^3 failing tests/);
  assert.match(await badge.getAttribute('aria-label'),/prod.*run-test-only/);
  await badge.focus();await page.keyboard.press('Enter');
- assert.ok(await page.evaluate(()=>events.some(e=>e.type==='execution'&&e.id==='model')));
+ assert.ok(await hasEvent('execution','model'));
  for(const theme of [{bg:'#202124',fg:'#dfe1e5',panel:'#2b2d30'},{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}]){
-  await page.evaluate(p=>dbtUpdate(p),{...payload,theme});
+  await update({...payload,theme});
   assert.equal(await page.getByRole('button',{name:/3 failing tests/}).count(),1);
   assert.match(await page.evaluate(()=>graphSvg()),/3 failing tests/);
  }
- await page.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.map(n=>n.execution?{...n,execution:{...n.execution,failingTests:0}}:n)}),payload);
+ await update({...payload,nodes:payload.nodes.map(n=>n.execution?{...n,execution:{...n.execution,failingTests:0}}:n)});
  assert.equal(await page.getByRole('button',{name:/failing tests/}).count(),0);
- await page.evaluate(p=>dbtUpdate(p),fixture);assert.deepEqual(errors,[]);
+ await update(fixture);assert.deepEqual(errors,[]);
 });
 
 test('Explicit configuration selection updates Lineage fields while stale local replies are rejected',async()=>{
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
 
  await page.locator('#selector').fill('old');await page.locator('#exclude').fill('tag:old');
  await page.evaluate(()=>dbtShowFilter({fromConfiguration:true,expression:'fqn:analytics.orders',exclude:'',ids:['model'],diagnostics:[]}));
@@ -221,7 +225,7 @@ test('Lineage filters remain independent and only Use in Run Configuration reque
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
  await page.locator('#use-config').click();assert.equal(await page.evaluate(()=>events.at(-1).type),'use-configuration-selection');
  await page.evaluate(()=>dbtShowFilter({expression:'tag:finance+',exclude:'',ids:['model'],diagnostics:[]}));
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1).shared),undefined);
  await page.getByRole('button',{name:'Clear filter',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='filter').at(-1)),{type:'filter',id:'',value:''});
@@ -250,26 +254,26 @@ test('lineage actions stay flat and fields remain visible at narrow widths',asyn
 
 test('resource cards hide unresolved configuration and unknown result badges, with keyboard inspection',async()=>{
  const payload={...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,materialized:"{{ config.get('materialized') }}",schema:'null',execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Missing artifact'}}:n)};
- await page.evaluate(p=>dbtUpdate(p),payload);
+ await update(payload);
  const card=page.locator('.card[data-kind=model]').filter({hasText:'orders'});
  assert.doesNotMatch(await card.innerText(),/\{\{|null|Not run/);
  assert.equal(await page.locator('.execution-badge').count(),0);
  assert.match(await card.getAttribute('aria-label'),/graph focus/);
  await page.locator('#resource-picker').selectOption('model');
- assert.ok(await page.evaluate(()=>events.some(e=>e.type==='select'&&e.id==='model')));
+ assert.ok(await hasEvent('select','model'));
  await card.focus();await page.keyboard.press('Enter');
  assert.equal(await page.locator('.card.selected').count(),1);
  assert.match(await page.locator('#selection-context').innerText(),/Focus: orders · Selected: orders/);
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
 });
 
 test('native documentation requests are explicit and refreshes do not reopen documentation',async()=>{
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
  await page.evaluate(()=>{events=[];select('model',false)});
  await page.getByRole('button',{name:'Open Documentation',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'select',id:'model',value:''});
  await page.evaluate(()=>events=[]);
- await page.evaluate(p=>dbtUpdate(p),fixture);
+ await update(fixture);
  assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),0);
  assert.equal(await page.locator('#docs,#handle,#tabs').count(),0);
  assert.deepEqual(errors,[]);
@@ -282,7 +286,7 @@ test('large graphs stay readable and group controls never cover the canvas',asyn
  try{
   for(const width of [600,1600]){
    await page.setViewportSize({width,height:500});
-   await page.evaluate(p=>dbtUpdate(p),payload);
+   await update(payload);
    assert.ok(await page.evaluate(()=>cy.zoom())>=.8);
    await page.locator('#group-by').selectOption('folder');
    const groups=await page.locator('#groups').boundingBox(),graph=await page.locator('#graph-pane').boundingBox();
@@ -319,14 +323,14 @@ test('large graphs stay readable and group controls never cover the canvas',asyn
   await page.locator('#selector').fill('customer_orders');
   await page.evaluate(ids=>dbtShowFilter({expression:'customer_orders',exclude:'',ids,diagnostics:[]}),nodes.map(n=>n.id));
   assert.ok(await page.evaluate(()=>cy.zoom())>=.8,'Selector changes retain readable labels');
-  await page.evaluate(p=>dbtUpdate({...p,focus:'large:150',nodes:p.nodes.map(n=>({...n,focus:n.id==='large:150'}))}),payload);
+  await update({...payload,focus:'large:150',nodes:payload.nodes.map(n=>({...n,focus:n.id==='large:150'}))});
   const focused=await nodePosition('large:150');
   assert.ok(Math.abs(focused.x-pane.x-pane.width/2)<1&&Math.abs(focused.y-pane.y-pane.height/2)<1,'New editor focus is centered');
   assert.deepEqual(errors,[]);
  }finally{
   await page.locator('#clear-search').click();await page.locator('#clear-filter').click();
   await page.locator('#group-by').selectOption('');
-  await page.setViewportSize({width:1400,height:850});await page.evaluate(p=>dbtUpdate(p),fixture);
+  await page.setViewportSize({width:1400,height:850});await update(fixture);
  }
 });
 

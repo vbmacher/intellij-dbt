@@ -8,28 +8,23 @@ import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
 import com.intellij.openapi.util.Disposer
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.testFramework.PlatformTestUtil
 import org.jdom.Element
 import org.junit.Assert._
 import java.nio.file.{Files, Path}
 import java.time.Instant
 import scala.jdk.CollectionConverters._
 
-final class DbtNativeTestRunnerTest extends DbtCodeInsightTestCase {
-  override protected def tearDown(): Unit = try DbtProjectSettings.get(getProject).loadState(new DbtSettingsState) finally super.tearDown()
-  private def await(message: String)(condition: => Boolean): Unit =
-    PlatformTestUtil.waitWithEventsDispatching(message, () => condition, 20)
+final class DbtNativeTestRunnerTest extends DbtTestCase {
   private def configuration(): DbtRunConfiguration = {
     val factory = ConfigurationTypeUtil.findConfigurationType(classOf[DbtConfigurationType]).getConfigurationFactories.head
     val config = factory.createTemplateConfiguration(getProject).asInstanceOf[DbtRunConfiguration]
     config.action = "Test"
-    config.root = DbtWorkspace.get(getProject).roots.head.directory.getPath
+    config.root = workspace.roots.head.directory.getPath
     config
   }
   private def setup(mode: String = ""): (DbtRunConfiguration, DbtCommand, Path) = {
     project(); add("tests/check_orders.sql", "select 1")
-    val directory = Files.createTempDirectory("dbt native tests ")
-    Disposer.register(getTestRootDisposable, () => com.intellij.openapi.util.io.FileUtil.delete(directory.toFile))
+    val directory = tempDirectory("dbt native tests ")
     Files.writeString(directory.resolve("dbt_project.yml"), "name: analytics\nconfig-version: 2\n")
     val script = directory.resolve("external dbt.py")
     Files.writeString(script, """import json,os,sys,time,datetime
@@ -43,13 +38,13 @@ with open(os.path.join(os.environ['DBT_TARGET_PATH'],'run_results.json'),'w') as
  json.dump({'metadata':{'dbt_schema_version':'https://schemas.getdbt.com/dbt/run-results/v6.json','invocation_id':'native-run','generated_at':datetime.datetime.now(datetime.timezone.utc).isoformat()},'args':{'target':'dev'},'results':[{'unique_id':'test.analytics.check_orders','status':'fail' if '--fail' in sys.argv else 'pass','message':'3 unexpected rows','failures':3}]},f)
 sys.exit(1 if '--fail' in sys.argv else 0)
 """)
-    val w = DbtWorkspace.get(getProject); val root = w.roots.head
+    val w = workspace; val root = w.roots.head
     root.runOptions.executable = "/usr/bin/python3"
     root.runOptions.executableArguments = "\"" + script.toString + "\""
     root.runOptions.projectRoot = directory.toString
     root.runOptions.target = "dev"; root.runOptions.notifications = false
     DbtProjectSettings.get(getProject).changed()
-    val updated = DbtWorkspace.get(getProject)
+    val updated = workspace
     val command = DbtCommand.create(updated, DbtRunSelection.all(updated, root.directory.getPath).get, "Test", fullRefresh = false).toOption.get
     val config = configuration()
     val captured = command.copy(request = command.request.copy(extraArguments = mode.split(" ").filter(_.nonEmpty).toVector))
@@ -61,7 +56,7 @@ sys.exit(1 if '--fail' in sys.argv else 0)
   private def session(config: DbtRunConfiguration, command: DbtCommand): DbtTestConsole = {
     val session = new DbtTestConsole(config, DefaultRunExecutor.getRunExecutorInstance)
     Disposer.register(getTestRootDisposable, session.view)
-    session.start(command, DbtTestDiscovery.discover(DbtWorkspace.get(getProject)))
+    session.start(command, DbtTestDiscovery.discover(workspace))
     session
   }
 
@@ -185,7 +180,7 @@ sys.exit(1 if '--fail' in sys.argv else 0)
 
   def testGutterHasNativeRunActionsAndShowsPassFailAndSourceInvalidation(): Unit = {
     val (config, command, _) = setup()
-    val file = DbtWorkspace.get(getProject).symbols.find(_.kind == "test").get.file
+    val file = workspace.symbols.find(_.kind == "test").get.file
     open(file, 0)
     val definition = DbtTestRunLineMarker.testsAt(file.findElementAt(0)).get
     assertEquals("not run", DbtTestRunLineMarker.status(file, definition))
