@@ -1,27 +1,79 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
-import com.google.gson.{JsonArray, JsonElement, JsonParser}
-import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.{KillableProcessHandler, ProcessEvent, ProcessListener}
+import com.github.vbmacher.intellij.dbt.lineage.DbtSelection
+import com.google.gson.JsonParser
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.execution.process.{AnsiEscapeDecoder, KillableProcessHandler, ProcessEvent, ProcessListener, ProcessOutputTypes}
 import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.{ApplicationManager, ModalityState}
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.{Disposer, Key}
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.util.execution.ParametersListUtil
 import com.intellij.ui.SystemNotifications
 import com.intellij.util.concurrency.AppExecutorUtil
-import java.nio.charset.StandardCharsets
+import com.intellij.util.execution.ParametersListUtil
 import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
-import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 import scala.util.control.NonFatal
+
+private[ide] sealed abstract class DbtCommandAction(val label: String, val command: Vector[String],
+  val usesState: Boolean = true, val structured: Boolean = false) extends Product with Serializable
+
+private[ide] object DbtCommandAction {
+  case object Run extends DbtCommandAction("Run", Vector("run"), structured = true)
+  case object Build extends DbtCommandAction("Build", Vector("build"), structured = true)
+  case object Test extends DbtCommandAction("Test", Vector("test"), structured = true)
+  case object Compile extends DbtCommandAction("Compile", Vector("compile"))
+  case object Preview extends DbtCommandAction("Preview", Vector("show"))
+  case object GenerateDocs extends DbtCommandAction("Generate Docs", Vector("docs", "generate"), usesState = false)
+  case object SourceFreshness extends DbtCommandAction("Source Freshness", Vector("source", "freshness"), usesState = false, structured = true)
+  case object ResolveSelection extends DbtCommandAction("Resolve Selection", Vector("ls", "--quiet", "--output", "json"), usesState = false)
+
+  lazy val toolbar: Vector[DbtCommandAction] = Vector(Run, Build, Test, Compile, Preview, GenerateDocs, SourceFreshness)
+  def fromLabel(label: String): Option[DbtCommandAction] = (toolbar :+ ResolveSelection).find(_.label == label)
+}
+
+private[ide] sealed abstract class DbtCommandScope
+private[ide] object DbtCommandScope {
+  case object All extends DbtCommandScope
+  final case class Selected(terms: Vector[String]) extends DbtCommandScope
+  final case class Named(name: String) extends DbtCommandScope
+  final case class Inline(sql: String) extends DbtCommandScope
+}
+
+/** Resolved command inputs. Rendering never reads settings or rewrites an existing argument vector. */
+private[ide] final case class DbtCommandRequest(action: DbtCommandAction, scope: DbtCommandScope = DbtCommandScope.All,
+  exclude: Vector[String] = Vector.empty, fullRefresh: Boolean = false, limit: Int = 10,
+  state: Option[String] = None, defer: Boolean = false, favorState: Boolean = false,
+  indirectSelection: Option[String] = None, debugSql: Boolean = false, extraArguments: Vector[String] = Vector.empty) {
+  def arguments: Vector[String] = {
+    val selection = scope match {
+      case DbtCommandScope.All => Vector.empty
+      case DbtCommandScope.Selected(terms) => Vector("--select") ++ terms
+      case DbtCommandScope.Named(name) => Vector("--selector", name)
+      case DbtCommandScope.Inline(sql) => Vector("--inline", sql)
+    }
+    action.command ++ (if (action.structured) Vector("--log-format", "json") else Vector.empty) ++ selection ++
+      (if (exclude.nonEmpty) Vector("--exclude") ++ exclude else Vector.empty) ++
+      (if (fullRefresh) Vector("--full-refresh") else Vector.empty) ++
+      (if (action == DbtCommandAction.Preview) Vector("--limit", DbtCommandRequest.limit(limit).toString, "--output", "json") else Vector.empty) ++
+      (if (debugSql) Vector("--log-format", "json", "--log-level", "debug") else Vector.empty) ++
+      state.toVector.flatMap(path => Vector("--state", path)) ++
+      (if (defer) Vector("--defer") else Vector.empty) ++ (if (favorState) Vector("--favor-state") else Vector.empty) ++
+      indirectSelection.toVector.flatMap(value => Vector("--indirect-selection", value)) ++ extraArguments
+  }
+}
+private[ide] object DbtCommandRequest {
+  /** Preview row limits are bounded to 1–1000 wherever they are requested, rendered or displayed. */
+  def limit(value: Int): Int = value.max(1).min(1000)
+}
 
 /** The executable prefix is captured separately from the dbt request, including wrapper arguments. */
 private[ide] final case class DbtCommand(prefix: Vector[String], request: DbtCommandRequest, directory: String,
@@ -31,22 +83,25 @@ private[ide] final case class DbtCommand(prefix: Vector[String], request: DbtCom
   def action: String = request.action.label
   lazy val arguments: Vector[String] = prefix ++ request.arguments ++
     (if (target.nonEmpty) Vector("--target", target) else Vector.empty) :+ (if (colors) "--use-colors" else "--no-use-colors")
+  def commandLine: String = ParametersListUtil.join(arguments.asJava)
+  def executionRoot: String = Option(root).filter(_.nonEmpty).getOrElse(artifactContext.headOption.getOrElse(directory))
 }
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = DbtCommandAction.toolbar.map(_.label)
+  private def wholeProject(w: DbtWorkspace, root: DbtRoot): Either[String, DbtRunSelection] =
+    DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
   def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean,
     requested: Option[DbtRunSelection] = None, cliIds: Option[Vector[String]] = None): Either[String, DbtCommand] = {
     val options = root.runOptions
     if (Set("Generate Docs", "Source Freshness")(action))
-      return DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-        .flatMap(create(w, _, action, fullRefresh = false, Some(root.runOptions)))
+      return wholeProject(w, root).flatMap(create(w, _, action, fullRefresh = false, Some(root.runOptions)))
     val expression = DbtSelectionReview.expression(w, root, requested)
-    val local = com.github.vbmacher.intellij.dbt.lineage.DbtSelection.resolve(w, root, expression, options.exclude)
+    val local = DbtSelection.resolve(w, root, expression, options.exclude)
     val cliMatches = cliIds.map(ids => DbtSelectionReview.knownCliResources(w, root).filter(s => ids.contains(s.id)))
     val resolved = cliIds.fold(local) { ids =>
       val matches = cliMatches.toVector.flatten
-      com.github.vbmacher.intellij.dbt.lineage.DbtSelection(matches.flatMap(_.symbol),
+      DbtSelection(matches.flatMap(_.symbol),
         ids.filterNot(id => matches.exists(_.id == id)).map(id => "CLI resource is unavailable locally: " + id))
     }
     val stateSelection = (expression + " " + options.exclude).split("[\\s,]+").exists(_.replaceFirst("^[0-9]*\\+", "").startsWith("state:"))
@@ -58,16 +113,16 @@ private[ide] object DbtCommand {
       _ <- Either.cond(resolved.complete || stateSelection && resolved.problems.forall(_.contains("state:")), (), resolved.problems.mkString("\n"))
       _ <- Either.cond(stateSelection || cliMatches.fold(resolved.resources.nonEmpty)(_.nonEmpty), (), "Selection matches no resources.")
       _ <- Either.cond(action != "Preview", (), "Use a model or CTE for Preview.")
-      all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
+      everything <- wholeProject(w, root)
       incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
         DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
-      base <- create(w, all, action, fullRefresh && incremental, Some(root.runOptions))
+      base <- create(w, everything, action, fullRefresh && incremental, Some(root.runOptions))
       excluded <- DbtSelectionReview.cliTerms(w, root, options.exclude)
     } yield {
       val scope = if (expression.isEmpty && cliIds.isEmpty) DbtCommandScope.All
       else if (stateSelection && cliIds.isEmpty) DbtCommandScope.Selected(expression.split("\\s+").filter(_.nonEmpty).toVector)
       else DbtCommandScope.Selected(cliMatches.map(_.map(_.selector)).getOrElse(
-        resolved.resources.map(com.github.vbmacher.intellij.dbt.lineage.DbtSelection.selector(w, _))).distinct)
+        resolved.resources.map(DbtSelection.selector(w, _))).distinct)
       // Preserve explicit exclusions as well: dbt may otherwise select their tests indirectly.
       base.copy(request = base.request.copy(scope = scope, exclude = excluded))
     }
@@ -77,8 +132,8 @@ private[ide] object DbtCommand {
     val expression = DbtSelectionReview.expression(w, root, requested)
     val exclude = root.runOptions.exclude.trim
     for {
-      all <- DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
-      base <- prepare(w, all, DbtCommandAction.ResolveSelection, fullRefresh = false, Some(root.runOptions))
+      everything <- wholeProject(w, root)
+      base <- prepare(w, everything, DbtCommandAction.ResolveSelection, fullRefresh = false, Some(root.runOptions))
       baseline <- if ((expression + " " + exclude).contains("state:")) DbtState.baseline(root).map(p => Some(p.toString))
         else Right(None)
       exclusions <- DbtSelectionReview.cliTerms(w, root, exclude)
@@ -134,7 +189,7 @@ private[ide] object DbtCommand {
             val request = DbtCommandRequest(action,
               if (action == DbtCommandAction.GenerateDocs || all) DbtCommandScope.All else DbtCommandScope.Selected(selectors),
               fullRefresh = fullRefresh && incremental && Set(DbtCommandAction.Run, DbtCommandAction.Build)(action),
-              limit = options.previewLimit.max(1).min(1000), state = baseline,
+              limit = DbtCommandRequest.limit(options.previewLimit), state = baseline,
               defer = action.usesState && options.defer, favorState = action.usesState && options.favorState)
             DbtCommand(prefix.toVector, request, directory.toString,
               DbtExecutionContext.environment(root) ++ Map("DBT_PROFILES_DIR" -> profiles, "DBT_TARGET_PATH" -> artifact.toString),
@@ -166,10 +221,10 @@ final class DbtRunner(project: Project) extends Disposable {
   }
   private def fire(event: DbtRunnerEvent): Unit = listeners.asScala.foreach(_(event))
 
-  private[ide] def start(command: DbtCommand, outputSink: (String, com.intellij.openapi.util.Key[_]) => Unit = (_, _) => ()): Boolean = {
+  private[ide] def start(command: DbtCommand, outputSink: (String, Key[_]) => Unit = (_, _) => ()): Boolean = {
     if (disposed || !busy.compareAndSet(false, true)) false
     else {
-      val modality = com.intellij.openapi.application.ModalityState.defaultModalityState()
+      val modality = ModalityState.defaultModalityState()
       def onUi(action: => Unit): Unit = ApplicationManager.getApplication.invokeLater(() => if (!disposed && !project.isDisposed) action, modality)
       cancelled.set(false)
       evidence.begin(command)
@@ -181,15 +236,13 @@ final class DbtRunner(project: Project) extends Disposable {
         else try {
           val manifestBefore = DbtArtifactContext.fingerprint(command.artifactDirectory)
           val started = System.nanoTime()
-          val line = new GeneralCommandLine(command.arguments.asJava).withWorkDirectory(command.directory)
-            .withEnvironment(command.environment.asJava).withCharset(StandardCharsets.UTF_8)
-          val process = new KillableProcessHandler(line)
+          val process = new KillableProcessHandler(DbtToolCommand(command.arguments, command.directory, command.environment).commandLine)
           process.setShouldKillProcessSoftly(false)
           val display = new DbtConsoleOutput(outputSink)
           handler = process
           val output = new StringBuilder
           process.addProcessListener(new ProcessListener {
-            override def onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key[_]): Unit = {
+            override def onTextAvailable(event: ProcessEvent, outputType: Key[_]): Unit = {
               output.synchronized { if (output.length < 10000000) output.append(event.getText) }
               display.textAvailable(event.getText, outputType)
               evidence.stream(event.getText)
@@ -201,11 +254,12 @@ final class DbtRunner(project: Project) extends Disposable {
               val success = event.getExitCode == 0 && !wasCancelled
               val message = if (wasCancelled) s"${command.action} cancelled" else s"${command.action} finished (exit ${event.getExitCode})"
               val capturedOutput = output.synchronized(output.toString)
-              val previewEvidence = Option.when(command.action == "Preview")(
+              val isPreview = command.action == "Preview"
+              val previewEvidence = Option.when(isPreview)(
                 DbtPreviewEvidence.capture(command, capturedOutput, failed = !success, canceled = wasCancelled))
-              val preview = if (success && command.action == "Preview") Some(DbtPreview.format(capturedOutput)) else None
-              val result = if (success && command.action == "Preview") DbtQueryResult.parse(capturedOutput,
-                command.target, command.request.limit.max(1).min(1000), (System.nanoTime() - started) / 1000000L,
+              val preview = if (success && isPreview) Some(DbtPreview.format(capturedOutput)) else None
+              val result = if (success && isPreview) DbtQueryResult.parse(capturedOutput,
+                command.target, DbtCommandRequest.limit(command.request.limit), (System.nanoTime() - started) / 1000000L,
                 previewEvidence.flatMap(e => e.adapterSql.orElse(Some(e.submitted))).getOrElse(command.sourceSql)).toOption else None
               val refresh = success && Set("Run", "Build", "Compile", "Generate Docs")(command.action)
               if (refresh) {
@@ -220,7 +274,7 @@ final class DbtRunner(project: Project) extends Disposable {
                 handler = null; busy.set(false)
                 fire(DbtRunnerEvent(running = false, message, refresh, displayedPreview, result, execution, Some(command), previewEvidence,
                   Option.when(success && command.action == "Resolve Selection")(capturedOutput), Some(event.getExitCode)))
-                com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project).restart("dbt execution results changed")
+                DaemonCodeAnalyzer.getInstance(project).restart("dbt execution results changed")
                 DbtNotifications.publish(project, command, message, success, wasCancelled)
               }
             }
@@ -254,58 +308,65 @@ private[ide] object DbtNotifications {
   }
 }
 
-private[ide] object DbtPreview {
-  private val ansi = "\u001b\\[[0-9;]*[A-Za-z]".r
-  def rows(output: String): Option[JsonArray] = {
-    val plain = ansi.replaceAllIn(output, "")
-    def rows(element: JsonElement): Option[JsonArray] = {
-      if (element.isJsonArray) Some(element.getAsJsonArray)
-      else if (element.isJsonObject) {
-        val obj = element.getAsJsonObject
-        Option(obj.get("preview")).flatMap(e => if (e.isJsonPrimitive && e.getAsJsonPrimitive.isString)
-          Try(JsonParser.parseString(e.getAsString)).toOption.flatMap(rows) else rows(e))
-          .orElse(Option(obj.get("data")).flatMap(rows))
-          .orElse(Option(obj.get("show")).flatMap(rows))
-      } else None
-    }
-    // dbt's ordinary log format prints a multiline {"show": [...]} object among human-readable messages.
-    // Extract balanced JSON values without assuming one log record per line or rewriting string contents.
-    val values = ArrayBuffer.empty[String]
-    var stack = List.empty[(Char, Int)]
-    var quoted = false
-    var escaped = false
-    plain.indices.foreach { i =>
-      val c = plain(i)
-      if (quoted) {
-        if (escaped) escaped = false
-        else if (c == '\\') escaped = true
-        else if (c == '"') quoted = false
-      } else if (c == '"' && stack.nonEmpty) quoted = true
-      else if (c == '{' || c == '[') stack = (c -> i) :: stack
-      else if (c == '}' || c == ']') stack match {
-        case (open, start) :: rest if open == (if (c == '}') '{' else '[') => values += plain.substring(start, i + 1); stack = rest
-        case _ => stack = Nil
+/** Formats the display stream; execution evidence and query results use the original output. */
+private[ide] final class DbtConsoleOutput(sink: (String, Key[_]) => Unit) {
+  private val decoder = new AnsiEscapeDecoder
+  private val acceptor = new AnsiEscapeDecoder.ColoredTextAcceptor {
+    override def coloredTextAvailable(text: String, attributes: Key[_]): Unit = sink(text, attributes)
+  }
+  private val pending = mutable.LinkedHashMap.empty[Key[_], StringBuilder]
+  private val continuing = mutable.Set.empty[Key[_]]
+  private val time = "(?:T|^)([0-9]{2}:[0-9]{2}:[0-9]{2})".r
+
+  def textAvailable(text: String, kind: Key[_]): Unit = synchronized {
+    if (kind == ProcessOutputTypes.SYSTEM) emit(text, kind)
+    else {
+      val buffer = pending.getOrElseUpdate(kind, new StringBuilder)
+      var start = 0
+      while (start < text.length) {
+        val end = text.indexOf('\n', start)
+        val chunk = text.substring(start, if (end < 0) text.length else end + 1)
+        if (buffer.nonEmpty || !continuing(kind) && chunk.trim.startsWith("{")) {
+          buffer.append(chunk)
+          if (end >= 0) {
+            emit(format(buffer.toString), kind)
+            buffer.clear()
+          } else if (buffer.length > 1000000) {
+            emit(buffer.toString, kind)
+            buffer.clear()
+          }
+        } else emit(chunk, kind)
+        if (end >= 0) continuing -= kind else if (chunk.trim.nonEmpty) continuing += kind
+        start = if (end < 0) text.length else end + 1
       }
     }
-    val candidates = Vector(plain) ++ values
-    candidates.iterator.flatMap(s => Try(JsonParser.parseString(s.trim)).toOption.flatMap(rows)).toVector.lastOption
   }
 
-  def format(output: String): String = {
-    rows(output) match {
-      case Some(array) if array.isEmpty => "No data returned."
-      case Some(array) =>
-        val objects = array.asScala.filter(_.isJsonObject).map(_.getAsJsonObject).toVector
-        val headers = objects.flatMap(_.keySet().asScala).distinct
-        if (headers.isEmpty) "No data returned."
-        else {
-          val values = objects.map(o => headers.map(h => Option(o.get(h)).filterNot(_.isJsonNull)
-            .map(e => if (e.isJsonPrimitive) e.getAsString else e.toString).getOrElse("null").replace("\n", "\\n")))
-          val widths = headers.indices.map(i => (headers(i).length +: values.map(_(i).length)).max)
-          def row(xs: Seq[String]): String = xs.indices.map(i => xs(i).padTo(widths(i), ' ')).mkString(" | ")
-          row(headers) + "\n" + widths.map(n => "-" * n).mkString("-+-") + "\n" + values.map(row).mkString("\n")
-        }
-      case _ => "Preview JSON was unavailable. See dbt output for details."
+  def finish(): Unit = synchronized {
+    pending.foreach { case (kind, buffer) =>
+      if (buffer.nonEmpty) emit(format(buffer.toString), kind)
     }
+    pending.clear()
+    continuing.clear()
+  }
+
+  private def emit(text: String, kind: Key[_]): Unit = decoder.escapeText(text, kind, acceptor)
+
+  private def format(line: String): String = {
+    val message = Try(JsonParser.parseString(line)).toOption.filter(_.isJsonObject).flatMap { element =>
+      val obj = element.getAsJsonObject
+      for {
+        _ <- Option(obj.get("data")).filter(_.isJsonObject)
+        info <- DbtExecutionEvidence.child(obj, "info")
+        text <- DbtExecutionEvidence.text(info, "msg")
+      } yield {
+        val timestamp = DbtExecutionEvidence.text(info, "ts").flatMap(value => time.findFirstMatchIn(value).map(_.group(1)))
+          .map(_ + "  ").getOrElse("")
+        val level = DbtExecutionEvidence.text(info, "level").map(_.toUpperCase(java.util.Locale.ROOT))
+          .filterNot(_ == "INFO").map(value => s"[$value] ").getOrElse("")
+        if (text.isEmpty) "\n" else timestamp + level + text.stripSuffix("\n") + "\n"
+      }
+    }
+    message.getOrElse(line)
   }
 }

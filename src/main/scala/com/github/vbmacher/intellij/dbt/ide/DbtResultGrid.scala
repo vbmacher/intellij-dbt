@@ -1,6 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.google.gson.{JsonElement, JsonNull}
+import com.google.gson.{JsonArray, JsonElement, JsonNull, JsonParser}
 import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.{ProgressIndicator, Task}
@@ -11,7 +11,9 @@ import java.awt.datatransfer.StringSelection
 import java.nio.file.Files
 import javax.swing.{JButton, JComboBox, JFileChooser, JPanel, JSpinner, JTable, RowFilter, SpinnerNumberModel, SwingConstants}
 import javax.swing.table.{AbstractTableModel, DefaultTableCellRenderer, TableRowSorter}
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 private[ide] final case class DbtQueryResult(columns: Vector[String], rows: Vector[Vector[JsonElement]], target: String,
   limit: Int, elapsedMillis: Long, sql: String, raw: String) {
@@ -45,7 +47,7 @@ private[ide] object DbtQueryResult {
       val objects = array.asScala.toVector
       if (!objects.forall(_.isJsonObject)) Left("Preview contains malformed rows. See raw dbt output.")
       else {
-        val boundedLimit = limit.max(1).min(1000)
+        val boundedLimit = DbtCommandRequest.limit(limit)
         val bounded = objects.take(boundedLimit)
         val columns = bounded.flatMap(_.getAsJsonObject.keySet().asScala).distinct
         val rows = bounded.map(o => columns.map(c => Option(o.getAsJsonObject.get(c)).getOrElse(JsonNull.INSTANCE)))
@@ -138,7 +140,7 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
     table.setRowSorter(null); table.setModel(new javax.swing.table.DefaultTableModel); updateButtons()
   }
   def showResult(r: DbtQueryResult): Unit = {
-    result = Some(r); limit.setValue(Int.box(r.limit.max(1).min(1000)))
+    result = Some(r); limit.setValue(Int.box(DbtCommandRequest.limit(r.limit)))
     label.setText(s"Target: ${r.target} · Returned ${r.rows.size} / limit ${r.limit} · ${r.elapsedMillis} ms" +
       (if (r.rows.size >= r.limit) " · May be truncated" else if (r.rows.isEmpty) " · No data returned" else ""))
     val columnTypes = r.columns.indices.map { column =>
@@ -177,4 +179,60 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
     updateButtons()
   }
   updateButtons()
+}
+
+private[ide] object DbtPreview {
+  private[ide] val Ansi = "\u001b\\[[0-9;]*[A-Za-z]".r
+  def rows(output: String): Option[JsonArray] = {
+    val plain = Ansi.replaceAllIn(output, "")
+    def rows(element: JsonElement): Option[JsonArray] = {
+      if (element.isJsonArray) Some(element.getAsJsonArray)
+      else if (element.isJsonObject) {
+        val obj = element.getAsJsonObject
+        Option(obj.get("preview")).flatMap(e => if (e.isJsonPrimitive && e.getAsJsonPrimitive.isString)
+          Try(JsonParser.parseString(e.getAsString)).toOption.flatMap(rows) else rows(e))
+          .orElse(Option(obj.get("data")).flatMap(rows))
+          .orElse(Option(obj.get("show")).flatMap(rows))
+      } else None
+    }
+    // dbt's ordinary log format prints a multiline {"show": [...]} object among human-readable messages.
+    // Extract balanced JSON values without assuming one log record per line or rewriting string contents.
+    val values = ArrayBuffer.empty[String]
+    var stack = List.empty[(Char, Int)]
+    var quoted = false
+    var escaped = false
+    plain.indices.foreach { i =>
+      val c = plain(i)
+      if (quoted) {
+        if (escaped) escaped = false
+        else if (c == '\\') escaped = true
+        else if (c == '"') quoted = false
+      } else if (c == '"' && stack.nonEmpty) quoted = true
+      else if (c == '{' || c == '[') stack = (c -> i) :: stack
+      else if (c == '}' || c == ']') stack match {
+        case (open, start) :: rest if open == (if (c == '}') '{' else '[') => values += plain.substring(start, i + 1); stack = rest
+        case _ => stack = Nil
+      }
+    }
+    val candidates = Vector(plain) ++ values
+    candidates.iterator.flatMap(s => Try(JsonParser.parseString(s.trim)).toOption.flatMap(rows)).toVector.lastOption
+  }
+
+  def format(output: String): String = {
+    rows(output) match {
+      case Some(array) if array.isEmpty => "No data returned."
+      case Some(array) =>
+        val objects = array.asScala.filter(_.isJsonObject).map(_.getAsJsonObject).toVector
+        val headers = objects.flatMap(_.keySet().asScala).distinct
+        if (headers.isEmpty) "No data returned."
+        else {
+          val values = objects.map(o => headers.map(h => Option(o.get(h)).filterNot(_.isJsonNull)
+            .map(e => if (e.isJsonPrimitive) e.getAsString else e.toString).getOrElse("null").replace("\n", "\\n")))
+          val widths = headers.indices.map(i => (headers(i).length +: values.map(_(i).length)).max)
+          def row(xs: Seq[String]): String = xs.indices.map(i => xs(i).padTo(widths(i), ' ')).mkString(" | ")
+          row(headers) + "\n" + widths.map(n => "-" * n).mkString("-+-") + "\n" + values.map(row).mkString("\n")
+        }
+      case _ => "Preview JSON was unavailable. See dbt output for details."
+    }
+  }
 }

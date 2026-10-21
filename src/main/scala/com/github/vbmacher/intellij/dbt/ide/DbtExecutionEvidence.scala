@@ -18,20 +18,24 @@ private[ide] final case class DbtExecutionRun(context: Vector[String], target: S
 private[ide] object DbtExecutionEvidence {
   private val gson = new Gson
   def string(o: JsonObject, key: String): String = Option(o.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
-  def obj(o: JsonObject, key: String): JsonObject = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject).getOrElse(new JsonObject)
+  def obj(o: JsonObject, key: String): JsonObject = child(o, key).getOrElse(new JsonObject)
+  /** A nested object, if `key` holds one. */
+  def child(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+  /** A JSON string value; numbers, booleans and null are absent. */
+  def text(o: JsonObject, key: String): Option[String] =
+    Option(o.get(key)).filter(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
   def objects(o: JsonObject, key: String): Vector[JsonObject] = Option(o.get(key)).toVector.flatMap { e =>
     if (e.isJsonArray) e.getAsJsonArray.asScala.toVector.filter(_.isJsonObject).map(_.getAsJsonObject)
     else if (e.isJsonObject) e.getAsJsonObject.entrySet.asScala.toVector.map(_.getValue).filter(_.isJsonObject).map(_.getAsJsonObject)
     else Vector.empty
   }
-  def json(path: Path): Option[JsonObject] = Try {
+  private def bounded[T](path: Path)(read: => T): Option[T] = Try {
     require(Files.size(path) <= 25000000L, "Artifact exceeds 25 MB")
-    JsonParser.parseString(Files.readString(path)).getAsJsonObject
+    read
   }.toOption
-  def fingerprint(path: Path): Option[String] = Try {
-    require(Files.size(path) <= 25000000L, "Artifact exceeds 25 MB")
-    java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)).map(b => f"${b & 255}%02x").mkString
-  }.toOption
+  def json(path: Path): Option[JsonObject] = bounded(path)(JsonParser.parseString(Files.readString(path)).getAsJsonObject)
+  def fingerprint(path: Path): Option[String] = bounded(path)(
+    java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)).map(b => f"${b & 255}%02x").mkString)
   def normalize(status: String): String = status.toLowerCase match {
     case "pass" | "success" => "passed"
     case "fail" => "failed"
@@ -110,7 +114,7 @@ final class DbtExecutionEvidence(project: Project) {
       pending = ""
       before = names.map(n => n -> fingerprint(Paths.get(command.artifactDirectory).resolve(n))).toMap
       current = Some(DbtExecutionRun(command.artifactContext, command.target, "", Instant.now.toString,
-        command.artifactDirectory, Vector.empty, active = true, root = Option(command.root).filter(_.nonEmpty).getOrElse(command.artifactContext.headOption.getOrElse(command.directory))))
+        command.artifactDirectory, Vector.empty, active = true, root = command.executionRoot))
     } else current = None
   }
   def stream(text: String): Unit = synchronized {
