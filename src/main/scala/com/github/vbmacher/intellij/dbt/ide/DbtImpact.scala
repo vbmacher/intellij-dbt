@@ -4,10 +4,13 @@ import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
+import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.psi.PsiFileFactory
 import org.jetbrains.yaml.YAMLFileType
-
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
@@ -15,6 +18,7 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
+import javax.swing.{JList, JScrollPane, JTabbedPane}
 
 private[dbt] final case class DbtImpactResource(id: String, path: String, fingerprint: String, columns: Vector[String])
 private[dbt] final case class DbtImpactChange(resource: DbtImpactResource, state: String, columns: Vector[String])
@@ -117,7 +121,7 @@ private[dbt] object DbtImpact {
           else git(repository, Vector("show", s"$commit:$path")).map(text => m.updated(Paths.get(repository).resolve(path).toString, text))
         }
       }
-    } yield DbtImpactUi.read {
+    } yield DbtUi.read {
       val w = DbtWorkspace.get(initial.project)
       val baseline = baselineResources(w, contents, Some(ignores))
       val changes = compare(baseline, current(w))
@@ -264,5 +268,63 @@ private[dbt] object DbtImpact {
           p._5, digest(p._6 + p._6 + projectConfig), p._7) }
     }
     result.toVector
+  }
+}
+
+final class DbtImpactAction extends AnAction {
+  override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
+    val baseline = Messages.showInputDialog(project, "Compare current source and unsaved edits against Git revision:", "dbt Change Impact", Messages.getQuestionIcon, "HEAD", null)
+    if (baseline != null && baseline.trim.nonEmpty) DbtUi.background(project, "Analyze dbt Git impact") {
+      val w = DbtUi.read { DbtWorkspace.get(project) }
+      DbtImpact.analyze(w, baseline.trim).map(result => DbtUi.read { DbtWorkspace.get(project) } -> result)
+    } {
+      case Left(error) => Messages.showErrorDialog(project, error, "dbt Change Impact")
+      case Right((workspace, result)) => show(project, workspace, result)
+    }
+  }
+  private def show(project: Project, w: DbtWorkspace, result: DbtImpactResult): Unit = {
+    val heading = DbtUi.textArea("Baseline: " + result.baseline + "\nCompare: Current source including unsaved documents\n" +
+      result.changes.map(c => c.state + " " + c.resource.id + " [outputs: " + c.columns.mkString(", ") + "]").mkString("\n"), wordWrap = false)
+    val list = new JList[String](result.affected.map { case (s, trace) => s.uniqueId + " via " + trace.mkString(" → ") }.toArray)
+    val tabs = new JTabbedPane
+    tabs.addTab("Affected resources (potential)", new JScrollPane(list))
+    val consumers = DbtConsumers.exposures(w).filter(c => result.affected.exists(a => DbtResourceIdentity.key(w, a._1) == c.resource)) ++
+      project.getService(classOf[DbtConsumers]).snapshot.consumers.filter(c => result.affected.exists(a => DbtResourceIdentity.key(w, a._1) == c.resource))
+    tabs.addTab("Consumers", new JScrollPane(new JList[String](consumers.map(c => c.name + " · " + c.kind + " · " + c.confidence + " · " + c.evidence).toArray)))
+    val tasks = result.affected.flatMap(a => DbtAirflow.context(w, a._1)).distinctBy(_.id)
+    val airflowList = new JList[String](tasks.map(t => t.dag + "/" + t.task + " · " + t.project + " · " +
+      (if (t.kind == "ingestion") "Detected ingestion destination" else if (t.resources.isEmpty) "Unresolved selection — association unknown" else "Detected selection: " + t.selection) +
+      " · " + t.problems.mkString("; ") + " · " + t.evidence).toArray)
+    def navigateAirflow(target: String): Unit = DbtUi.selected(airflowList, tasks).foreach { task =>
+      val destination = DbtUi.read {
+        val current = DbtWorkspace.get(project)
+        result.affected.iterator.map(_._1).find(s => DbtAirflow.context(current, s).exists(_.id == task.id))
+          .map(s => DbtAirflow.navigation(current, s, task.id, target))
+          .getOrElse(Left("Airflow DAG selection changed or no longer applies. Run Change Impact again."))
+      }
+      destination match {
+        case Right(value) => value.url match {
+          case Some(url) => BrowserUtil.browse(url)
+          case None => DbtUi.open(project, value.path, value.offset)
+        }
+        case Left(error) => Messages.showInfoMessage(project, error, "Airflow context")
+      }
+    }
+    tabs.addTab("Airflow", DbtUi.border(new JScrollPane(airflowList), south = DbtUi.buttons(
+      DbtUi.button("Open DAG definition") { navigateAirflow("definition") },
+      DbtUi.button("Open Airflow task") { navigateAirflow("browser") })))
+    val notes = DbtUi.textArea((result.problems ++ Vector("Suggested dbt build --select " + result.selection,
+      "Attached data/unit tests are selected by dbt build. Review target/profiles in Runner settings.")).mkString("\n"))
+    tabs.addTab("Validation plan / limitations", new JScrollPane(notes))
+    val build = DbtUi.button("Build reviewed selection") {
+      DbtUi.read { DbtImpact.validationCommand(DbtWorkspace.get(project), result) } match {
+        case Left(error) => Messages.showErrorDialog(project, error, "dbt validation")
+        case Right(value) => DbtRunConfiguration.launch(project, value)
+      }
+    }
+    build.setEnabled(result.selection.nonEmpty)
+    DbtUi.dialog(project, "dbt Change Impact", tabs, north = new JScrollPane(heading), south = DbtUi.buttons(
+      DbtUi.button("Go to definition") { DbtUi.selected(list, result.affected).foreach(_._1.element.navigate(true)) },
+      DbtUi.button("Copy selection") { DbtUi.copy(result.selection) }, build))
   }
 }

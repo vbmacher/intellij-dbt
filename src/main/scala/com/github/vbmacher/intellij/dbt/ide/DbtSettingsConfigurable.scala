@@ -1,14 +1,15 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions}
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.fileChooser.{FileChooser, FileChooserDescriptorFactory}
 import com.intellij.openapi.options.{Configurable, ConfigurationException, ShowSettingsUtil}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.{JBCheckBox, JBScrollPane, JBTextField}
 import com.intellij.util.ui.JBUI
-import java.awt.{Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
-import javax.swing.{JComboBox, JComponent, JLabel, JPanel, JSpinner, JTabbedPane, Scrollable, SpinnerNumberModel, SwingConstants}
+import java.awt.{BorderLayout, Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
+import java.nio.file.{InvalidPathException, Paths}
+import javax.swing._
 import scala.jdk.CollectionConverters._
 
 final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin with Configurable.NoScroll {
@@ -92,19 +93,8 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
       "SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> formatOnSave,
       "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream levels to show" -> upstream,
       "Downstream levels to show" -> downstream, "Layout direction" -> direction)
-    rows.zipWithIndex.foreach { case ((label, field), index) =>
-      field.setMinimumSize(new Dimension(0, field.getMinimumSize.height))
-      val c = new GridBagConstraints
-      c.gridy = index
-      c.gridx = 0
-      c.anchor = GridBagConstraints.WEST
-      c.insets = new Insets(4, 5, 4, 10)
-      panel.add(new JLabel(label), c)
-      c.gridx = 1
-      c.weightx = 1
-      c.fill = GridBagConstraints.HORIZONTAL
-      panel.add(field, c)
-    }
+    rows.foreach { case (_, field) => field.setMinimumSize(new Dimension(0, field.getMinimumSize.height)) }
+    DbtUi.labeledRows(panel, new Insets(4, 5, 4, 10), rows)
     root.addActionListener(_ => {
       if (selectedRoot.nonEmpty) drafts += selectedRoot -> readOptions()
       selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
@@ -213,4 +203,70 @@ object DbtSettingsConfigurable {
     ShowSettingsUtil.getInstance().editConfigurable(project, configurable,
       new Runnable { override def run(): Unit = configurable.tabs.setSelectedIndex(1) })
   }
+}
+
+/** The Integrations tab: Metabase, the local MCP server and local Airflow DAG discovery. */
+final class DbtConsumersConfigurable(project: Project) extends Configurable {
+  private val url = new JTextField()
+  private val secret = new JPasswordField()
+  private val agent = new JCheckBox("Enable local read-only MCP server (start explicitly from Tools)")
+  private val airflowPaths = new DefaultListModel[String]
+  private val airflowFolders = new JList[String](airflowPaths)
+  private val airflowUrl = new JTextField
+  private val airflow = new JPanel(new GridBagLayout)
+  private val panel = new JPanel(new GridBagLayout)
+  private val metabase = new JPanel(new GridBagLayout)
+  private def stack(target: JPanel, rows: Vector[JComponent]): Unit = rows.zipWithIndex.foreach { case (field, row) =>
+    val c = new GridBagConstraints
+    c.gridx = 0; c.gridy = row; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL
+    c.anchor = GridBagConstraints.NORTHWEST; c.insets = new Insets(3, 4, 3, 4)
+    if (field == airflow) c.weighty = 1
+    target.add(field, c)
+  }
+  metabase.setBorder(BorderFactory.createTitledBorder("Metabase"))
+  stack(metabase, Vector(new JLabel("Metabase URL (optional)"), url, new JLabel("Metabase API key (stored in IDE Password Safe)"), secret))
+  secret.setToolTipText("Stored in IDE Password Safe. Clear this field and click Apply to remove the saved API key.")
+  airflow.setBorder(BorderFactory.createTitledBorder("Airflow — local DAG discovery"))
+  airflowFolders.setVisibleRowCount(3)
+  airflowFolders.setToolTipText("DAG folders or Airflow project directories, scanned recursively for Python files. Relative paths use the IDEA project directory.")
+  airflowUrl.setToolTipText("Optional HTTP or HTTPS Airflow web URL, without credentials. Used only for browser links.")
+  private val folderPanel = new JPanel(new BorderLayout(4, 4))
+  folderPanel.add(new JScrollPane(airflowFolders), BorderLayout.CENTER)
+  folderPanel.add(DbtUi.buttons(
+    DbtUi.button("Add folder…") {
+      FileChooser.chooseFiles(FileChooserDescriptorFactory.multiDirs().withTitle("Select local Airflow DAG folders or projects"),
+        project, null).foreach(f => if (!airflowPaths.contains(f.getPath)) airflowPaths.addElement(f.getPath))
+    },
+    DbtUi.button("Remove") { airflowFolders.getSelectedIndices.reverse.foreach(airflowPaths.remove) }), BorderLayout.SOUTH)
+  DbtUi.labeledRows(airflow, new Insets(3, 5, 3, 8), Vector("DAG projects" -> folderPanel, "Airflow URL (optional)" -> airflowUrl))
+  stack(panel, Vector(metabase, agent, airflow))
+
+  private def settings = project.getService(classOf[DbtConsumersSettings]).getState
+  private def service = project.getService(classOf[DbtConsumers])
+  private def folderValues: Vector[String] = (0 until airflowPaths.size()).map(airflowPaths.get).toVector
+  override def getDisplayName: String = "Integrations"
+  override def createComponent(): JComponent = { reset(); panel }
+  override def isModified: Boolean = url.getText != settings.metabaseUrl || agent.isSelected != settings.agentEnabled ||
+    new String(secret.getPassword) != service.apiKey || folderValues != settings.airflowPaths.asScala.toVector || airflowUrl.getText.trim != settings.airflowUrl
+  override def apply(): Unit = {
+    val value = url.getText.trim
+    if (value.nonEmpty && DbtAirflow.safeUrl(value).isEmpty) throw new ConfigurationException("Use an http(s) Metabase URL without embedded credentials.")
+    val airflowLink = airflowUrl.getText.trim
+    if (airflowLink.nonEmpty && DbtAirflow.safeUrl(airflowLink).isEmpty)
+      throw new ConfigurationException("Use an http(s) Airflow URL without embedded credentials.")
+    try folderValues.foreach(Paths.get(_))
+    catch { case _: InvalidPathException => throw new ConfigurationException("Use valid local Airflow directory paths.") }
+    settings.airflowPaths = new java.util.ArrayList[String](folderValues.asJava)
+    settings.airflowUrl = airflowLink
+    DbtProjectSettings.get(project).changed()
+    settings.metabaseUrl = value; settings.agentEnabled = agent.isSelected
+    service.setSecret(new String(secret.getPassword))
+    service.clear(); if (!agent.isSelected) project.getService(classOf[DbtAgent]).stop()
+  }
+  override def reset(): Unit = {
+    url.setText(settings.metabaseUrl); agent.setSelected(settings.agentEnabled); secret.setText(service.apiKey)
+    airflowPaths.clear(); settings.airflowPaths.asScala.foreach(airflowPaths.addElement)
+    airflowUrl.setText(settings.airflowUrl)
+  }
+  override def disposeUIResources(): Unit = secret.setText("")
 }
