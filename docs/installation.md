@@ -2,17 +2,28 @@
 
 ## Requirements
 
-Use IntelliJ IDEA 2026.2 with **YAML** enabled. Community and Ultimate are supported; Database Tools is not required.
+Use IntelliJ IDEA 2026.2, Community or Ultimate. Database Tools is not required.
+Enable these plugins in **Settings → Plugins**:
 
-In **Settings → Plugins**, enable **TextMate Bundles** for dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja highlighting. No manual TextMate bundle import or global SQL file association is needed. Navigation remains available when TextMate highlighting is disabled.
+| Plugin | Needed for |
+| --- | --- |
+| **YAML** (bundled) | Required; the plugin does not load without it. |
+| **TextMate Bundles** (bundled) | dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja [highlighting](editing.md#syntax-highlighting). No bundle import or SQL file association is needed. Navigation works without it. |
+| **Test Runner** (bundled) | Required; provides the dbt [test tree](workspace.md#tests). |
+| **Web Browser (JCEF)** (bundled, with the bundled JetBrains Runtime) | The [Lineage](workspace.md#lineage) graph. Without JCEF the graph cannot open; commands and navigation still work. |
+| **Python Community Edition** (free, from Marketplace) | [Python model](navigation.md#python-models) navigation and Python `builtin-sources`. |
 
-The native dbt test tree requires the bundled **Test Runner** component. Python model navigation additionally needs the free **Python Community Edition** plugin.
+Use a full IntelliJ installation so the bundled components are present.
 
-The interactive graph needs the IDE's **Web Browser (JCEF)** plugin and its bundled JetBrains Runtime. Use a full IntelliJ installation with these components. The graph cannot open when JCEF is unavailable; command execution and dependency navigation remain available.
+To run dbt commands, install dbt, its adapters and the project's packages in your
+chosen environment, then set the executable in
+[execution settings](configuration.md#execution-settings). Browsing local source needs
+no dbt process or warehouse connection.
 
-To execute dbt commands, install dbt, its adapters and project packages in your chosen environment. Configure their paths through [plugin configuration](configuration.md). Browsing local source does not require a dbt process or warehouse connection.
-
-To use SQL linting or formatting, make the configured SQLFluff or sqlfmt executable available in the chosen environment. SQLFluff also needs the dialect and templater required by your project; its dbt templater needs the corresponding dbt adapter and project dependencies. See [tool configuration](configuration.md#sql-linting-and-formatting).
+To lint or format SQL, make the sqlfmt or SQLFluff executable available in that
+environment and [select it](configuration.md#sql-formatter). SQLFluff also needs the
+dialect and templater your project uses; its dbt templater needs the dbt adapter and
+project dependencies.
 
 ## Install the plugin
 

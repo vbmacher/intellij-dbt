@@ -1,24 +1,23 @@
-# dbt resource icons
+# Icons
 
-[User guide](getting_started.md) · [Navigation](navigation.md)
+[User guide](getting_started.md)
 
-**Navigation results** below means the Go to Declaration chooser, Find Usages
-window, and applicable dbt Properties / dbt Dependencies popups. Ctrl+Click on a
-single target jumps directly. Dependency icons identify types; **Uses** / **Used by**
-shows direction, and indented `file:line` entries open references.
+**Navigation results** means the Go to Declaration chooser, the Find Usages window
+and the **dbt Properties** / **dbt Dependencies** popups. Completion suggestions use
+the same icons.
 
-## Declaration legend
+## Resource icons
 
-Paths come from the nearest `dbt_project.yml`; defaults appear in parentheses.
-[Engine/version settings](configuration.md#engine-and-version) control availability.
-Project-window files use their resource icon first; otherwise, top-level declarations
-must share one icon. Mixed icons retain the normal file-type icon. Ignored/generated
-files keep their normal icons. Declarations inside files have navigation icons, not
-separate Project-window entries.
+In the Project window, a file shows a resource icon when the resources it defines
+share one icon: resources defined by the file's code (SQL, Python, CSV and similar)
+take precedence; otherwise its top-level YAML declarations count. Files with mixed
+icons, ignored files and generated output keep their normal file-type icon.
+Declarations inside a file appear only in navigation results. Default resource
+paths are shown in parentheses. Availability follows the
+[engine and version](configuration.md#engine-and-version).
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Editor gutter: resource/declaration lines with related targets, ambiguous references or metadata-only targets. Click for a chooser; tooltips explain ambiguity/staleness. One marker per line. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="model" width="20" height="20"></picture> | SQL or Python model | Project window and navigation results: `.sql`/`.py` files in `model-paths` (`models/`) and their `models:` YAML properties. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="source" width="20" height="20"></picture> | Source | Project window and navigation results: `sources:` declarations in resource YAML, e.g. `sources.yml`. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="table" width="20" height="20"></picture> | Source table, SQL CTE or Information Schema view | Navigation results: tables under `sources:`, SQL CTE definitions and views from selected Information Schema metadata. |
@@ -55,36 +54,38 @@ separate Project-window entries.
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/materialization-dark.svg"><img src="icons/materialization.svg" alt="materialization" width="20" height="20"></picture> | Materialization | Project window and navigation results: `{% materialization %}` blocks in resource `.sql` files. |
 | Declared resource's icon | YAML resource properties | Project window and navigation results: named entries such as `models:`, `sources:`, `macros:` and `unit_tests:` in configured resource paths. Use the declared resource's icon, except test-only files above. |
 
-The same resource icons also identify completion suggestions. Test results use
-the IDE's standard status icons.
+## Editor gutter icons
 
-## Tool-window icons
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/gutter-dark.svg"><img src="icons/gutter.svg" alt="dbt gutter navigation" width="20" height="20"></picture> | Gutter navigation | Lines of resources and declarations with related targets, ambiguous references or metadata-only targets. One marker per line; click it for a chooser, hover for ambiguity and staleness. See [Gutter markers](navigation.md#gutter-markers-and-popups). |
+| IDE Run icon | Run dbt model | First non-blank character of a model file. Opens the Run actions for that model. See [Run configurations](workspace.md#run-configurations). |
+| IDE Run icon | Run test, no current result | Beside a singular SQL test, unit-test name or attached data test with no compatible current result, including after source or execution settings change. See [Tests](workspace.md#tests). |
+| IDE green test icon | Test passed | Same places, when the latest compatible result passed. |
+| IDE red test icon | Test failed or errored | Same places, when a test on that line failed or errored; takes precedence over other results on the line. |
+| IDE yellow test icon | Test warned or skipped | Same places, when a result warned or was skipped and no test on that line failed. |
 
-The dbt tool-window icon is a dbt resource icon; the buttons use the IDE's standard
-action icons. See [the dbt window](workspace.md) for the corresponding controls.
+The test tree uses the IDE's standard test status icons.
+
+## dbt tool window icons
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="icons/table-dark.svg"><img src="icons/table.svg" alt="dbt tool window" width="20" height="20"></picture> | dbt tool window | Tool-window stripe entry labeled **dbt**. |
-| Run triangle | Run a model | Editor gutter at the first non-whitespace leaf of a dbt model. Opens standard Run actions for that model. |
-| Preview/details symbol | Open Documentation | Lineage toolbar; opens native Documentation for the selected or focused resource. |
-| Refresh arrows | Configure documentation generation | Lineage **Regenerate Docs**; opens a native Generate Docs configuration without executing it. |
-| Run triangle in Lineage | Configure filtered scope | **Use in Run Configuration** opens a native configuration with the graph's selector fields. |
-| Green test marker | Passed | Editor Run gutter at a test declaration with compatible current passing evidence. |
-| Red test marker | Failed or errored | Editor Run gutter at a test declaration with compatible current failure/error evidence; takes precedence when tests share a line. |
-| Yellow test marker | Warning or skipped | Editor Run gutter with compatible warning/skip evidence and no failing or unresolved test on that line. |
-| Test Run triangle | Result unavailable | Editor Run gutter without compatible current evidence, including after source or execution settings change. |
-| Close cross | Clear or close | Lineage **Clear search** and **Clear filter** buttons; each has its own tooltip. |
-| Magnifier plus/minus | Zoom | Lineage **Zoom in** and **Zoom out** buttons. |
-| Fit-content corners | Fit graph | Lineage **Fit graph** button. |
+| IDE Close icon | **Clear search** | Lineage toolbar, next to **Search resources**. |
+| IDE Zoom In / Zoom Out icons | **Zoom in** / **Zoom out** | Lineage toolbar. |
+| IDE Pin icon | **Pin focus** / **Unpin focus** | Lineage toolbar; shown pressed while focus is pinned. |
+| IDE Copy icon | **Copy image** | Lineage toolbar. |
+| IDE Preview Details icon | **Open Documentation** | Lineage toolbar, right side. |
+| IDE Refresh icon | **Regenerate Docs** | Lineage toolbar, right side. |
 
-## Lineage resource symbols
+Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
 
-The graph shows these symbols next to resource kinds.
+## Lineage card symbols
 
 | Icon | Meaning | Rule |
 | --- | --- | --- |
-| ▤ | Model or other resource | Model cards; also the fallback for resource kinds without another graph symbol. |
+| ▤ | Model or other resource | Model cards, and cards of resource kinds without their own symbol. |
 | ⇥ | Source table | Source-table cards. |
 | ▦ | Seed | Seed cards. |
 | ◷ | Snapshot | Snapshot cards. |
