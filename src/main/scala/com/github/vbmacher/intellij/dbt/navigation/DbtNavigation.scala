@@ -24,7 +24,8 @@ private[dbt] trait DbtReferenceProvider {
   /** Physical relation positions from a host parser, for clipboard conversion. */
   def relationRanges(sql: String): Vector[TextRange] = Vector.empty
 
-  def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[DbtSqlAnalysis] = None
+  /** None means this provider does not handle the file; Left explains why its SQL analysis failed. */
+  def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[Either[String, DbtSqlAnalysis]] = None
 
   def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] = None
 
@@ -152,17 +153,21 @@ private[dbt] object DbtSqlAnalysis {
     DbtReferenceProvider.first(_.sqlSuppressionLayout(file)).getOrElse(DbtSqlSuppressionLayout(Vector.empty, Vector.empty))
 
   def forCompletion(w: DbtWorkspace, file: PsiFile, offset: Int): Option[DbtSqlAnalysis] =
-    DbtReferenceProvider.first(_.sqlAnalysis(file, w, Some(offset)))
+    DbtReferenceProvider.first(_.sqlAnalysis(file, w, Some(offset))).flatMap(_.toOption)
 
   private val Cache = Key.create[ConcurrentHashMap[String, DbtSqlAnalysis]]("dbt.sql.analysis")
   private val active = new ThreadLocal[Set[String]] {
     override def initialValue(): Set[String] = Set.empty
   }
 
-  def get(w: DbtWorkspace, file: PsiFile): Option[DbtSqlAnalysis] = {
+  def get(w: DbtWorkspace, file: PsiFile): Option[DbtSqlAnalysis] = result(w, file).toOption
+
+  def result(w: DbtWorkspace, file: PsiFile): Either[String, DbtSqlAnalysis] = {
     ProgressManager.checkCanceled()
     val path = Option(file.getVirtualFile).map(_.getPath).getOrElse("")
-    if (path.isEmpty || active.get()(path) || active.get().size >= 32) None
+    if (path.isEmpty) Left("SQL analysis requires a saved file.")
+    else if (active.get()(path)) Left("SQL analysis encountered a dependency cycle.")
+    else if (active.get().size >= 32) Left("SQL analysis reached its nested dependency limit.")
     else {
       val cache = w.synchronized {
         Option(w.getUserData(Cache)).getOrElse {
@@ -171,11 +176,11 @@ private[dbt] object DbtSqlAnalysis {
           created
         }
       }
-      Option(cache.get(path)).orElse {
+      Option(cache.get(path)).map[Either[String, DbtSqlAnalysis]](Right(_)).getOrElse {
         val previous = active.get();
         active.set(previous + path)
         try {
-          val result = DbtReferenceProvider.first(_.sqlAnalysis(file, w))
+          val result = DbtReferenceProvider.first(_.sqlAnalysis(file, w)).getOrElse(Left("No SQL analysis provider is available for this file."))
           result.foreach(cache.put(path, _));
           result
         } finally active.set(previous)

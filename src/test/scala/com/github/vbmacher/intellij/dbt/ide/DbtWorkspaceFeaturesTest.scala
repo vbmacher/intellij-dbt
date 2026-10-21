@@ -453,6 +453,30 @@ select * from {{ source('raw', 'missing_table') }}
     assertNotNull(target.createPointer().dereference())
   }
 
+  def testLineageDocumentationLinksTestsToTheirExactSourceDeclarations(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    val properties = add("models/test sources.yml", "models:\n- name: orders\n  data_tests:\n  - ab_test:\n      arguments: {value: 1}\n  columns:\n  - name: id\n    tests: [not_null]\n  - name: other_id\n    data_tests: [not_null]\n")
+    val w = workspace
+    val model = w.symbols.find(s => s.kind == "model" && s.isCode).get
+    val tests = DbtResourceData.get(w, model).tests
+    assertEquals(3, tests.size)
+    val html = org.jsoup.Jsoup.parse(DbtDocumentation.render(w, model, linkTestSources = true))
+    val links = html.select("a[href^=dbt-test:]")
+    assertEquals(3, links.size())
+    tests.foreach { test =>
+      val source = test.source.get
+      assertEquals(properties, source.getContainingFile)
+      assertEquals(test.name, source.getText)
+      val link = links.asScala.find(a => java.net.URLDecoder.decode(a.attr("href").stripPrefix("dbt-test:"),
+        java.nio.charset.StandardCharsets.UTF_8) == test.sourceId.get).get
+      assertEquals(test.name, link.text())
+    }
+    assertEquals(3, tests.flatMap(_.sourceId).distinct.size)
+    assertFalse("Native documentation does not use Lineage message links", DbtDocumentation.render(w, model).contains("dbt-test:"))
+    assertEquals(None, DbtTestData("unavailable").sourceId)
+  }
+
   def testStructureViewNavigatesCteDefinitionsAndIgnoresUnrelatedSql(): Unit = {
     project()
     val file = configure("models/orders.sql", "with a as (select 1 as id), b as (select id from a) select * from b<caret>")

@@ -92,6 +92,10 @@ final class DbtSettingsTest extends DbtTestCase {
         }
         layout(tabs)
         layout(tabs)
+        val toolbars = components(form).collect { case toolbar: com.intellij.openapi.actionSystem.ActionToolbar => toolbar }
+        val updates = toolbars.map(_.updateActionsAsync())
+        await("Mapping toolbar icons are rendered")(updates.forall(_.isDone) && toolbars.forall(_.hasVisibleActions))
+        layout(tabs)
         assertTrue("Builtin mapping rows remain visible", builtinTable.getVisibleRect.height >= builtinTable.getRowHeight)
         assertTrue("Environment rows remain visible", field("environmentVariables").getVisibleRect.height >= builtinTable.getRowHeight)
         val image = new java.awt.image.BufferedImage(tabs.getWidth, tabs.getHeight, java.awt.image.BufferedImage.TYPE_INT_RGB)

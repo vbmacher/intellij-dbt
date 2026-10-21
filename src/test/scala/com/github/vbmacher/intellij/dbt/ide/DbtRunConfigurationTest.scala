@@ -94,14 +94,20 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
 
   def testNativeDebuggerOpensWithoutQueryingAndUsesSourceBreakpointsAndFrames(): Unit = {
     project();
-    val file = configure("models/inspect.sql", "with a as (select 1), b as (select * from a) select * from b<caret>")
-    val frames = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(workspace, file).get.ctes
+    val file = configure("models/inspect.sql", "with a as (\n  select 1\n), b as (select * from a)\nselect * from b<caret>")
     val typeOf = com.intellij.xdebugger.XDebuggerUtil.getInstance.findBreakpointType(classOf[DbtCteBreakpointType])
     assertNotNull(typeOf)
     assertTrue(typeOf.canPutAt(file.getVirtualFile, 0, getProject))
+    assertTrue(typeOf.canPutAt(file.getVirtualFile, 2, getProject))
+    assertFalse("SQL inside a CTE has no execution breakpoint", typeOf.canPutAt(file.getVirtualFile, 1, getProject))
+    assertFalse("The final SELECT has no CTE breakpoint", typeOf.canPutAt(file.getVirtualFile, 3, getProject))
     val existingEditors = com.intellij.openapi.editor.EditorFactory.getInstance.getAllEditors.toSet
-    val opened = DbtCteDebugger.open(getProject, file.getVirtualFile.getPath, frames)
-    val session = opened.getSession
+    val action = new DbtModelRunLineMarker().getSlowInfo(file.findElementAt(0)).actions
+      .find(_.isInstanceOf[DbtInspectCtesAction]).get
+    myFixture.testAction(action)
+    val debugger = com.intellij.xdebugger.XDebuggerManager.getInstance(getProject)
+    await("The gutter action opens a native Debug session") { debugger.getDebugSessions.nonEmpty }
+    val session = debugger.getDebugSessions.head
     var nativeUi = Option.empty[com.intellij.execution.ui.RunnerLayoutUi]
     session.runWhenUiReady(ui => nativeUi = Some(ui))
     try {
@@ -116,7 +122,7 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
       val process = session.getDebugProcess.asInstanceOf[DbtCteDebugProcess]
       assertEquals(Vector("a", "b"), process.controller.frames.map(_.name))
       assertTrue(process.controller.result.isEmpty)
-      assertNotNull(opened.getRunContentDescriptor.getComponent)
+      assertNotNull(nativeUi.get.getComponent)
       assertNotNull("CTE rows are installed in the native Debug layout", nativeUi.get.findContent("dbt.cte.rows"))
       session.stepOut()
       await("Unsupported Step Out preserves the inspection position") {
@@ -129,7 +135,7 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
       assertFalse("Unsupported debugger actions execute no query", getProject.getService(classOf[DbtRunner]).isRunning)
     } finally {
       session.stop()
-      val descriptor = opened.getRunContentDescriptor
+      val descriptor = session.asInstanceOf[com.intellij.xdebugger.impl.XDebugSessionImpl].getMockRunContentDescriptorIfInitialized
       val removed = com.intellij.execution.ui.RunContentManager.getInstance(getProject).removeRunContent(
         com.intellij.execution.executors.DefaultDebugExecutor.getDebugExecutorInstance, descriptor)
       if (!removed) Disposer.dispose(descriptor)
@@ -139,6 +145,25 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
       val remaining = com.intellij.openapi.editor.EditorFactory.getInstance.getAllEditors.filterNot(existingEditors)
       assertTrue(remaining.map(e => e.getDocument.getText.take(120)).mkString("Leaked editors: ", " | ", ""), remaining.isEmpty)
     }
+  }
+
+  def testModelGutterOffersCteDebugOnlyForSqlModels(): Unit = {
+    project()
+    val sql = configure("models/inspect.sql", "with a as (select 1) select * from a<caret>")
+    val contributor = new DbtModelRunLineMarker
+    val info = contributor.getSlowInfo(sql.findElementAt(0))
+    assertNotNull(info)
+    val debug = info.actions.filter(_.isInstanceOf[DbtInspectCtesAction])
+    assertEquals(1, debug.length)
+    assertEquals("Debug dbt CTEs", debug.head.getTemplatePresentation.getText)
+    assertTrue("Standard Run actions remain available", info.actions.exists(_.isInstanceOf[com.intellij.execution.lineMarker.ExecutorAction]))
+    val python = configure("models/python_model.py", "def model(dbt, session):\n  return None<caret>")
+    val pythonInfo = contributor.getSlowInfo(python.findElementAt(0))
+    assertNotNull(pythonInfo)
+    assertFalse(pythonInfo.actions.exists(_.isInstanceOf[DbtInspectCtesAction]))
+    val test = configure("tests/check.sql", "select 1<caret>")
+    assertNull(contributor.getSlowInfo(test.findElementAt(0)))
+    assertFalse(new DbtTestRunLineMarker().getSlowInfo(test.findElementAt(0)).actions.exists(_.isInstanceOf[DbtInspectCtesAction]))
   }
 
   def testEveryCommandPreparesWithoutChangingProjectDefaultsAndRoundTripsOverrides(): Unit = {

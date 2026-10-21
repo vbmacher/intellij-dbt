@@ -199,7 +199,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         DbtUi.readLater(this, smartIn = Some(project)) {
           val w = DbtWorkspace.get(project)
           val html = DbtGraphData.build(w, None, 1, 1).targets.get(id).flatMap { element =>
-            if (column.isEmpty) Some(DbtDocumentation.render(w, element.symbol))
+            if (column.isEmpty) Some(DbtDocumentation.render(w, element.symbol, linkTestSources = true))
             else if (DbtResourceData.get(w, element.symbol).columns.exists(_.name == column))
               new DbtColumnDocumentationTarget(element.symbol, column).render(w)
             else None
@@ -208,6 +208,15 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
         } { data =>
           if (request == documentationGeneration.get()) browser.foreach(_.showDocumentation(data))
         }
+      case "test-source" =>
+        val sourceId = field("value")
+        DbtUi.readLater(this, smartIn = Some(project)) {
+          val w = DbtWorkspace.get(project)
+          DbtGraphData.build(w, None, 1, 1).targets.get(id).flatMap { element =>
+            DbtResourceData.get(w, element.symbol).tests.find(_.sourceId.contains(sourceId)).flatMap(_.source)
+          }.map(source => new com.intellij.openapi.fileEditor.OpenFileDescriptor(project,
+            source.getContainingFile.getVirtualFile, source.getTextOffset))
+        }(_.foreach(_.navigate(true)))
       case "focus" | "edit" =>
         val kind = field("type")
         DbtUi.readLater(this, smartIn = Some(project))(DbtGraphData.build(DbtWorkspace.get(project), None, 1, 1).targets.get(id)) {

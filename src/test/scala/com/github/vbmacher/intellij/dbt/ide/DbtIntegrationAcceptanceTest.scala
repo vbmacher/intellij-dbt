@@ -3,13 +3,15 @@ package com.github.vbmacher.intellij.dbt.ide
 import com.github.vbmacher.intellij.dbt.project._
 import com.google.gson.{JsonObject, JsonParser}
 import com.intellij.openapi.options.ConfigurationException
+import com.intellij.openapi.actionSystem.{ActionToolbar, ActionUiKind, AnActionEvent, CommonDataKeys, Presentation}
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.util.JDOMUtil
 import com.intellij.util.xmlb.XmlSerializer
 import org.junit.Assert._
 
-import java.awt.Component
-import javax.swing.{JButton, JComboBox, JList, JPanel, JPasswordField, JTabbedPane, JTextField}
+import java.awt.{Component, Container}
+import javax.swing.{JComboBox, JList, JPasswordField, JTabbedPane, JTextField}
 import scala.jdk.CollectionConverters._
 
 /**
@@ -72,11 +74,7 @@ final class DbtIntegrationAcceptanceTest extends DbtTestCase {
     val settings = getProject.getService(classOf[DbtConsumersSettings])
     val configurable = new DbtConsumersConfigurable(getProject)
     val panel = configurable.createComponent().asInstanceOf[javax.swing.JPanel]
-    val metabase = panel.getComponents.collectFirst {
-      case section: JPanel if section.getBorder.isInstanceOf[javax.swing.border.TitledBorder] &&
-        section.getBorder.asInstanceOf[javax.swing.border.TitledBorder].getTitle == "Metabase" => section
-    }.get
-    val key = metabase.getComponents.collectFirst { case field: JPasswordField => field }.get
+    val key = components(panel).collectFirst { case field: JPasswordField => field }.get
     assertEquals("acceptance-secret-must-not-export", new String(key.getPassword))
     assertFalse(configurable.isModified)
     configurable.apply()
@@ -253,6 +251,15 @@ final class DbtIntegrationAcceptanceTest extends DbtTestCase {
 
   private def settings = getProject.getService(classOf[DbtConsumersSettings]).getState
 
+  private def folderAction(panel: Container, name: String, perform: Boolean = true): Unit = {
+    val action = components(panel).collect { case toolbar: ActionToolbar => toolbar.getActionGroup.getChildren(null).toVector }
+      .flatten.find(_.getTemplatePresentation.getText == name).get
+    val event = AnActionEvent.createEvent(SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject).build(),
+      new Presentation, "test", ActionUiKind.NONE, null)
+    assertNotNull(action.getTemplatePresentation.getIcon)
+    if (perform) action.actionPerformed(event)
+  }
+
   /** Selects `root` in the settings project chooser and returns its manifest picker. */
   private def manifestPicker(fields: Vector[Component], root: DbtRoot): TextFieldWithBrowseButton = {
     fields.collectFirst { case combo: JComboBox[_] if (0 until combo.getItemCount).exists(i => combo.getItemAt(i) == root.directory.getPath) => combo }.get
@@ -272,7 +279,7 @@ final class DbtIntegrationAcceptanceTest extends DbtTestCase {
       assertEquals(Vector("General", "Integrations"), (0 until tabs.getTabCount).map(tabs.getTitleAt).toVector)
       val fields = components(tabs)
       val manifest = manifestPicker(fields, root)
-      assertTrue(fields.exists { case button: JButton => button.getText == "Add folder…"; case _ => false })
+      folderAction(tabs, "Add folder…", perform = false)
       val folders = fields.collectFirst { case list: JList[_] => list }.get
       val url = fields.collectFirst { case text: JTextField if Option(text.getToolTipText).exists(_.startsWith("Optional HTTP")) => text }.get
       assertFalse(configurable.isModified)
@@ -284,15 +291,32 @@ final class DbtIntegrationAcceptanceTest extends DbtTestCase {
       assertEquals("https://airflow.test", settings.airflowUrl)
       assertEquals("artifacts/current.json", DbtProjectSettings.get(getProject).options(root.directory.getPath).manifestPath)
       assertFalse(configurable.isModified)
+      sys.env.get("DBT_INTEGRATIONS_SCREENSHOT").foreach { path =>
+        tabs.addNotify()
+        tabs.setSize(1000, 680)
+        def layout(container: Container): Unit = {
+          container.doLayout()
+          container.getComponents.collect { case child: Container => child }.foreach(layout)
+        }
+        layout(tabs); layout(tabs)
+        val toolbars = components(tabs.getComponentAt(1)).collect { case toolbar: ActionToolbar => toolbar }
+        val updates = toolbars.map(_.updateActionsAsync())
+        await("Folder toolbar icons are rendered")(updates.forall(_.isDone) && toolbars.forall(_.hasVisibleActions))
+        layout(tabs)
+        val image = new java.awt.image.BufferedImage(tabs.getWidth, tabs.getHeight, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try tabs.printAll(graphics) finally { graphics.dispose(); tabs.removeNotify() }
+        assertTrue(javax.imageio.ImageIO.write(image, "png", new java.io.File(path)))
+      }
       folders.setSelectedIndex(0)
-      components(tabs.getComponentAt(1)).collectFirst { case button: JButton if button.getText == "Remove" => button }.get.doClick()
+      folderAction(tabs, "Remove folder")
       assertTrue(configurable.isModified)
       manifest.setText("discarded.json")
       configurable.reset()
       assertEquals(1, folders.getModel.getSize)
       assertEquals("artifacts/current.json", manifest.getText)
       folders.setSelectedIndex(0)
-      components(tabs.getComponentAt(1)).collectFirst { case button: JButton if button.getText == "Remove" => button }.get.doClick()
+      folderAction(tabs, "Remove folder")
       configurable.apply()
       assertTrue(settings.airflowPaths.isEmpty)
       configurable.reset()

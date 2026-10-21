@@ -5,8 +5,9 @@ import com.intellij.openapi.fileChooser.{FileChooser, FileChooserDescriptorFacto
 import com.intellij.openapi.options.{Configurable, ConfigurationException, ShowSettingsUtil}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.ui.components.{JBCheckBox, JBScrollPane, JBTextField}
-import com.intellij.util.ui.JBUI
+import com.intellij.ui.{TitledSeparator, ToolbarDecorator}
+import com.intellij.ui.components.{JBCheckBox, JBLabel, JBList, JBScrollPane, JBTextField}
+import com.intellij.util.ui.{JBUI, UIUtil}
 import java.awt.{BorderLayout, Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
 import java.nio.file.{InvalidPathException, Paths}
 import javax.swing._
@@ -39,16 +40,13 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val builtinSources = new JTable(builtinModel)
 
   private def mappings(table: JTable, model: DefaultTableModel): JPanel = {
-    val panel = new JPanel(new BorderLayout(4, 4))
     table.setPreferredScrollableViewportSize(new Dimension(300, 65))
     table.putClientProperty("terminateEditOnFocusLost", java.lang.Boolean.TRUE)
-    val scroll = new JBScrollPane(table)
-    scroll.setMinimumSize(new Dimension(0, 85))
-    scroll.setPreferredSize(new Dimension(300, 100))
-    panel.add(scroll, BorderLayout.CENTER)
-    panel.add(DbtUi.buttons(
-      DbtUi.button("Add") { model.addRow(Array[AnyRef]("", "")) },
-      DbtUi.button("Remove") { table.getSelectedRows.reverse.foreach(model.removeRow) }), BorderLayout.SOUTH)
+    val panel = ToolbarDecorator.createDecorator(table).disableUpDownActions()
+      .setAddAction(_ => model.addRow(Array[AnyRef]("", "")))
+      .setRemoveAction(_ => table.getSelectedRows.reverse.foreach(model.removeRow)).createPanel()
+    panel.setMinimumSize(JBUI.size(0, 85))
+    panel.setPreferredSize(JBUI.size(300, 120))
     panel
   }
 
@@ -318,47 +316,83 @@ object DbtSettingsConfigurable {
 
 /** The Integrations tab: Metabase, the local MCP server and local Airflow DAG discovery. */
 final class DbtConsumersConfigurable(project: Project) extends Configurable {
-  private val url = new JTextField()
+  private val url = new JBTextField()
   private val secret = new JPasswordField()
-  private val agent = new JCheckBox("Enable local read-only MCP server (start explicitly from Tools)")
+  private val agent = new JBCheckBox("Enable local read-only MCP server")
   private val airflowPaths = new DefaultListModel[String]
-  private val airflowFolders = new JList[String](airflowPaths)
-  private val airflowUrl = new JTextField
-  private val airflow = new JPanel(new GridBagLayout)
+  private val airflowFolders = new JBList[String](airflowPaths)
+  private val airflowUrl = new JBTextField
   private val panel = new JPanel(new GridBagLayout)
-  private val metabase = new JPanel(new GridBagLayout)
 
-  private def stack(target: JPanel, rows: Vector[JComponent]): Unit = rows.zipWithIndex.foreach { case (field, row) =>
-    val c = new GridBagConstraints
-    c.gridx = 0;
-    c.gridy = row;
-    c.weightx = 1;
-    c.fill = GridBagConstraints.HORIZONTAL
-    c.anchor = GridBagConstraints.NORTHWEST;
-    c.insets = new Insets(3, 4, 3, 4)
-    if (field == airflow) c.weighty = 1
-    target.add(field, c)
+  private def help(text: String): JBLabel = {
+    val label = new JBLabel("<html>" + text + "</html>")
+    label.setForeground(UIUtil.getContextHelpForeground)
+    label
   }
 
-  metabase.setBorder(BorderFactory.createTitledBorder("Metabase"))
-  stack(metabase, Vector(new JLabel("Metabase URL (optional)"), url, new JLabel("Metabase API key (stored in IDE Password Safe)"), secret))
+  private def fieldWithHelp(field: JComponent, text: String): JPanel = {
+    val result = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+    result.add(field, BorderLayout.NORTH)
+    result.add(help(text), BorderLayout.CENTER)
+    result
+  }
+
+  private def section(title: String, fields: Seq[(String, JComponent)]): JPanel = {
+    val result = new JPanel(new BorderLayout(0, JBUI.scale(8)))
+    val form = new JPanel(new GridBagLayout)
+    result.add(new TitledSeparator(title), BorderLayout.NORTH)
+    DbtUi.labeledRows(form, JBUI.insets(4, 8), fields)
+    val layout = form.getLayout.asInstanceOf[GridBagLayout]
+    form.getComponents.collect { case label: JLabel if label.getText.nonEmpty => label }.foreach { label =>
+      label.setPreferredSize(new Dimension(JBUI.scale(90), label.getPreferredSize.height))
+      val constraints = layout.getConstraints(label)
+      constraints.anchor = GridBagConstraints.FIRST_LINE_START
+      layout.setConstraints(label, constraints)
+    }
+    result.add(form, BorderLayout.CENTER)
+    result
+  }
+
+  private def stack(rows: Vector[JComponent]): Unit = {
+    rows.zipWithIndex.foreach { case (field, row) =>
+      val c = new GridBagConstraints
+      c.gridx = 0;
+      c.gridy = row;
+      c.weightx = 1;
+      c.fill = GridBagConstraints.HORIZONTAL
+      c.anchor = GridBagConstraints.NORTHWEST;
+      c.insets = JBUI.insets(4, 8, 12, 8)
+      panel.add(field, c)
+    }
+    val filler = new GridBagConstraints
+    filler.gridy = rows.size
+    filler.weighty = 1
+    panel.add(new JPanel, filler)
+  }
+
+  private val metabase = section("Metabase", Vector(
+    "Server URL" -> fieldWithHelp(url, "Optional. Use the final HTTP or HTTPS server URL, without embedded credentials."),
+    "API key" -> fieldWithHelp(secret, "Stored in IDE Password Safe. Clear the field and click Apply to remove the saved key.")))
   secret.setToolTipText("Stored in IDE Password Safe. Clear this field and click Apply to remove the saved API key.")
-  airflow.setBorder(BorderFactory.createTitledBorder("Airflow — local DAG discovery"))
   airflowFolders.setVisibleRowCount(3)
+  airflowFolders.getEmptyText.setText("No DAG folders configured")
   airflowFolders.setToolTipText("DAG folders or Airflow project directories, scanned recursively for Python files. Relative paths use the IDEA project directory.")
   airflowUrl.setToolTipText("Optional HTTP or HTTPS Airflow web URL, without credentials. Used only for browser links.")
-  private val folderPanel = new JPanel(new BorderLayout(4, 4))
-  folderPanel.add(new JScrollPane(airflowFolders), BorderLayout.CENTER)
-  folderPanel.add(DbtUi.buttons(
-    DbtUi.button("Add folder…") {
+  private val folderPanel = ToolbarDecorator.createDecorator(airflowFolders).disableUpDownActions()
+    .setAddActionName("Add folder…").setRemoveActionName("Remove folder")
+    .setAddAction(_ => {
       FileChooser.chooseFiles(FileChooserDescriptorFactory.multiDirs().withTitle("Select local Airflow DAG folders or projects"),
         project, null).foreach(f => if (!airflowPaths.contains(f.getPath)) airflowPaths.addElement(f.getPath))
-    },
-    DbtUi.button("Remove") {
+    })
+    .setRemoveAction(_ => {
       airflowFolders.getSelectedIndices.reverse.foreach(airflowPaths.remove)
-    }), BorderLayout.SOUTH)
-  DbtUi.labeledRows(airflow, new Insets(3, 5, 3, 8), Vector("DAG projects" -> folderPanel, "Airflow URL (optional)" -> airflowUrl))
-  stack(panel, Vector(metabase, agent, airflow))
+    }).createPanel()
+  private val airflow = section("Airflow — local DAG discovery", Vector(
+    "DAG folders" -> fieldWithHelp(folderPanel, "Scan local folders and Airflow checkouts recursively. Remove all folders to stop discovery."),
+    "Web URL" -> fieldWithHelp(airflowUrl, "Optional. Used only to open detected DAGs and tasks in your browser.")))
+  private val mcp = section("AI assistants", Vector("" -> fieldWithHelp(agent,
+    "Start the server explicitly from Tools → dbt Local MCP Server. Disabling this option stops it.")))
+  stack(Vector(metabase, airflow, mcp))
 
   private def settings = project.getService(classOf[DbtConsumersSettings]).getState
 

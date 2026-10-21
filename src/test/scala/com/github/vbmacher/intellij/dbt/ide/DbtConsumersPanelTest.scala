@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtResourceIdentity}
 import com.intellij.mock.Mock
-import com.intellij.openapi.actionSystem.{ActionUiKind, AnActionEvent, CommonDataKeys, Presentation}
+import com.intellij.openapi.actionSystem.{ActionToolbar, ActionUiKind, AnActionEvent, CommonDataKeys, Presentation}
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.fileEditor.{FileEditorManager, FileEditorManagerEvent, FileEditorManagerListener}
 import com.intellij.openapi.util.Disposer
@@ -17,7 +17,7 @@ import com.intellij.ui.jcef.JBCefApp
 import java.awt.Container
 import java.nio.file.{Files, Paths}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
-import javax.swing.{JButton, JComboBox, JComponent, JLabel, JList}
+import javax.swing.{JComboBox, JComponent, JLabel, JList}
 import org.junit.Assert._
 
 /** The Exposures tab reuses one view, follows resource context and only fetches Metabase on request. */
@@ -50,8 +50,28 @@ final class DbtConsumersPanelTest extends DbtTestCase {
   }
 
   private def rows(panel: JComponent): Vector[String] = {
-    val model = components(panel).collectFirst { case list: JList[_] => list.getModel }.get
-    (0 until model.getSize).map(i => model.getElementAt(i).toString).toVector
+    val list = components(panel).collectFirst { case list: JList[_] => list.asInstanceOf[JList[DbtConsumer]] }.get
+    (0 until list.getModel.getSize).map { i =>
+      val row = list.getCellRenderer.getListCellRendererComponent(list, list.getModel.getElementAt(i), i, false, false)
+      components(row.asInstanceOf[Container]).collect { case label: JLabel => label.getText }.mkString(" · ")
+    }.toVector
+  }
+
+  private def action(panel: JComponent, name: String): AnActionEvent => Unit = {
+    val toolbar = components(panel).collectFirst { case t: ActionToolbar => t }.get
+    val action = toolbar.getActionGroup.getChildren(null).find(_.getTemplatePresentation.getText == name).get
+    assertNotNull(action.getTemplatePresentation.getIcon)
+    event => { action.update(event); if (event.getPresentation.isEnabled) action.actionPerformed(event) }
+  }
+
+  private def event(): AnActionEvent = AnActionEvent.createEvent(
+    SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject).build(), new Presentation, "test", ActionUiKind.NONE, null)
+
+  private def enabled(panel: JComponent, name: String): Boolean = {
+    val e = event()
+    val toolbar = components(panel).collectFirst { case t: ActionToolbar => t }.get
+    toolbar.getActionGroup.getChildren(null).find(_.getTemplatePresentation.getText == name).get.update(e)
+    e.getPresentation.isEnabled
   }
 
   private def exposure(name: String, model: String): String =
@@ -139,9 +159,20 @@ final class DbtConsumersPanelTest extends DbtTestCase {
       getProject.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl = "http://127.0.0.1:" + server.getAddress.getPort
       service.setSecret("local-screenshot-fixture")
       assertEquals(0, requests.get())
-      val refresh = components(panel).collectFirst { case b: JButton if b.getText == "Refresh Metabase metadata" => b }.get
-      refresh.doClick()
-      await("Explicit refresh populates the Exposures tab")(rows(panel).size == 4 && refresh.isEnabled)
+      val refresh = action(panel, "Refresh Metabase metadata")
+      assertFalse(enabled(panel, "Open consumer"))
+      assertFalse(enabled(panel, "Go to exposure definition"))
+      val list = components(panel).collectFirst { case list: JList[_] => list }.get
+      list.setSelectedIndex(0)
+      assertTrue(enabled(panel, "Open consumer"))
+      assertTrue(enabled(panel, "Go to exposure definition"))
+      refresh(event())
+      await("Explicit refresh populates the Exposures tab")(rows(panel).size == 4 && enabled(panel, "Refresh Metabase metadata"))
+      assertEquals(0, list.getSelectedIndex)
+      list.setSelectedIndex(1)
+      assertTrue(enabled(panel, "Open consumer"))
+      assertFalse(enabled(panel, "Go to exposure definition"))
+      list.clearSelection()
       val refreshed = service.snapshot
       assertTrue(rows(panel).exists(_.contains("direct physical metadata")))
       val requestCount = requests.get()
@@ -159,8 +190,8 @@ final class DbtConsumersPanelTest extends DbtTestCase {
 
       column.setSelectedItem("All columns")
       fail.set(true)
-      refresh.doClick()
-      await("Failed refresh displays its error and retains consumers")(service.snapshot.status.contains("HTTP 503") && refresh.isEnabled)
+      refresh(event())
+      await("Failed refresh displays its error and retains consumers")(service.snapshot.status.contains("HTTP 503") && enabled(panel, "Refresh Metabase metadata"))
       assertEquals(refreshed.consumers, service.snapshot.consumers)
       assertEquals(refreshed.refreshedAt, service.snapshot.refreshedAt)
       assertEquals(4, rows(panel).size)
@@ -214,9 +245,13 @@ final class DbtConsumersPanelTest extends DbtTestCase {
         val view = manager.getComponent
         name => {
           view.addNotify()
-          view.setSize(1800, 360)
+          view.setSize(1200, 420)
           def layout(c: Container): Unit = { c.doLayout(); c.getComponents.collect { case child: Container => child }.foreach(layout) }
           layout(view); layout(view)
+          val toolbars = components(view).collect { case toolbar: ActionToolbar => toolbar }
+          val updates = toolbars.map(_.updateActionsAsync())
+          await("Toolbar icons are rendered")(updates.forall(_.isDone) && toolbars.forall(_.hasVisibleActions))
+          layout(view)
           val image = new java.awt.image.BufferedImage(view.getWidth, view.getHeight, java.awt.image.BufferedImage.TYPE_INT_RGB)
           val graphics = image.createGraphics()
           graphics.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)

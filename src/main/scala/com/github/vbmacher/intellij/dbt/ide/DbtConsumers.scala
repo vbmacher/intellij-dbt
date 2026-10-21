@@ -8,18 +8,22 @@ import com.google.gson.{JsonElement, JsonObject, JsonParser}
 import com.intellij.credentialStore.{CredentialAttributes, Credentials}
 import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.ide.BrowserUtil
-import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.{ActionManager, ActionUpdateThread, AnAction, AnActionEvent, DefaultActionGroup}
 import com.intellij.openapi.components._
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.openapi.project.Project
-import java.awt.BorderLayout
+import com.intellij.openapi.project.{DumbAwareAction, Project}
+import com.intellij.ui.components.{JBLabel, JBList, JBScrollPane}
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.util.ui.{JBUI, UIUtil}
+import java.awt.{BorderLayout, Component}
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicLong
-import javax.swing.{DefaultComboBoxModel, JComboBox, JLabel, JList, JPanel, JScrollPane}
+import javax.swing.{DefaultComboBoxModel, Icon, JComboBox, JLabel, JList, JPanel, ListCellRenderer, ListSelectionModel}
 import scala.beans.BeanProperty
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
@@ -218,8 +222,8 @@ private[dbt] object DbtConsumers {
 private[ide] final class DbtConsumersPanel(project: Project) extends JPanel(new BorderLayout(6, 6)) with Disposable {
   private val service = project.getService(classOf[DbtConsumers])
   private val scope = new JLabel("All resources")
-  private val status = new JLabel
-  private val consumerList = new JList[String]
+  private val status = new JBLabel
+  private val consumerList = new JBList[DbtConsumer]
   private val column = new JComboBox[String](Array("All columns"))
   private var workspace = Option.empty[DbtWorkspace]
   private var focus = Option.empty[String]
@@ -227,28 +231,83 @@ private[ide] final class DbtConsumersPanel(project: Project) extends JPanel(new 
   private var values = Vector.empty[DbtConsumer]
   private val generation = new AtomicLong
   private var disposed = false
+  private var refreshing = false
 
-  private val refreshButton = DbtUi.button("Refresh Metabase metadata") {
-    refreshMetabase()
-  }
-  private val header = new JPanel(new BorderLayout(6, 6))
-  header.add(scope, BorderLayout.NORTH)
-  header.add(status, BorderLayout.CENTER)
-  header.add(column, BorderLayout.SOUTH)
+  private def action(label: String, icon: Icon, enabled: => Boolean = true)(run: => Unit): AnAction =
+    new DumbAwareAction(label, label, icon) {
+      override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.EDT
+      override def update(e: AnActionEvent): Unit = e.getPresentation.setEnabled(enabled)
+      override def actionPerformed(e: AnActionEvent): Unit = if (enabled) run
+    }
+
+  private def selected: Option[DbtConsumer] = Option(consumerList.getSelectedValue)
+
+  private def definition: Option[DbtSymbol] = for (w <- workspace; consumer <- selected;
+    symbol <- w.symbols.find(s => DbtResourceIdentity.key(w, s) == consumer.resource && s.kind == "exposure")) yield symbol
+
+  private val actions = new DefaultActionGroup
+  actions.add(action("Refresh Metabase metadata", AllIcons.Actions.Refresh, !refreshing) { refreshMetabase() })
+  actions.addSeparator()
+  actions.add(action("Open consumer", AllIcons.General.Web, selected.flatMap(_.url).nonEmpty) {
+    selected.flatMap(_.url).foreach(BrowserUtil.browse)
+  })
+  actions.add(action("Go to exposure definition", AllIcons.Actions.EditSource, definition.nonEmpty) {
+    definition.foreach(_.element.navigate(true))
+  })
+  actions.addSeparator()
+  actions.add(action("Configure…", AllIcons.General.Settings) { DbtSettingsConfigurable.showIntegrations(project) })
+  private val toolbar = ActionManager.getInstance().createActionToolbar("DbtExposures", actions, true)
+  toolbar.setTargetComponent(this)
+  private val controls = new JPanel(new BorderLayout(JBUI.scale(8), 0))
+  controls.add(toolbar.getComponent, BorderLayout.WEST)
+  private val filter = new JPanel(new BorderLayout(JBUI.scale(4), 0))
+  private val columnLabel = new JLabel("Column:")
+  columnLabel.setLabelFor(column)
+  filter.add(columnLabel, BorderLayout.WEST)
+  filter.add(column, BorderLayout.CENTER)
+  controls.add(filter, BorderLayout.EAST)
+  column.setToolTipText("Filter Metabase column evidence; model-level consumers remain visible")
+  column.setEnabled(false)
+  private val header = new JPanel(new BorderLayout(0, JBUI.scale(6)))
+  private val context = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+  context.setBorder(JBUI.Borders.empty(0, 8, 4, 8))
+  context.add(scope, BorderLayout.NORTH)
+  context.add(status, BorderLayout.CENTER)
+  header.add(controls, BorderLayout.NORTH)
+  header.add(context, BorderLayout.CENTER)
   add(header, BorderLayout.NORTH)
-  add(new JScrollPane(consumerList), BorderLayout.CENTER)
-  add(DbtUi.buttons(
-    DbtUi.button("Open consumer") {
-      DbtUi.selected(consumerList, values).flatMap(_.url).foreach(BrowserUtil.browse)
-    },
-    DbtUi.button("Go to exposure definition") {
-      for (w <- workspace; consumer <- DbtUi.selected(consumerList, values)) {
-        w.symbols.find(s => DbtResourceIdentity.key(w, s) == consumer.resource && s.kind == "exposure")
-          .foreach(_.element.navigate(true))
-      }
-    },
-    refreshButton,
-    DbtUi.button("Configure…") { DbtSettingsConfigurable.showIntegrations(project) }), BorderLayout.SOUTH)
+
+  consumerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+  consumerList.getEmptyText.setText("No consumers found for this resource")
+  consumerList.getEmptyText.appendSecondaryText("Refresh Metabase metadata to include remote consumers.", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
+  private def evidence(c: DbtConsumer): String = c.confidence +
+    (if (column.getSelectedItem != "All columns" && c.column.isEmpty) " · model-level; column use unknown"
+    else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence
+
+  consumerList.setCellRenderer(new ListCellRenderer[DbtConsumer] {
+    private val row = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+    private val title = new JLabel
+    private val detail = new JLabel
+    row.setBorder(JBUI.Borders.empty(6, 8))
+    title.putClientProperty("html.disable", java.lang.Boolean.TRUE)
+    detail.putClientProperty("html.disable", java.lang.Boolean.TRUE)
+    row.add(title, BorderLayout.NORTH)
+    row.add(detail, BorderLayout.CENTER)
+
+    override def getListCellRendererComponent(list: JList[_ <: DbtConsumer], c: DbtConsumer, index: Int,
+      selected: Boolean, focused: Boolean): Component = {
+      row.setBackground(if (selected) list.getSelectionBackground else list.getBackground)
+      title.setText(c.name + " · " + c.kind + (if (c.owner.nonEmpty) " · Owner: " + c.owner else ""))
+      title.setIcon(if (c.kind == "dbt exposure") AllIcons.FileTypes.Yaml else AllIcons.General.Web)
+      title.setForeground(if (selected) list.getSelectionForeground else list.getForeground)
+      detail.setText(evidence(c))
+      detail.setForeground(if (selected) list.getSelectionForeground else UIUtil.getContextHelpForeground)
+      row.setToolTipText(evidence(c))
+      row
+    }
+  })
+  consumerList.addListSelectionListener(_ => toolbar.updateActionsAsync())
+  add(new JBScrollPane(consumerList), BorderLayout.CENTER)
   column.addActionListener(_ => update())
   update()
 
@@ -267,7 +326,9 @@ private[ide] final class DbtConsumersPanel(project: Project) extends JPanel(new 
         focus = nextFocus
         exposures = consumers
         scope.setText(target.fold("All resources")(s => "Resource: " + s.uniqueId))
+        scope.setToolTipText(scope.getText)
         column.setModel(new DefaultComboBoxModel[String]((Vector("All columns") ++ columns).toArray))
+        column.setEnabled(columns.nonEmpty)
         selected.foreach(column.setSelectedItem)
         update()
       }
@@ -279,18 +340,21 @@ private[ide] final class DbtConsumersPanel(project: Project) extends JPanel(new 
     val selectedColumn = Option(column.getSelectedItem).map(_.toString).filter(_ != "All columns")
     values = exposures ++ cache.consumers.filter(c => focus.forall(_ == c.resource) &&
       selectedColumn.forall(name => c.column.isEmpty || c.column.contains(name)))
-    consumerList.setListData(values.map(c => c.name + " · " + c.kind + " · Owner: " + c.owner + " · " + c.confidence +
-      (if (selectedColumn.nonEmpty && c.column.isEmpty) " · model-level; column use unknown"
-      else c.column.map(" · column: " + _).getOrElse("")) + " · " + c.evidence).toArray)
-    status.setText(cache.status + " Refreshed: " +
+    val previous = selected
+    consumerList.setListData(values.toArray)
+    previous.filter(values.contains).foreach(consumerList.setSelectedValue(_, true))
+    status.setText((if (refreshing) "Refreshing Metabase metadata…" else cache.status) + " · Last refreshed: " +
       (if (cache.refreshedAt == 0) "never" else new java.util.Date(cache.refreshedAt).toString) +
-      (if (cache.stale) " (stale)" else "") + (if (values.isEmpty) " No consumers found." else ""))
+      (if (cache.refreshedAt != 0 && cache.stale) " (stale)" else ""))
+    status.setToolTipText(status.getText)
+    toolbar.updateActionsAsync()
   }
 
   private def refreshMetabase(): Unit = {
-    refreshButton.setEnabled(false)
+    refreshing = true
+    update()
     DbtUi.background(project, "Refresh Metabase consumers", finished = () => {
-      if (!disposed) refreshButton.setEnabled(true)
+      if (!disposed) { refreshing = false; update() }
     }) { _ =>
       service.refresh(DbtUi.read { DbtWorkspace.get(project) })
     } { _ => if (!disposed) update() }

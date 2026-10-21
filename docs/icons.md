@@ -79,8 +79,20 @@ The test tree uses the IDE's standard test status icons.
 | IDE Preview Details icon | **Open Documentation** | Lineage toolbar, right side. |
 | × | **Close documentation** | Header of the resource documentation pane, shown after opening Lineage details. |
 | IDE Refresh icon | **Regenerate Docs** | Lineage toolbar, right side. |
+| IDE Refresh icon | **Refresh Metabase metadata** | Exposures toolbar; disabled while a refresh is running. |
+| IDE Web icon | **Open consumer** | Exposures toolbar; enabled when the selected consumer has a browser URL. Also identifies Metabase rows in the consumer list. |
+| IDE Edit Source icon | **Go to exposure definition** | Exposures toolbar; enabled when the selected row has a local exposure declaration. |
+| IDE Settings icon | **Configure…** | Exposures toolbar; opens integration settings. |
+| IDE YAML file icon | Declared dbt exposure | Exposures list, beside each local exposure. |
 
 Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
+
+## Settings toolbar icons
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| IDE Add (+) icon | Add a row or folder | Above the environment-variable and builtin-source tables in General settings; above the DAG folder list in Integrations settings, with tooltip **Add folder…**. |
+| IDE Remove (−) icon | Remove selected entries | In the same toolbars; enabled when entries are selected. In the DAG list, the tooltip is **Remove folder**. |
 
 ## Lineage card symbols
 

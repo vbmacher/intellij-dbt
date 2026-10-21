@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.ui.{TestDialog, TestDialogManager}
 import org.junit.Assert._
 
 import java.awt.datatransfer.DataFlavor
@@ -121,6 +122,59 @@ select * from container<caret>""")
     configure("notes.md", "<caret>with a as (select 1) select * from a")
     Vector(new DbtPreviewCteAction, new DbtInspectCtesAction, new DbtPreviewSqlAction).foreach(action =>
       assertFalse(action.getClass.getName, presentation(action).isEnabledAndVisible))
+  }
+
+  def testCtePreviewExplainsTheParseFailureAndOffersTheCompleteModelPreview(): Unit = {
+    project()
+    configure("models/report.sql", "with a as (select 1 as id)\nselect * from a where )<caret>")
+    var message = Option.empty[String]
+    val previous = TestDialogManager.setTestDialog(new TestDialog {
+      override def show(text: String): Int = {
+        message = Some(text)
+        0
+      }
+    })
+    try {
+      myFixture.testAction(new DbtPreviewCteAction)
+      await("The preview explains why SQL analysis failed") { message.nonEmpty }
+      val text = message.get
+      assertTrue(text, text.startsWith("Cannot preview this CTE."))
+      assertTrue(text, text.contains("could not parse this model's SQL"))
+      assertTrue(text, text.contains("line 2, column"))
+      assertTrue(text, text.contains("syntax the plugin does not support"))
+      assertTrue(text, text.contains("No preview query was run."))
+      assertTrue(text, text.contains("use Preview in a dbt Run configuration"))
+      assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
+    } finally TestDialogManager.setTestDialog(previous)
+  }
+
+  def testSqlAnalysisExplainsTheSizeLimitAndUnsupportedStatements(): Unit = {
+    project()
+    val large = add("models/large.sql", "--" + "x" * 1000000)
+    val update = add("models/update.sql", "update orders set id = 1")
+    assertEquals(Left("This file exceeds the SQL analysis limit of 1,000,000 characters."), DbtSqlAnalysis.result(workspace, large))
+    assertEquals(Left("SQL analysis requires a SELECT query. This file contains a different SQL statement."), DbtSqlAnalysis.result(workspace, update))
+    assertTrue(DbtSqlAnalysis.get(workspace, update).isEmpty)
+  }
+
+  def testSqlAnalysisExplainsFilesOutsideResourcePathsAndMissingProviders(): Unit = {
+    project()
+    val outside = add("notes/report.sql", "select 1")
+    val markdown = add("notes/report.md", "select 1")
+    assertEquals(Left("This file is outside the dbt project's supported SQL resource paths or is excluded."),
+      DbtSqlAnalysis.result(workspace, outside))
+    assertEquals(Left("No SQL analysis provider is available for this file."), DbtSqlAnalysis.result(workspace, markdown))
+  }
+
+  def testFailedAnalysisDoesNotPreventCtePreviewAfterCorrectingTheSql(): Unit = {
+    project()
+    val file = configure("models/report.sql", "with a as (select 1 as id)\nselect * from a where )<caret>")
+    assertTrue(DbtSqlAnalysis.result(workspace, file).isLeft)
+    edit(file, "with a as (select 1 as id) select * from a")
+    val analysis = DbtSqlAnalysis.result(workspace, file).toOption.get
+    assertEquals(Vector("a"), analysis.ctes.map(_.name))
+    assertEquals(Right("with a as (select 1 as id)\nselect * from a"),
+      DbtCteInspection.sql(file.getText, analysis, analysis.ctes.head))
   }
 
   private val node = "sql_operation.analytics.inline_query"

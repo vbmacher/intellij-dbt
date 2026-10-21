@@ -289,6 +289,17 @@ test('documentation requests are explicit and refreshes do not reopen documentat
 });
 
 
+test('documentation test links open source without changing the selected resource',async()=>{
+ await update(fixture);await page.evaluate(()=>select('model'));
+ const source='/project with spaces/models/tests.yml:42';
+ await page.evaluate(source=>dbtShowDocumentation({id:'model',column:'',html:'<h3>Tests (1)</h3><p><a href="dbt-test:'+encodeURIComponent(source)+'">ab_test</a></p>'}),source);
+ await page.getByRole('link',{name:'ab_test',exact:true}).click();
+ assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'test-source',id:'model',value:source});
+ assert.equal(await page.evaluate(()=>selected),'model');
+ assert.match(await page.locator('#docs-content').innerText(),/Tests \(1\)/);
+ await page.locator('#close-docs').click();
+});
+
 test('documentation stays on the right, resizes horizontally and ignores obsolete replies',async()=>{
  await update(fixture);await page.evaluate(()=>select('model'));
  await page.evaluate(()=>dbtShowDocumentation({id:'model',column:'',html:'<b>analytics.orders</b><p>Orders and amounts</p><a href="dbt-column:order+id">order id</a>'}));

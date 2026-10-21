@@ -2,12 +2,15 @@ package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.psi.PsiElement
 import org.jetbrains.yaml.psi.YAMLMapping
 import scala.jdk.CollectionConverters._
 
 private[dbt] final case class DbtColumnData(name: String, dataType: String = "", description: String = "", declarations: Vector[String] = Vector.empty)
 
-private[dbt] final case class DbtTestData(name: String, column: String = "")
+private[dbt] final case class DbtTestData(name: String, column: String = "", source: Option[PsiElement] = None) {
+  def sourceId: Option[String] = source.filter(_.isValid).map(s => s.getContainingFile.getVirtualFile.getPath + ":" + s.getTextOffset)
+}
 
 private[dbt] final case class DbtResourceData(description: String = "", columns: Vector[DbtColumnData] = Vector.empty,
   tests: Vector[DbtTestData] = Vector.empty, tags: Vector[String] = Vector.empty, attributes: Map[String, String] = Map.empty,
@@ -86,8 +89,10 @@ private[dbt] object DbtResourceData {
 
   private def testData(m: YAMLMapping, column: String): Vector[DbtTestData] = Vector("data_tests", "tests").flatMap { key =>
     DbtYaml.elements(m, key).map {
-      case test: YAMLMapping => DbtTestData(test.getKeyValues.asScala.headOption.map(_.getKeyText).getOrElse("test"), column)
-      case test => DbtTestData(test.getText, column)
+      case test: YAMLMapping =>
+        val key = test.getKeyValues.asScala.headOption
+        DbtTestData(key.map(_.getKeyText).getOrElse("test"), column, key.map(_.getKey))
+      case test => DbtTestData(test.getText, column, Some(test))
     }
   }
 }

@@ -28,6 +28,12 @@ import scala.jdk.CollectionConverters._
  * Fixture projects can be reused between tests, so project and consumer settings are reset after every test.
  */
 abstract class DbtTestCase extends BasePlatformTestCase {
+  // Activate real IDE icons before fixtures initialize AllIcons with headless placeholders.
+  if (Vector("DBT_CONSUMERS_SCREENSHOT_DIR", "DBT_INTEGRATIONS_SCREENSHOT", "DBT_SETTINGS_SCREENSHOT").exists(sys.env.contains)) {
+    com.intellij.ui.IconManager.Companion.activate(null)
+    com.intellij.openapi.util.IconLoader.activate()
+  }
+
   override protected def tearDown(): Unit = try {
     getProject.getService(classOf[DbtConsumersSettings]).loadState(new DbtConsumersState)
     DbtProjectSettings.get(getProject).loadState(new DbtSettingsState)

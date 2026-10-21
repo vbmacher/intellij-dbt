@@ -15,6 +15,7 @@ import com.intellij.execution.ui.{ConsoleView, ConsoleViewContentType}
 import com.intellij.execution.{Executor, Location, PsiLocation}
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.module.Module
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.{Disposer, Key}
@@ -318,8 +319,8 @@ private[ide] object DbtTestRunLineMarker {
   def firstCode(file: PsiFile): Int = file.getText.indexWhere(c => !c.isWhitespace)
 
   /** Run gutter entry offering the standard executors; `tooltip` is evaluated when the gutter is hovered. */
-  def info(icon: Icon, tooltip: => String): RunLineMarkerContributor.Info =
-    new RunLineMarkerContributor.Info(icon, ExecutorAction.getActions(0), new java.util.function.Function[PsiElement, String] {
+  def info(icon: Icon, tooltip: => String, extraActions: AnAction*): RunLineMarkerContributor.Info =
+    new RunLineMarkerContributor.Info(icon, ExecutorAction.getActions(0) ++ extraActions, new java.util.function.Function[PsiElement, String] {
       override def apply(value: PsiElement): String = tooltip
     })
 
@@ -361,6 +362,12 @@ final class DbtModelRunLineMarker extends RunLineMarkerContributor {
     if (element.getFirstChild != null || element.isInstanceOf[PsiFile] || file == null ||
       element.getTextOffset != DbtTestRunLineMarker.firstCode(file) ||
       DbtWorkspace.get(file.getProject).model(file).isEmpty) null
-    else DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model")
+    else if (file.getName.endsWith(".sql")) {
+      val debug = new DbtInspectCtesAction
+      debug.getTemplatePresentation.setText("Debug dbt CTEs")
+      debug.getTemplatePresentation.setDescription("Inspect CTE results with stepping and CTE breakpoints")
+      debug.getTemplatePresentation.setIcon(AllIcons.Actions.StartDebugger)
+      DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model / Debug dbt CTEs", debug)
+    } else DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model")
   }
 }

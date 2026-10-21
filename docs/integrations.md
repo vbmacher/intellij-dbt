@@ -99,35 +99,129 @@ restart. Keep the token private.
 
 ### MCP protocol reference
 
-- **Transport:** Streamable HTTP only (no stdio; a client that only starts local
-  commands needs an HTTP bridge). Every request is a POST with
-  `Authorization: Bearer <token>`; responses are single `application/json` bodies,
-  never SSE streams. The server keeps no sessions and offers only tools (no
-  resources, prompts or logging).
-- **Versions:** `2026-07-28` needs no handshake: each request carries `_meta` with
-  `io.modelcontextprotocol/protocolVersion` and
-  `io.modelcontextprotocol/clientCapabilities`, plus the headers
-  `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name`; methods are
-  `server/discover`, `tools/list` and `tools/call`. `2025-11-25`, `2025-06-18` and
-  `2025-03-26` start with `initialize` (another requested version is answered with
-  `2025-11-25`); later requests send `MCP-Protocol-Version`, or `2025-03-26` is
-  assumed. Methods are `initialize`, `ping`, `tools/list` and `tools/call`; only
-  `2025-03-26` accepts JSON-array batches.
-- **Rejections:** wrong or missing token → HTTP 401; an `Origin` header (sent by
-  browsers) → 403; GET or DELETE → 405; notifications and client responses → 202
-  with no body; body over 64 KiB → 413; unsupported version → 400 with error
-  `-32022` and the supported versions; header not matching the body → 400 with
-  error `-32020`; unknown tool → error `-32602`. Calls over 30 seconds are canceled.
-- **Results:** `tools/list` returns tool names and argument schemas. The `project`
-  argument accepts a directory returned by `list_projects` or a unique project
-  name. Resource lineage returns one dependency step per call. Answers appear in
-  `structuredContent` and as JSON text in `content`, with `status` `ok`, `partial`,
-  `missing`, `ambiguous`, `error`, `unsupported` or `disposed`; the last three, and
-  arguments not matching the schema, set `isError: true`. Lists and traces cut short
-  by a cap are `partial`. Responses over 2 MB are replaced by an error asking you to
-  narrow the request.
+This section is for configuring MCP clients by hand or writing your own client.
 
-Example call with version `2025-06-18`, after `initialize`:
+#### Transport
+
+- **Endpoint:** `http://127.0.0.1:<port>/mcp`, reachable only from this computer.
+  Other paths answer HTTP 404.
+- **Requests:** HTTP POST with a JSON-RPC 2.0 body and the header
+  `Authorization: Bearer <token>`. Only Streamable HTTP is supported; there is no
+  stdio transport, so a client that can only start local commands needs an HTTP
+  bridge.
+- **Responses:** a single `application/json` body, never an SSE stream. The server
+  keeps no sessions and processes one request at a time.
+- **Capabilities:** tools only (no resources, prompts or logging). The server
+  identifies itself as `dbt-workspace` version `1.0`.
+
+#### Protocol versions
+
+| Version | How a client starts | Methods | Batches |
+| --- | --- | --- | --- |
+| `2026-07-28` | No handshake; optionally call `server/discover`. | `server/discover`, `tools/list`, `tools/call` | No |
+| `2025-11-25`, `2025-06-18` | Call `initialize`. | `initialize`, `ping`, `tools/list`, `tools/call` | No |
+| `2025-03-26` | Call `initialize`. | `initialize`, `ping`, `tools/list`, `tools/call` | Yes, as a JSON array |
+
+**Version `2026-07-28`.** A request uses this version when its
+`params._meta.io.modelcontextprotocol/protocolVersion` or its
+`MCP-Protocol-Version` header is `2026-07-28`. Every request must contain:
+
+- `params._meta` with `io.modelcontextprotocol/protocolVersion` and
+  `io.modelcontextprotocol/clientCapabilities`;
+- the headers `MCP-Protocol-Version` and `Mcp-Method`, plus `Mcp-Name` (the tool
+  name) for `tools/call`, with the same values as the body. A header value with
+  non-ASCII characters can be sent as `=?base64?<Base64 of UTF-8 value>?=`.
+
+`server/discover` returns the supported versions, capabilities, server name and
+usage instructions. Results include `"resultType": "complete"`; `server/discover`
+and `tools/list` results may be cached privately for 5 minutes (`ttlMs`,
+`cacheScope`).
+
+**Older versions.** `initialize` answers with the requested version when it is one
+of the older versions above, and with `2025-11-25` otherwise. Later requests should
+send the `MCP-Protocol-Version` header; without it, `2025-03-26` is assumed. The
+server does not remember `initialize`, so any request may be sent at any time.
+
+#### Tools
+
+All tools are read-only. `tools/list` returns each tool's argument schema.
+
+| Tool | Required arguments | Optional arguments | Returns |
+| --- | --- | --- | --- |
+| `list_projects` | – | – | Open dbt projects: `name`, `project` (directory) and `path` to `dbt_project.yml`. Up to 100. |
+| `list_resources` | `project` | – | Resources of one project. Up to 1,000. |
+| `resolve_reference` | `project`, `reference` | `file`, `offset` | Resources the reference points to. Without `offset`, looks up `reference` as an exact resource name; with `file` and `offset`, resolves the reference at that character offset in the file. Up to 100. |
+| `get_documentation` | `project`, `resource_id` | – | The resource, its `description` and `columns` (`name`, `type`, `description`). Up to 500 columns. |
+| `get_lineage` | `project`, `resource_id` | `direction` | Direct dependency `edges` (`from`, `to`) one step away. Call again on a neighbor to go further. Up to 1,000 edges. |
+| `get_column_lineage` | `project`, `resource_id`, `column` | `direction` | Direct column `edges` (`column`, `expression`, `input_column`, `resource`, `input`, `complete`, `direct`) and multi-step `paths` (`columns`, `complete`), with `paths_truncated`. Up to 1,000 edges and 50 paths of 20 columns. |
+| `resolve_selection` | `project`, `selection` | `exclude` | Resources matched by a selection such as `+orders`, and `problems` for terms that could not be resolved. Up to 1,000. |
+
+Argument rules:
+
+- `project` is a directory returned by `list_projects` or a project name that
+  matches exactly one open project.
+- `resource_id` is a dbt unique ID such as `model.analytics.report`.
+- `file` is an absolute path or a path relative to the project directory.
+- `direction` is `upstream` (default) or `downstream`.
+- `offset` is a non-negative integer; every other argument is a string of at most
+  16,384 characters. Unknown arguments and empty required arguments are rejected.
+
+Each returned resource contains `resource_id`, `project`, `kind`, `name`, `owner`,
+`package`, `version`, `path`, `offset`, `line`, `stale` and `provenance`
+(`current source` or `local artifact`). A column also has `relation_resource_id`.
+
+#### Results
+
+A `tools/call` result contains the answer twice: as an object in
+`structuredContent` and as JSON text in `content`. Every answer has `status`,
+`message` and `schema_version` (`1.0`).
+
+| `status` | Meaning |
+| --- | --- |
+| `ok` | The answer is complete. |
+| `partial` | A list hit its limit, the resource is stale, or the answer comes from static analysis that may miss dependencies. `get_lineage` and `get_column_lineage` are always `partial`. |
+| `missing` | Nothing matched. |
+| `ambiguous` | The project or resource did not match exactly one item. Resource lookups list the matches in `candidates`. |
+| `disposed` | The project was closed; the result sets `isError: true`. |
+
+Arguments that break the rules above return a result with `isError: true` and an
+explanation in `content`, not a JSON-RPC error.
+
+#### Errors and limits
+
+| Condition | HTTP status | JSON-RPC error |
+| --- | --- | --- |
+| Path other than `/mcp` | 404 | `-32600` |
+| Method other than POST | 405 | `-32600` |
+| `Origin` header present (sent by browsers) | 403 | `-32600` |
+| Missing or wrong token | 401 | `-32600` |
+| Body larger than 64 KiB | 413 | `-32600` |
+| Body is not valid JSON | 400 | `-32700` |
+| Not a JSON-RPC message, or a batch outside `2025-03-26` | 400 | `-32600` |
+| Unsupported protocol version | 400 | `-32022`; `data` lists `supported` and `requested` versions |
+| `2026-07-28` request without required `params._meta` | 400 | `-32602` |
+| `2026-07-28` headers not matching the body | 400 | `-32020` |
+| Unknown method | 404 for `2026-07-28`, 200 otherwise | `-32601` |
+| Unknown tool | 200 | `-32602` |
+| Project closed | 200 | `-32603` |
+| Response larger than 2 MB, or another failure | 500 | `-32603` |
+
+Notifications and client responses are accepted with HTTP 202 and no body. A
+`tools/call` result larger than 2 MB is replaced by an `isError` result asking you
+to narrow the request. Requests running longer than 30 seconds are canceled and
+their connection is closed.
+
+#### Examples
+
+Version `2026-07-28`, sent with the headers `MCP-Protocol-Version: 2026-07-28`,
+`Mcp-Method: tools/call` and `Mcp-Name: get_documentation`:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"get_documentation","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report"}}}
+```
+
+Version `2025-06-18`, sent after `initialize` with the header
+`MCP-Protocol-Version: 2025-06-18`:
 
 ```json
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_column_lineage","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report","column":"amount","direction":"upstream"}}}

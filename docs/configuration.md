@@ -283,8 +283,8 @@ On the **Integrations** tab:
 
 | Setting | Effect |
 | --- | --- |
-| **Metabase URL (optional)** | Base HTTP or HTTPS URL without embedded credentials. Use HTTPS for a remote server. Redirects are refused, so enter the final server URL. |
-| **Metabase API key (stored in IDE Password Safe)** | Shown masked. **Apply** saves it outside project files; clear the field and click **Apply** to remove it. |
+| **Server URL** | Optional base HTTP or HTTPS URL without embedded credentials. Use HTTPS for a remote server. Redirects are refused, so enter the final server URL. |
+| **API key** | Shown masked and stored in IDE Password Safe. **Apply** saves it outside project files; clear the field and click **Apply** to remove it. |
 
 The API key needs read access to questions, databases and their table/field
 metadata, and any dashboards you want to see. Applying these settings clears cached
@@ -296,14 +296,19 @@ On the **Integrations** tab, under **Airflow — local DAG discovery**:
 
 | Setting | Effect |
 | --- | --- |
-| **DAG projects** | Click **Add folder…** to add DAG folders or complete Airflow checkouts, including folders outside the IDE project. Saved settings may also hold workspace-relative paths. **Remove** removes the selected folder. Remove all folders to stop discovery. |
-| **Airflow URL (optional)** | HTTP or HTTPS web URL without embedded credentials. Enables browser links to detected DAGs and tasks. |
+| **DAG folders** | Use the **Add folder…** (+) toolbar icon to add DAG folders or complete Airflow checkouts, including folders outside the IDE project. Saved settings may also hold workspace-relative paths. **Remove folder** (−) removes the selected folders. Remove all folders to stop discovery. |
+| **Web URL** | Optional HTTP or HTTPS web URL without embedded credentials. Enables browser links to detected DAGs and tasks. |
 
 See [Inspect Airflow context](integrations.md#inspect-airflow-context).
 
+For example, add a local `dags` folder and enter `https://airflow.test` as the
+**Web URL** to enable browser links for discovered tasks:
+
+![Integration settings with local DAG discovery, Metabase credentials and the optional MCP server.](screenshots/integration-settings.png)
+
 ### Local MCP server
 
-On the **Integrations** tab, select **Enable local read-only MCP server (start
-explicitly from Tools)** and click **Apply**. The option is off by default; the
+On the **Integrations** tab, under **AI assistants**, select **Enable local read-only
+MCP server** and click **Apply**. The option is off by default; the
 server starts only when you click **Start**. Clearing the option stops it. See
 [Connect an AI assistant](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server).

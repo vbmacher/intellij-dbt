@@ -37,6 +37,8 @@ a checkmark and border mark the selected card. Depth and layout direction are
 
 Click a card, for example **orders**, to read its descriptions, columns, dependencies
 and tests in the **Documentation** pane. Hovering over a card opens nothing.
+Click a test name to open its source declaration. Tests without an available source
+location appear as plain text.
 The pane stays on the right as you move the mouse or pan the graph. Drag its left
 divider to change its width; with the divider focused, use Left and Right arrow keys.
 **Close documentation** returns that space to the graph.
@@ -83,19 +85,25 @@ caret. The **Resource** label shows its scope; **All resources** means that no d
 resource was recognized. Switching editors updates the scope even when Lineage
 focus is pinned. Browsing the tab does not run dbt or query the warehouse.
 
-Each row shows the name, type, owner when available, association reason and
-supporting location or relation. Declared exposures can depend on the resource
-through downstream dbt models. Metabase questions match physical database,
+Each row shows the name, type and owner when available, with the association
+reason and supporting location or relation on a second line. Hover over a row
+to read its evidence when the window is narrow. Declared exposures can depend on
+the resource through downstream dbt models. Metabase questions match physical database,
 schema and table metadata or SQL text; dashboards are inferred through their
 questions. Inferred associations are candidates to inspect, not proof of usage.
 
 | Control | Action |
 | --- | --- |
 | **All columns** / column name | Narrow Metabase rows to a known column. Exposures and rows without column evidence remain labeled **model-level; column use unknown**. The filter is retained when the same resource refreshes and reset when the resource changes. |
-| **Open consumer** | Open the selected consumer's browser URL, when available. |
-| **Go to exposure definition** | Open the selected declared exposure; Metabase rows have no local declaration. |
-| **Refresh Metabase metadata** | Fetch read-only metadata explicitly. There is no automatic polling. Local exposures remain available without a connection. |
-| **Configure…** | Open the integration settings; see [Metabase connection](configuration.md#metabase-connection). |
+| **Open consumer** (browser icon) | Open the selected consumer's browser URL. Enabled only when the selected row has a URL. |
+| **Go to exposure definition** (source icon) | Open the selected declared exposure. Enabled only for a row with a local declaration. |
+| **Refresh Metabase metadata** (refresh icon) | Fetch read-only metadata explicitly. Disabled during a refresh; progress appears above the list. There is no automatic polling. Local exposures remain available without a connection. |
+| **Configure…** (settings icon) | Open the integration settings; see [Metabase connection](configuration.md#metabase-connection). |
+
+Actions appear in the toolbar above the list; hover over an icon for its name.
+The **Column** filter is disabled when the current resource has no known columns.
+The selected consumer is retained across refreshes and filter changes while it
+remains in the list.
 
 For example, `fct_orders` has columns `id` and `gross_amount`. The tab shows its
 `orders_dashboard` exposure, the **Revenue by amount** question using
@@ -126,6 +134,21 @@ metadata or supported query structures can leave consumers undiscovered, so an
 empty list does not establish that a change is safe.
 
 ## Run dbt commands
+
+### Compile a project
+
+Choose **Tools → Compile dbt Project**, or right-click in an editor and choose
+**dbt → Compile dbt Project**. Compilation starts immediately for the current
+file's dbt project. With one dbt project, no open file is needed; with several
+projects and no file belonging to one, choose a project from the popup.
+
+The action uses the project's [execution settings](configuration.md#execution-settings)
+and always compiles the whole execution project. For example, invoke it from
+`models/orders.sql` to compile that model and the rest of its project. Output
+appears in **Run**, where you can stop or rerun the command. See
+[Compiled SQL](#compiled-sql) to open the generated SQL. You can also find
+**Compile dbt Project** through **Find Action** or assign it a shortcut in
+**Settings → Keymap**.
 
 ### Run configurations
 
@@ -231,6 +254,12 @@ editor, right-click and open **dbt**:
 These two need dbt Core 1.5+ and cannot preserve installed-package context; preview
 the complete installed-package model instead.
 
+If **Preview dbt CTE** cannot analyze the model, its dialog explains the reason
+and confirms that no preview query ran. Parsing failures include the line and
+column where available; the SQL may be incomplete or use syntax the plugin does
+not support. To preview the complete model, use **Preview** in a dbt Run
+configuration.
+
 The **Rows** view shows the target, row count, limit and elapsed time. **May be
 truncated** means the row limit was reached. Sort by column headers, resize or
 reorder columns, and use **Filter** to search the returned rows. **Copy selection**
@@ -253,11 +282,19 @@ compiled SQL read-only, and
 
 ## Inspect CTE queries
 
-In a local SQL model, choose **dbt → Inspect dbt CTEs** from the context menu to open a
-**Debug** session. Opening it runs no query. It uses the project's
+In a local SQL model, click the Run gutter icon and choose **Debug dbt CTEs**, or
+choose **dbt → Inspect dbt CTEs** from the context menu, to open a **Debug** session.
+Opening it runs no query. It uses the project's
 [execution settings](configuration.md#execution-settings), including the active
 target; Run configuration overrides do not apply. **Frames** lists the model's
 top-level CTEs; select a frame to see its cached result in **Rows**.
+
+If inspection cannot open, a dialog explains why and confirms that no query ran.
+SQL parsing failures include the parser's reason and location when available.
+A model without top-level CTEs has no steps to inspect.
+Only CTEs written in the model source are available as steps. If a macro generates
+the query, use [Open Compiled dbt SQL](#compiled-sql) to view it; generated CTEs
+cannot be stepped through here.
 
 | Control | Action |
 | --- | --- |
@@ -271,6 +308,9 @@ top-level CTEs; select a frame to see its cached result in **Rows**.
 | **Step Into** | Open another inspection, without querying, when the selected CTE references exactly one local model. |
 
 **Step Out** and **Run to Cursor** do nothing in a CTE inspection.
+To set a breakpoint, click the editor gutter on the line containing a top-level
+CTE's name. Breakpoints apply to CTE inspection; they do not pause a normal
+**Run** command or execution inside warehouse SQL or Jinja.
 
 Each step is a separate query that recalculates its dependencies, so random values
 and timestamps can differ between steps. Editing source or changing execution

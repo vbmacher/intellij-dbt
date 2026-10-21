@@ -28,8 +28,8 @@ private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
 
   override def withPrefix(text: String, end: Int): Option[String] = DbtSqlNavigation.withPrefix(text, end)
 
-  override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[DbtSqlAnalysis] =
-    DbtSqlAnalyzer.analyze(file, workspace, completionOffset)
+  override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[Either[String, DbtSqlAnalysis]] =
+    Option(file.getVirtualFile).filter(_.getExtension == "sql").map(_ => DbtSqlAnalyzer.analyze(file, workspace, completionOffset))
 
   override def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] =
     Option(file.getVirtualFile).filter(_.getExtension == "sql").map(_ => DbtSqlNavigation.suppressionLayout(file))
@@ -98,9 +98,21 @@ private[sql] object DbtSqlNavigation {
 
   def range(text: String, t: Token): TextRange = new TextRange(offset(text, t), offset(text, t, end = true))
 
-  def parse(sql: String): Option[Statement] =
-    try Some(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch {
-      case _: JSQLParserException => None
+  def parse(sql: String): Option[Statement] = parseResult(sql).toOption
+
+  def parseResult(sql: String): Either[String, Statement] =
+    try Right(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch {
+      case error: JSQLParserException =>
+        val causes = Iterator.iterate(error: Throwable)(_.getCause).takeWhile(_ != null).toVector
+        if (causes.exists(_.isInstanceOf[java.util.concurrent.TimeoutException]))
+          Left("SQL analysis exceeded the 1-second parsing limit.")
+        else {
+          val position = causes.collectFirst { case e: ParseException => e }.flatMap(e => Option(e.currentToken))
+            .flatMap(t => Option(t.next)).filter(t => t.beginLine > 0 && t.beginColumn > 0)
+            .map(t => s"\nThe parser stopped at line ${t.beginLine}, column ${t.beginColumn}.").getOrElse("")
+          Left("The plugin could not parse this model's SQL." + position +
+            "\nThe SQL may be incomplete or use syntax the plugin does not support.")
+        }
     }
 
   /** The output name of a select item: its alias or its column. */
@@ -459,17 +471,19 @@ private object DbtSqlAnalyzer {
   private val ModifierProblem = "Wildcard EXCEPT, EXCLUDE or REPLACE modifiers cannot be expanded safely. " +
     "Write the required columns explicitly, or remove the modifier before expanding."
 
-  def analyze(file: PsiFile, w: DbtWorkspace, completionOffset: Option[Int]): Option[DbtSqlAnalysis] = {
-    if (file.getVirtualFile.getExtension != "sql" || file.getTextLength > 1000000) return None
-    val root = w.root(file).filter(r => r.resource(file) && !r.excluded(file.getVirtualFile)).getOrElse(return None)
+  def analyze(file: PsiFile, w: DbtWorkspace, completionOffset: Option[Int]): Either[String, DbtSqlAnalysis] = {
+    if (file.getTextLength > 1000000) return Left("This file exceeds the SQL analysis limit of 1,000,000 characters.")
+    val root = w.root(file).filter(r => r.resource(file) && !r.excluded(file.getVirtualFile))
+      .getOrElse(return Left("This file is outside the dbt project's supported SQL resource paths or is excluded."))
     val text = file.getText
     val blocks = DbtSyntax.inFile(file)
-    val sql = DbtSqlNavigation.masked(text, blocks).getOrElse(return Some(DbtSqlAnalysis(Vector.empty, Vector.empty,
+    val sql = DbtSqlNavigation.masked(text, blocks).getOrElse(return Right(DbtSqlAnalysis(Vector.empty, Vector.empty,
       Vector.empty, Vector.empty, Vector("Dynamic Jinja control flow; column analysis unavailable."))))
 
     def span(t: Token): TextRange = DbtSqlNavigation.range(text, t)
 
-    val parsed = parse(sql).orElse(completionOffset.filter(i => i > 0 && i <= sql.length).flatMap { i =>
+    val attempt = DbtSqlNavigation.parseResult(sql)
+    val parsed = attempt.toOption.orElse(completionOffset.filter(i => i > 0 && i <= sql.length).flatMap { i =>
       parse(sql.updated(i - 1, if (sql(i - 1) == '.') ' ' else '*'))
     }).getOrElse {
       // A dialect modifier may be rejected by the parser. Parsing only through
@@ -491,8 +505,9 @@ private object DbtSqlAnalyzer {
           }
         case _ => Vector.empty
       }.toVector
-      return if (unsupported.nonEmpty) Some(DbtSqlAnalysis(Vector.empty, Vector.empty, Vector.empty, Vector.empty,
-        Vector("Wildcard modifier is unsupported by SQL analysis."), wildcardProblems = unsupported)) else None
+      return if (unsupported.nonEmpty) Right(DbtSqlAnalysis(Vector.empty, Vector.empty, Vector.empty, Vector.empty,
+        Vector("Wildcard modifier is unsupported by SQL analysis."), wildcardProblems = unsupported)) else
+        Left(attempt.left.toOption.getOrElse("The plugin could not parse this model's SQL."))
     }
     val references = DbtNavigation.inFile(file, includeSelections = false)
     val issues = ArrayBuffer.empty[String]
@@ -715,10 +730,10 @@ private object DbtSqlAnalyzer {
     parsed match {
       case s: Select =>
         val columns = select(s, Map.empty)
-        Some(DbtSqlAnalysis(columns, scopes.toVector, ctes.toVector, wildcards.toVector,
+        Right(DbtSqlAnalysis(columns, scopes.toVector, ctes.toVector, wildcards.toVector,
           issues.toVector.distinct ++ (if (scopes.exists(!_.complete)) Vector("Some relation schemas are unavailable.") else Vector.empty),
           intermediate.toVector, problems.toVector.distinct, deletions.toVector, declarations.toVector, wildcardProblems.toVector))
-      case _ => None
+      case _ => Left("SQL analysis requires a SELECT query. This file contains a different SQL statement.")
     }
   }
 }

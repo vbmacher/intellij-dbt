@@ -121,7 +121,7 @@ private[ide] object DbtDocumentation {
     case c => c.toString
   }
 
-  def render(w: DbtWorkspace, s: DbtSymbol): String = {
+  def render(w: DbtWorkspace, s: DbtSymbol, linkTestSources: Boolean = false): String = {
     val data = DbtResourceData.get(w, s)
     val (upstream, downstream) = dependencies(w, s)
 
@@ -147,7 +147,11 @@ private[ide] object DbtDocumentation {
       (if (data.columns.isEmpty) "<p>No columns documented</p>" else "<table>" + data.columns.map(c =>
         s"<tr><td><a href=\"dbt-column:${URLEncoder.encode(c.name, StandardCharsets.UTF_8)}\">${e(c.name)}</a></td><td>${e(c.dataType)}</td><td>${e(c.description)}</td></tr>").mkString + "</table>") +
       list("Upstream", upstream) + list("Downstream", downstream) +
-      s"<h3>Tests (${data.tests.size})</h3>" + data.tests.map(t => s"<p>${e(t.name)} ${e(t.column)}</p>").mkString +
+      s"<h3>Tests (${data.tests.size})</h3>" + data.tests.map { t =>
+        val name = t.sourceId.filter(_ => linkTestSources).fold(e(t.name))(id =>
+          s"<a href=\"dbt-test:${URLEncoder.encode(id, StandardCharsets.UTF_8)}\">${e(t.name)}</a>")
+        s"<p>$name ${e(t.column)}</p>"
+      }.mkString +
       (if (airflow.isEmpty) "" else "<h3>Airflow context</h3>" + airflow.map(t =>
         s"<p>${e(t.dag)} / ${e(t.task)} — ${e(t.schedule)}<br>Selection: ${e(t.selection)}<br>Exclude: ${e(t.exclude)}<br>${e(t.problems.mkString("; "))}</p>").mkString) +
       s"<p>Source: ${e(s.file.getVirtualFile.getPath)}</p>"

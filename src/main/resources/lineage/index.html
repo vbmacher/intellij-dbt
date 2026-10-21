@@ -66,6 +66,7 @@ window.dbtShowDocumentation=p=>{
 $('docs-content').onclick=e=>{
  const link=e.target.closest('a');if(!link)return;e.preventDefault();
  if(link.getAttribute('href')?.startsWith('dbt-column:'))openDocumentation(documentationId,decodeURIComponent(link.getAttribute('href').slice(11).replace(/\+/g,' ')));
+ else if(link.getAttribute('href')?.startsWith('dbt-test:'))send('test-source',documentationId,decodeURIComponent(link.getAttribute('href').slice(9).replace(/\+/g,' ')));
 };
 $('resource-docs').onclick=()=>openDocumentation(documentationId);
 $('close-docs').onclick=closeDocumentation;

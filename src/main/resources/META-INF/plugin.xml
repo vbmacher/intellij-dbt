@@ -148,6 +148,9 @@
         <JsonSchema.ProviderFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtYamlSchemaProvider"/>
     </extensions>
     <actions>
+        <action id="Dbt.CompileProject" class="com.github.vbmacher.intellij.dbt.ide.DbtCompileProjectAction" text="Compile dbt Project" description="Compile the whole dbt project using its configured target and executable">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="Dbt.EditProperties" class="com.github.vbmacher.intellij.dbt.ide.DbtEditPropertiesAction" text="Edit dbt Properties YAML">
         </action>
         <action id="Dbt.GenerateColumns" class="com.github.vbmacher.intellij.dbt.ide.DbtGenerateColumnsAction" text="dbt Columns">
@@ -204,6 +207,7 @@
             <reference ref="Dbt.InspectCtes"/>
             <reference ref="Dbt.InspectSql"/>
             <separator/>
+            <reference ref="Dbt.CompileProject"/>
             <reference ref="Dbt.OpenCompiledSql"/>
             <reference ref="Dbt.CompareSql"/>
             <separator/>

@@ -52,7 +52,9 @@ final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
         for {
           resource <- w.model(file).toRight("Choose a dbt source model.")
           snapshot <- DbtCteInspection.context(w, resource).toRight("The execution project is unavailable.")
-          analysis <- DbtSqlAnalysis.get(w, file).toRight("This SQL cannot be inspected safely.")
+          analysis <- DbtSqlAnalysis.result(w, file).left.map(reason =>
+            "Cannot preview this CTE.\n\n" + reason +
+              "\n\nNo preview query was run.\nTo preview the complete model, use Preview in a dbt Run configuration.")
           cte <- DbtCteInspection.at(w, file, analysis, offset)
             .toRight("Place the caret at a recognized CTE definition or reference.")
           query <- DbtCteInspection.plan(snapshot.source, analysis, cte)
