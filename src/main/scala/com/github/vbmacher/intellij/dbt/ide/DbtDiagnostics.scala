@@ -113,6 +113,7 @@ private[ide] final case class DbtCreation(kind: String, name: String, source: Op
   file: Option[PsiFile], before: String, after: String, path: String,
   origin: Option[(PsiFile, TextRange, String)] = None)
 private[ide] object DbtCreateResourceFix {
+  private def properties(name: String): String = s"version: 2\nmodels:\n  - name: $name\n    columns:\n      - name: id\n"
   def proposal(file: PsiFile, offset: Int): Option[DbtCreation] = {
     val w = DbtWorkspace.get(file.getProject)
     for {
@@ -166,7 +167,6 @@ private[ide] object DbtCreateResourceFix {
         kind == "model" && root.pathContains(folder, normalized)
       })
     val propertiesPath = path.resolveSibling(name + ".yml").toString.replace('\\', '/')
-    val properties = s"version: 2\nmodels:\n  - name: $name\n    columns:\n      - name: id\n"
     val wrongExtension = if (proposal.kind == "model") path.getFileName.toString != name + ".sql"
       else !Set("yml", "yaml")(path.getFileName.toString.split("\\.").last)
     if (!DbtSyntax.isIdentifier(name) || proposal.kind != "model" && name != proposal.name) Left("Choose a valid dbt model name.")
@@ -196,7 +196,7 @@ private[ide] object DbtCreateResourceFix {
             val parent = Option(path.getParent).fold(proposal.root.directory)(p => VfsUtil.createDirectoryIfMissing(proposal.root.directory, p.toString))
             val created = parent.createChildData(this, path.getFileName.toString)
             VfsUtil.saveText(created, proposal.after)
-            if (includeProperties) VfsUtil.saveText(parent.createChildData(this, name + ".yml"), properties)
+            if (includeProperties) VfsUtil.saveText(parent.createChildData(this, name + ".yml"), properties(name))
             if (name != proposal.name) proposal.origin.foreach { case (file, range, _) =>
               val manager = PsiDocumentManager.getInstance(project)
               manager.getDocument(file).replaceString(range.getStartOffset, range.getEndOffset, name)
@@ -230,8 +230,8 @@ final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
       fields.add(new JBLabel("Destination:")); fields.add(path)
       fields.add(properties); fields.add(new JBLabel(""))
       content.add(fields, BorderLayout.CENTER); content.add(new com.intellij.ui.components.JBScrollPane(preview), BorderLayout.SOUTH)
-      def updatePreview(): Unit = preview.setText(proposal.after + (if (properties.isSelected)
-        s"\n--- ${name.getText}.yml ---\nversion: 2\nmodels:\n  - name: ${name.getText}\n    columns:\n      - name: id\n" else ""))
+      def updatePreview(): Unit = preview.setText(proposal.after +
+        (if (properties.isSelected) s"\n--- ${name.getText}.yml ---\n" + DbtCreateResourceFix.properties(name.getText) else ""))
       name.getDocument.addDocumentListener(new com.intellij.ui.DocumentAdapter {
         override def textChanged(event: javax.swing.event.DocumentEvent): Unit = {
           path.setText(path.getText.substring(0, path.getText.lastIndexOf('/') + 1) + name.getText + ".sql")

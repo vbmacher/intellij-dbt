@@ -1,7 +1,8 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.{array, obj, strings}
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.{array, obj, strings}
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
 import com.google.gson.JsonObject
 import com.intellij.ide.BrowserUtil
@@ -16,7 +17,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.psi.PsiManager
 import java.net.{URI, URLEncoder}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{FileVisitResult, Files, Path, Paths, SimpleFileVisitor}
@@ -476,7 +476,7 @@ final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
       val w = DbtWorkspace.get(project)
       DbtResourceAction.at(w, file, offset).toVector.flatMap(DbtAirflow.context(w, _)).flatMap { task =>
         val definition = Option(LocalFileSystem.getInstance.findFileByPath(task.evidence))
-          .flatMap(f => Option(PsiManager.getInstance(w.project).findFile(f)))
+          .flatMap(DbtYaml.psiFile(w.project, _))
           .flatMap(f => Option(f.findElementAt(task.offset))).map { at =>
             new GotoRelatedItem(at, "Airflow DAGs / tasks") {
               override def getCustomName: String = task.dag + " / " + task.task
@@ -497,7 +497,9 @@ final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
 
 final class DbtAirflowAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
-    DbtUi.background(project, "Discover local dbt Airflow context") { _ => DbtUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) } } { case (tasks, problems) =>
+    DbtUi.background(project, "Discover local dbt Airflow context") { _ =>
+      DbtUi.read { val w = DbtWorkspace.get(project); (DbtAirflow.tasks(w), DbtAirflow.problems(w)) }
+    } { case (tasks, problems) =>
       val status = DbtUi.textArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Workspace > Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
       val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
         " · " + t.kind + (if (t.schedule.nonEmpty) " · Schedule: " + t.schedule else "") +

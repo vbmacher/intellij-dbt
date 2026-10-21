@@ -1,6 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.{JsonObject, JsonParser}
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInspection.{LocalInspectionTool, LocalQuickFix, ProblemDescriptor, ProblemHighlightType, ProblemsHolder}
@@ -17,7 +18,7 @@ import com.intellij.openapi.progress.{EmptyProgressIndicator, ProgressIndicator,
 import com.intellij.openapi.project.{Project, ProjectLocator}
 import com.intellij.openapi.util.{Key, TextRange}
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiElementVisitor, PsiFile, PsiManager}
+import com.intellij.psi.{PsiDocumentManager, PsiElement, PsiElementVisitor, PsiFile}
 import com.intellij.util.ThrowableRunnable
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.nio.charset.StandardCharsets
@@ -104,7 +105,8 @@ final class DbtInspectSqlAction extends DbtEditorAction {
       case Left(error) => report(error)
       case Right((command, source, stamp)) =>
         file.putUserData(DbtSqlFluff.Result, null)
-        DbtUi.background(project, "Inspect dbt SQL with SQLFluff", Some(error => report("Cannot inspect this source: " + error.getMessage))) {
+        val failed = (error: Throwable) => report("Cannot inspect this source: " + error.getMessage)
+        DbtUi.background(project, "Inspect dbt SQL with SQLFluff", Some(failed)) {
           indicator => new DbtToolProcess().run(command, source, indicator).flatMap { output =>
             if (output.getExitCode != 0 && output.getExitCode != 1)
               Left("SQLFluff failed (exit " + output.getExitCode + "). Check the project configuration. " + output.getStderr.take(4000))
@@ -112,7 +114,8 @@ final class DbtInspectSqlAction extends DbtEditorAction {
           }
         } { result =>
           val current = DbtUi.read(file.isValid &&
-            Option(PsiDocumentManager.getInstance(project).getDocument(file)).exists(d => d.getModificationStamp == stamp && d.getText == source))
+            Option(PsiDocumentManager.getInstance(project).getDocument(file))
+              .exists(d => d.getModificationStamp == stamp && d.getText == source))
           if (!current) report("The document changed during inspection. Rerun Inspect dbt SQL.")
           else result match {
             case Left(error) => report(error)
@@ -120,7 +123,8 @@ final class DbtInspectSqlAction extends DbtEditorAction {
               file.putUserData(DbtSqlFluff.Result, DbtSqlFluffResult(source, stamp, diagnostics))
               DaemonCodeAnalyzer.getInstance(project).restart(file, "SQLFluff explicit inspection completed")
               report(if (diagnostics.isEmpty) "No SQLFluff violations."
-                else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.", NotificationType.INFORMATION)
+                else s"${diagnostics.size} diagnostics are available in the editor. Use Alt+Enter for available fixes.",
+                NotificationType.INFORMATION)
           }
         }
     }
@@ -318,7 +322,7 @@ final class DbtFormatOnSave extends FileDocumentManagerListener {
       project <- Option(ProjectLocator.getInstance.guessProjectForFile(file))
       snapshot <- DbtUi.read {
         if (!project.isDisposed && DbtFormatOnSave.enabled(project, file))
-          Option(PsiManager.getInstance(project).findFile(file)).flatMap(psi => DbtToolCommand.create(psi).toOption)
+          DbtYaml.psiFile(project, file).flatMap(psi => DbtToolCommand.create(psi).toOption)
             .map(command => (project, command, document.getText, document.getModificationStamp))
         else None
       }

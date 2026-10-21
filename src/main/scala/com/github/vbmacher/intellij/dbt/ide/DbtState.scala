@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.obj
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.obj
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.{JsonArray, JsonElement, JsonObject}
@@ -149,8 +149,11 @@ private[ide] object DbtState {
       (old.get(id), now.get(id)) match {
         case (None, Some(_)) => Some(DbtStateChange(id, "added", "No baseline declaration", ""))
         case (Some(previous), None) =>
-          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") || DbtJson.text(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
-          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed", if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration", DbtJson.text(previous, "relation_name").getOrElse("")))
+          val generatedTest = id.startsWith("test.") && (previous.has("test_metadata") ||
+            DbtJson.text(previous, "original_file_path").exists(p => p.endsWith(".yml") || p.endsWith(".yaml")))
+          Some(DbtStateChange(id, if (generatedTest) "unknown" else "removed",
+            if (generatedTest) "Generated test identity cannot be proven from current source" else "No current source declaration",
+            DbtJson.text(previous, "relation_name").getOrElse("")))
         case (Some(previous), Some(Vector(symbol))) =>
           val changed = scala.collection.mutable.ArrayBuffer.empty[String]
           val unknown = scala.collection.mutable.ArrayBuffer.empty[String]
@@ -171,7 +174,8 @@ private[ide] object DbtState {
                   case Some(source) if normalized(source).contains("{{") || normalized(source).contains("{%") => unknown += s"Dynamic config: $key"
                   case Some(source) => before match {
                     case None => changed += s"Config added: $key"
-                    case Some(value) if Set("pre-hook", "post-hook")(key) && DbtJson.child(previous, "unrendered_config").isEmpty && !empty(value) =>
+                    case Some(value)
+                      if Set("pre-hook", "post-hook")(key) && DbtJson.child(previous, "unrendered_config").isEmpty && !empty(value) =>
                       unknown += s"Hook normalization requires dbt: $key"
                     case Some(value) =>
                       val result = if (key == "tags" && !source.isJsonNull && !value.isJsonNull) Difference(changed = tags(value) != tags(source)) else difference(value, source)
@@ -212,7 +216,8 @@ private[ide] object DbtState {
               }}
           }
           val reasons = changed.toVector ++ unknown.toVector.distinct.map("Unresolved: " + _)
-          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown", reasons.mkString("; "), DbtJson.text(previous, "relation_name").getOrElse(""))) else None
+          if (changed.nonEmpty || unknown.nonEmpty) Some(DbtStateChange(id, if (changed.nonEmpty) "modified" else "unknown",
+            reasons.mkString("; "), DbtJson.text(previous, "relation_name").getOrElse(""))) else None
         case _ => Some(DbtStateChange(id, "unknown", "Ambiguous current owning project/resource identity", ""))
       }
     }
@@ -250,8 +255,9 @@ private[ide] object DbtState {
         val (parents, children) = DbtLineage.operators(raw)
         val parentDepth = parents.flatMap(_.dropRight(1).toIntOption).getOrElse(100)
         val childDepth = children.flatMap(_.drop(1).toIntOption).getOrElse(100)
-        (matched ++ matched.flatMap(s => parents.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = false, parentDepth.min(100))) ++
-          children.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = true, childDepth.min(100))))).distinctBy(key)
+        (matched ++ matched.flatMap(s =>
+          parents.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = false, parentDepth.min(100))) ++
+            children.toVector.flatMap(_ => DbtLineage.traverse(edges, s, downstream = true, childDepth.min(100))))).distinctBy(key)
       }
     }
     def selection(text: String): Vector[DbtSymbol] = text.trim.split("\\s+").toVector.filter(_.nonEmpty).flatMap { token =>

@@ -1,8 +1,9 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.ide.DbtAgentProtocol.{array, obj, strings}
 import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.{array, obj, strings}
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.{Gson, JsonObject, JsonParser}
 import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.LafManagerListener
@@ -19,7 +20,6 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.{VirtualFile, VirtualFileManager}
 import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
-import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.JBColor
@@ -118,7 +118,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
     val state = settings.getState
     DbtUi.readLater(this, ModalityState.any(), Some(project), Some(graphWork)) {
       val w = DbtWorkspace.get(project)
-      val editorModel = file.flatMap(f => Option(PsiManager.getInstance(project).findFile(f))).flatMap(w.model)
+      val editorModel = file.flatMap(DbtYaml.psiFile(project, _)).flatMap(w.model)
       val nextFocus = if (follow && state.pinnedFocus.isEmpty || oldFocus.isEmpty)
         editorModel.map(DbtResourceIdentity.key(w, _)).orElse(oldFocus) else oldFocus
       val graph = DbtGraphData.build(w, nextFocus,

@@ -8,7 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.psi.{PsiFile, PsiManager}
+import com.intellij.psi.PsiFile
 import com.intellij.usages.{Usage, UsageInfo2UsageAdapter, UsageTarget, UsageView, UsageViewManager, UsageViewPresentation}
 import com.intellij.usageView.UsageInfo
 import scala.util.Try
@@ -75,7 +75,7 @@ private[ide] object DbtSelectionReview {
       DbtCliResource(s.uniqueId, DbtSelection.selector(w, s), s.file, s.range, Some(s)))
     val tests = DbtTestDiscovery.discover(w, Map(root.directory.getPath -> root.runOptions))
       .filter(t => t.root == root.directory.getPath && t.selector.nonEmpty).flatMap { t =>
-        Option(PsiManager.getInstance(w.project).findFile(t.file)).map(f =>
+        DbtYaml.psiFile(w.project, t.file).map(f =>
           DbtCliResource(t.id, t.selector, f, new TextRange(t.offset, t.offset), None))
       }
     (tests ++ resources).distinctBy(_.id)

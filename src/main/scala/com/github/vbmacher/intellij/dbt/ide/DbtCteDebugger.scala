@@ -2,6 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.navigation.{DbtCte, DbtNavigation, DbtSqlAnalysis}
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.ui.{ConsoleViewContentType, ExecutionConsole, RunnerLayoutUi}
@@ -15,7 +16,6 @@ import com.intellij.openapi.fileTypes.{FileType, PlainTextFileType}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.{Disposer, Key}
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.ui.{ColoredTextContainer, SimpleTextAttributes}
 import com.intellij.xdebugger._
@@ -186,7 +186,7 @@ final class DbtCteBreakpointType extends XLineBreakpointType[DbtCteBreakpointPro
   override def getVisibleStandardPanels: java.util.EnumSet[XBreakpointType.StandardPanels] = java.util.EnumSet.noneOf(classOf[XBreakpointType.StandardPanels])
   override def canPutAt(file: VirtualFile, line: Int, project: Project): Boolean = file.getExtension == "sql" && DbtUi.read {
     val w = DbtWorkspace.get(project)
-    Option(PsiManager.getInstance(project).findFile(file)).exists(f => w.model(f).nonEmpty && DbtSqlAnalysis.get(w, f).exists(a =>
+    DbtYaml.psiFile(project, file).exists(f => w.model(f).nonEmpty && DbtSqlAnalysis.get(w, f).exists(a =>
       Option(FileDocumentManager.getInstance.getDocument(file)).exists(d =>
         DbtCteInspection.frames(a).exists(c => d.getLineNumber(c.range.getStartOffset) == line))))
   }

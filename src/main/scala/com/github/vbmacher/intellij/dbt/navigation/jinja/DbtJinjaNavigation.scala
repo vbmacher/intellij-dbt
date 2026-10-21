@@ -332,9 +332,9 @@ private object DbtYamlContexts {
     else if (relative.contains("dbt_project.yml")) if (keys.exists(hooks)) "runtime" else "project"
     else if (!keys.lastOption.exists(DbtDeclarations.ResourceKeys.contains)) "none"
     else if (keys.contains("meta")) "properties"
-    else if (keys.exists(Set("tests", "data_tests")) && keys.contains("arguments") && !root.supports(10, 5)) "none"
+    else if (keys.exists(DbtSymbol.TestKeys) && keys.contains("arguments") && !root.supports(10, 5)) "none"
     else if (keys.contains("description") && !keys.exists(Set("meta", "config"))) "description"
-    else if (keys.exists(hooks) || keys.exists(Set("tests", "data_tests"))) "runtime"
+    else if (keys.exists(hooks) || keys.exists(DbtSymbol.TestKeys)) "runtime"
     else if (keys.exists(Set("input", "depends_on", "relation", "filter", "where", "group_by", "order_by")) ||
       keys.headOption.contains("model") && keys.exists(Set("semantic_models", "unit_tests"))) "semantic"
     else "properties"

@@ -172,7 +172,8 @@ private[dbt] object DbtExecutionContext {
 
 /** Lowercase hexadecimal SHA-256 digests; text is encoded as UTF-8. */
 private[dbt] object DbtHash {
-  def sha256(bytes: Array[Byte]): String = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+  def sha256(bytes: Array[Byte]): String =
+    java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
   def sha256(text: String): String = sha256(text.getBytes(StandardCharsets.UTF_8))
 }
 

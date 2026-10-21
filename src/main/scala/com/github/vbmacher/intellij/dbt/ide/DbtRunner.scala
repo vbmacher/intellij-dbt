@@ -89,6 +89,8 @@ private[ide] final case class DbtCommand(prefix: Vector[String], request: DbtCom
 
 private[ide] object DbtCommand {
   val Actions: Vector[String] = DbtCommandAction.toolbar.map(_.label)
+  private def incremental(w: DbtWorkspace, s: DbtSymbol): Boolean =
+    DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental")
   private def wholeProject(w: DbtWorkspace, root: DbtRoot): Either[String, DbtRunSelection] =
     DbtRunSelection.all(w, root.directory.getPath).toRight("The execution root is unavailable.")
   def selection(w: DbtWorkspace, root: DbtRoot, action: String, fullRefresh: Boolean,
@@ -114,8 +116,7 @@ private[ide] object DbtCommand {
       _ <- Either.cond(stateSelection || cliMatches.fold(resolved.resources.nonEmpty)(_.nonEmpty), (), "Selection matches no resources.")
       _ <- Either.cond(action != "Preview", (), "Use a model or CTE for Preview.")
       everything <- wholeProject(w, root)
-      incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" &&
-        DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+      incremental = stateSelection || resolved.resources.exists(s => s.kind == "model" && DbtCommand.incremental(w, s))
       base <- create(w, everything, action, fullRefresh && incremental, Some(root.runOptions))
       excluded <- DbtSelectionReview.cliTerms(w, root, options.exclude)
     } yield {
@@ -181,8 +182,7 @@ private[ide] object DbtCommand {
         else if (action != DbtCommandAction.GenerateDocs && !all && selectors.isEmpty) Left("The selected directory contains no enabled dbt models.")
         else {
           val prefix = Vector(DbtExecutionContext.executable(root)) ++ ParametersListUtil.parse(options.executableArguments, false, true).asScala
-          val incremental = DbtRunSelection.selectedModels(w, selection).exists(s =>
-            DbtResourceData.get(w, s).attributes.get("materialized").contains("incremental"))
+          val incremental = DbtRunSelection.selectedModels(w, selection).exists(DbtCommand.incremental(w, _))
           val profiles = DbtExecutionContext.profiles(root).directory.toString
           val artifact = root.artifactDirectory
           state.map { baseline =>

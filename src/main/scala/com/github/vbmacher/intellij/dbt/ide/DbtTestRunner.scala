@@ -21,7 +21,7 @@ import com.intellij.openapi.util.{Disposer, Key}
 import com.intellij.openapi.vfs.{VirtualFile, VirtualFileManager}
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.{CachedValue, CachedValueProvider, CachedValuesManager, PsiModificationTracker}
-import com.intellij.psi.{PsiElement, PsiFile, PsiManager}
+import com.intellij.psi.{PsiElement, PsiFile}
 import javax.swing.Icon
 import org.jetbrains.yaml.psi.{YAMLMapping, YAMLScalar, YAMLSequence}
 import scala.jdk.CollectionConverters._
@@ -117,7 +117,7 @@ private[ide] object DbtTestDiscovery {
 
   /** Preserve the exact executable, environment, profiles and target from the original run. */
   def rerun(command: DbtCommand, tests: Vector[DbtTestDefinition], results: Vector[DbtExecutionResult]): Either[String, DbtCommand] = {
-    val failed = results.filter(r => Set("failed", "error")(r.status)).map(_.id).toSet
+    val failed = results.filter(_.failed).map(_.id).toSet
     val intended = tests.filter(t => failed(t.id))
     select(command, intended)
   }
@@ -208,18 +208,18 @@ private[ide] final class DbtTestConsole(configuration: DbtRunConfiguration, exec
     definitions = tests
     view.print(s"Target: ${execution.target} · Run: ${execution.invocation} · ${execution.timestamp}\n${execution.artifact}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
     val compatible = if (execution.problem.isEmpty) execution else execution.copy(results = Vector.empty)
-    compatible.results.filterNot(r => r.id.startsWith("test.") || r.id.startsWith("unit_test.")).foreach { result =>
+    compatible.results.filterNot(_.test).foreach { result =>
       message("message", "text" -> s"${result.id}: ${result.status}\n${result.message}")
     }
     update(compatible.copy(active = false))
-    process.complete(if (execution.problem.nonEmpty || execution.results.exists(r => Set("failed", "error")(r.status))) 1 else 0)
+    process.complete(if (execution.problem.nonEmpty || execution.results.exists(_.failed)) 1 else 0)
   }
   def fail(problem: String): Unit = {
     message("message", "text" -> problem, "status" -> "ERROR")
     process.complete(1)
   }
   private[ide] def update(execution: DbtExecutionRun): Unit = {
-    execution.results.filter(r => r.id.startsWith("test.") || r.id.startsWith("unit_test.")).foreach { result =>
+    execution.results.filter(_.test).foreach { result =>
       val test = definitions.find(_.id == result.id)
       val name = test.map(_.name).getOrElse(result.id)
       if (!started(result.id)) {
@@ -260,7 +260,7 @@ private[ide] object DbtTestConsole {
       val at = path.lastIndexOf('#')
       (if (protocol != "dbt-test" || at < 0) Vector.empty else for {
         file <- Option(VirtualFileManager.getInstance.findFileByUrl(path.substring(0, at))).toVector
-        psi <- Option(PsiManager.getInstance(project).findFile(file)).toVector
+        psi <- DbtYaml.psiFile(project, file).toVector
         offset <- path.substring(at + 1).toIntOption.toVector
         element <- Option(psi.findElementAt(offset)).toVector
       } yield PsiLocation.fromPsiElement(element): Location[_]).asJava

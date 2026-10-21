@@ -25,6 +25,8 @@ private[dbt] object DbtSymbol {
   val RelationKinds: Set[String] = RefKinds + "source_table"
   /** Kinds of relation columns: declared properties and SQL projections; their `owner` is the relation name. */
   val ColumnKinds: Set[String] = Set("column", "sql_projection")
+  /** Property keys listing the data tests of a resource or column; `tests` is the pre-1.8 spelling. */
+  val TestKeys: Set[String] = Set("tests", "data_tests")
 }
 
 private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: String, file: PsiFile,
@@ -40,16 +42,15 @@ private[dbt] final case class DbtSymbol(kind: String, name: String, namespace: S
 
   /** A properties entry dedicated to attached data tests, without other resource or column metadata. */
   def isTestOnlyProperty: Boolean = isProperty && DbtSymbol.RefKinds(kind) && mapping.exists { m =>
-    val testKeys = Set("data_tests", "tests")
     def onlyKeys(mapping: YAMLMapping, keys: Set[String]): Boolean =
       mapping.getKeyValues.asScala.forall(k => keys(k.getKeyText))
-    def hasTests(mapping: YAMLMapping): Boolean = testKeys.exists(key => DbtYaml.value(mapping, key).exists {
+    def hasTests(mapping: YAMLMapping): Boolean = DbtSymbol.TestKeys.exists(key => DbtYaml.value(mapping, key).exists {
       case sequence: YAMLSequence => !sequence.getItems.isEmpty
       case _ => false
     })
     val columns = DbtYaml.items(m, "columns")
-    onlyKeys(m, testKeys ++ Set("name", "columns")) &&
-      columns.forall(c => onlyKeys(c, testKeys + "name") && hasTests(c)) && (hasTests(m) || columns.nonEmpty)
+    onlyKeys(m, DbtSymbol.TestKeys ++ Set("name", "columns")) &&
+      columns.forall(c => onlyKeys(c, DbtSymbol.TestKeys + "name") && hasTests(c)) && (hasTests(m) || columns.nonEmpty)
   }
 
   def isStale: Boolean = attributes.get("stale").contains("true")
@@ -114,8 +115,8 @@ final class DbtSymbolElement private[project] (val symbol: DbtSymbol)
       if (insertOutputAlias || symbol.attributes.contains("insert-output-alias")) document.insertString(getTextRange.getEndOffset, " as " + name)
       else {
         val existing = document.getText(getTextRange)
-        val quote = existing.headOption.filter(c => Set('"', '\'', '`')(c) && existing.lastOption.contains(c))
-        document.replaceString(getTextRange.getStartOffset, getTextRange.getEndOffset, quote.fold(name)(q => s"$q$name$q"))
+        document.replaceString(getTextRange.getStartOffset, getTextRange.getEndOffset,
+          DbtSymbolElement.quote(existing).fold(name)(q => s"$q$name$q"))
       }
     }
     this
@@ -173,6 +174,9 @@ private[dbt] trait DbtDocumentationNavigation {
 }
 
 private[dbt] object DbtSymbolElement {
+  /** The quote character enclosing the source text of an identifier, if any. */
+  def quote(text: String): Option[Char] = text.headOption.filter(c => Set('"', '\'', '`')(c) && text.lastOption.contains(c))
+
   private val Language: Language = new Language("dbt-symbol") {}
 
   /** Shared by every presentation of a dbt declaration. */

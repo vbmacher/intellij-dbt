@@ -97,13 +97,17 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     DbtUi.labeledRows(panel, new Insets(4, 5, 4, 10), rows)
     root.addActionListener(_ => {
       if (selectedRoot.nonEmpty) drafts += selectedRoot -> readOptions()
-      selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
-      fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
+      selectRoot()
     })
     tabs.addTab("General", new JBScrollPane(panel))
     tabs.addTab("Integrations", new JBScrollPane(integrations.createComponent()))
     reset()
     tabs
+  }
+
+  private def selectRoot(): Unit = {
+    selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
+    fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
   }
 
   private def fill(o: DbtRunOptions): Unit = {
@@ -162,8 +166,7 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     root.removeAllItems()
     val paths = (drafts.keys.toVector ++ Option(project.getBasePath)).distinct.sorted
     paths.foreach(root.addItem)
-    selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
-    fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
+    selectRoot()
     upstream.setValue(Int.box(settings.getState.upstream))
     downstream.setValue(Int.box(settings.getState.downstream))
     direction.setSelectedItem(settings.getState.direction)

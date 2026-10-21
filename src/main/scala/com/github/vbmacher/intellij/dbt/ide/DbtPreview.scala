@@ -280,15 +280,16 @@ private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPane
     DbtSqlEditors.open(project, "dbt submitted preview", e.submitted)
     e.adapterSql.foreach(sql => DbtSqlEditors.open(project, "dbt adapter preview", sql))
   })
-  private val navigate: JButton = DbtUi.button("Go to CTE error")(WriteIntentReadAction.run(() => evidence.flatMap(_.location).foreach { at =>
-    val file = Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl))
-    val current = file.flatMap(f => Option(FileDocumentManager.getInstance.getDocument(f)))
-    if (current.exists(_.getText == at.source.text)) file.foreach { f =>
-      val descriptor = new OpenFileDescriptor(project, f, at.offset)
-      Option(FileEditorManager.getInstance(project).openTextEditor(descriptor, true)).foreach(descriptor.navigateIn)
-    }
-    else { navigate.setEnabled(false); label.setText("Source changed; rerun the preview before navigating to its error.") }
-  }))
+  private val navigate: JButton = DbtUi.button("Go to CTE error")(WriteIntentReadAction.run(() =>
+    evidence.flatMap(_.location).foreach { at =>
+      val file = Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl))
+      val current = file.flatMap(f => Option(FileDocumentManager.getInstance.getDocument(f)))
+      if (current.exists(_.getText == at.source.text)) file.foreach { f =>
+        val descriptor = new OpenFileDescriptor(project, f, at.offset)
+        Option(FileEditorManager.getInstance(project).openTextEditor(descriptor, true)).foreach(descriptor.navigateIn)
+      }
+      else { navigate.setEnabled(false); label.setText("Source changed; rerun the preview before navigating to its error.") }
+    }))
   add(details); add(navigate); add(label)
   def showEvidence(value: Option[DbtPreviewEvidence]): Unit = {
     evidence = value

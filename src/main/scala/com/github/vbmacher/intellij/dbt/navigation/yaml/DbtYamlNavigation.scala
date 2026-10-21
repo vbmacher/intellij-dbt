@@ -1,7 +1,7 @@
 package com.github.vbmacher.intellij.dbt.navigation.yaml
 
 import com.github.vbmacher.intellij.dbt.navigation.{DbtNavigationContext, DbtNavigationReference, DbtReferenceProvider, DbtResolution, DbtStaticCalls}
-import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtConfiguration, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
 import com.intellij.psi.{PsiElement, PsiRecursiveElementWalkingVisitor}
 import org.jetbrains.yaml.psi._
@@ -118,7 +118,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
               case "profile" if file.getName == "dbt_project.yml" => add(scalar, r.profile.toVector, name)
               case "target" if file.getName == "profiles.yml" => add(scalar, DbtYaml.parentMapping(scalar).toVector.flatMap(p =>
                 DbtYaml.map(p, "outputs").flatMap(DbtYaml.keyValue(_, name))), name)
-              case "field" if ancestry.exists(Set("tests", "data_tests")) =>
+              case "field" if ancestry.exists(DbtSymbol.TestKeys) =>
                 // The relationships target must supply a proved ref/source identity.
                 val mapping = DbtYaml.parentMapping(scalar)
                 val to = mapping.flatMap(DbtYaml.value(_, "to")).collect { case s: YAMLScalar => s }
@@ -133,7 +133,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
                 if (ancestry.exists(Set("metrics", "group_by", "dimensions", "entities")) && scalar.getParent.isInstanceOf[YAMLSequenceItem])
                   add(scalar, lookup(Set(if (ancestry.contains("metrics")) "metric" else if (ancestry.contains("entities")) "entity" else "dimension"), name), name)
             }
-            if (ancestry.exists(Set("tests", "data_tests")) && scalar.getParent.isInstanceOf[YAMLSequenceItem]) test(name, scalar)
+            if (ancestry.exists(DbtSymbol.TestKeys) && scalar.getParent.isInstanceOf[YAMLSequenceItem]) test(name, scalar)
           case kv: YAMLKeyValue if file.getName == "dbt_project.yml" && ancestry.lastOption.exists(DbtConfiguration.sections.contains) =>
             val key = kv.getKeyText
             val kind = ancestry.lastOption.flatMap(DbtConfiguration.sections.get)
@@ -149,7 +149,7 @@ private[yaml] final class DbtYamlNavigation extends DbtReferenceProvider {
             val owners = w.symbols.filter(s => s.file == file && s.isProperty && s.mapping.exists(_.getTextRange.contains(kv.getTextRange)))
             val code = owners.flatMap(p => w.declarations(Set(p.kind), p.name, r, Some(p.namespace))).filter(_.isCode)
             addKey(kv, code.flatMap(s => DbtConfiguration.locations(w, s.file, kv.getKeyText)).filterNot(_ == kv), kv.getKeyText)
-          case kv: YAMLKeyValue if ancestry.exists(Set("tests", "data_tests")) =>
+          case kv: YAMLKeyValue if ancestry.exists(DbtSymbol.TestKeys) =>
             if (kv.getParent.isInstanceOf[YAMLMapping] && kv.getParent.getParent.isInstanceOf[YAMLSequenceItem])
               Option(kv.getKey).foreach(e => test(kv.getKeyText, e))
             else if ((!ancestry.contains("arguments") || r.supports(10, 5)) &&

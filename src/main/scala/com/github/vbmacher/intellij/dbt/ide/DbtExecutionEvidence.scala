@@ -11,7 +11,10 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 private[ide] final case class DbtExecutionResult(id: String, status: String, message: String, failures: Long = 0L,
-  relation: String = "", duration: Long = 0L)
+  relation: String = "", duration: Long = 0L) {
+  def failed: Boolean = Set("failed", "error")(status)
+  def test: Boolean = id.startsWith("test.") || id.startsWith("unit_test.")
+}
 private[ide] final case class DbtExecutionRun(context: Vector[String], target: String, invocation: String, timestamp: String,
   artifact: String, results: Vector[DbtExecutionResult], problem: String = "", active: Boolean = false, root: String = "")
 
@@ -162,7 +165,7 @@ final class DbtExecutionEvidence(project: Project) {
     val direct = runs.flatMap(run => run.results.find(_.id == symbol.uniqueId).map(run -> _)).headOption
     val tests = definitions.filter(_.dependencies.contains(symbol.uniqueId)).map(_.id).toSet
     val failures = runs.flatMap(run => run.results.map(run -> _)).distinctBy(_._2.id)
-      .filter { case (_, result) => tests(result.id) && Set("failed", "error")(result.status) }
+      .filter { case (_, result) => tests(result.id) && result.failed }
     data.addProperty("status", direct.map(_._2.status).getOrElse("unknown"))
     data.addProperty("label", direct.map { case (run, r) => (if (symbol.kind == "source_table") "Freshness " else "Build ") + r.status + (if (run.problem.toLowerCase.contains("stale")) " (stale)" else "") }.getOrElse("Not run / result unavailable"))
     data.addProperty("failingTests", failures.size)

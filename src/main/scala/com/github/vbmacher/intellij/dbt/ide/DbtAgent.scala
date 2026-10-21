@@ -1,9 +1,10 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.project._
+import com.github.vbmacher.intellij.dbt.project.DbtJson.{array, strings}
 import com.github.vbmacher.intellij.dbt.lineage.{DbtColumnLineage, DbtLineage, DbtSelection}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.google.gson.{JsonArray, JsonElement, JsonNull, JsonObject, JsonParser}
+import com.google.gson.{JsonArray, JsonElement, JsonObject, JsonParser}
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
 import com.intellij.openapi.components.Service
@@ -43,21 +44,7 @@ private[dbt] object DbtAgentProtocol {
     "get_column_lineage" -> Vector("direction"), "resolve_selection" -> Vector("exclude"),
     "suggest_validation_selection" -> Vector("compare"))
   def allowedArguments(tool: String): Vector[String] = Tools.find(_._1 == tool).toVector.flatMap(_._3) ++ OptionalArguments.getOrElse(tool, Vector.empty)
-  /** A JSON object of string, boolean, number or JSON values in the given order; `null` becomes JSON null. */
-  def obj(values: (String, Any)*): JsonObject = {
-    val o = new JsonObject
-    values.foreach {
-      case (k, v: JsonElement) => o.add(k, v)
-      case (k, v: String) => o.addProperty(k, v)
-      case (k, v: java.lang.Boolean) => o.addProperty(k, v)
-      case (k, v: Number) => o.addProperty(k, v)
-      case (k, null) => o.add(k, JsonNull.INSTANCE)
-      case (k, v) => throw new IllegalArgumentException("Unsupported JSON value for " + k + ": " + v.getClass)
-    }
-    o
-  }
-  def strings(values: Iterable[String]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
-  def array(values: Iterable[JsonElement]): JsonArray = { val a = new JsonArray; values.foreach(a.add); a }
+  def obj(values: (String, Any)*): JsonObject = DbtJson.obj(values: _*)
   def error(code: Int, message: String): JsonObject = obj("message" -> message, "code" -> code)
   /** A JSON-RPC error response; `id` is omitted when the request id could not be read. */
   def errorResponse(id: Option[JsonElement], code: Int, message: String, data: Option[JsonElement] = None): JsonObject = {
@@ -345,7 +332,8 @@ final class DbtAgent(project: Project) extends Disposable {
     val requested = meta.flatMap(DbtJson.text(_, ProtocolVersionKey)).orElse(headerVersion).getOrElse("")
     if (method.isEmpty) clientMessage(request)
     else if (!ModernVersions.contains(requested)) unsupportedVersion(id, requested)
-    else if (id.isDefined && !meta.exists(m => DbtJson.text(m, ProtocolVersionKey).isDefined && DbtJson.child(m, ClientCapabilitiesKey).isDefined))
+    else if (id.isDefined &&
+      !meta.exists(m => DbtJson.text(m, ProtocolVersionKey).isDefined && DbtJson.child(m, ClientCapabilitiesKey).isDefined))
       Reply(400, Some(errorResponse(id, -32602, "Request params._meta must contain " + ProtocolVersionKey + " and " + ClientCapabilitiesKey + ".")))
     else if (!headerVersion.contains(requested) || !header("Mcp-Method").map(decodeHeader).contains(method.get) ||
       (method.contains("tools/call") && header("Mcp-Name").map(decodeHeader) != DbtJson.text(params, "name")))

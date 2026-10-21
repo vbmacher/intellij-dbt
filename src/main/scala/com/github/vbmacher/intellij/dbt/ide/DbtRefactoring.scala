@@ -49,7 +49,7 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
       changes.map(_._2).sortBy(-_.getStartOffset).foreach { range =>
         val existing = document.getText(range)
         val old = element.asInstanceOf[DbtSymbolElement].getName
-        val quote = existing.headOption.filter(c => Set('"', '\'', '`')(c) && existing.lastOption.contains(c))
+        val quote = DbtSymbolElement.quote(existing)
         val raw = if (quote.nonEmpty) existing.drop(1).dropRight(1) else existing
         if (raw == old) document.replaceString(range.getStartOffset, range.getEndOffset, quote.fold(name)(q => s"$q$name$q"))
         else if (raw != name) throw new IncorrectOperationException("A resolving usage changed; reopen the refactoring preview.")
