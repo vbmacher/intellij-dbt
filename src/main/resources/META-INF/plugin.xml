@@ -17,6 +17,9 @@
         <li>Use gutter markers to open related properties, definitions, dependencies and callers.</li>
         <li>Follow SQL CTEs, columns, macro parameters, selectors and Semantic Layer references.</li>
         <li>Use local source files and optionally selected JSON or Parquet metadata for navigation.</li>
+        <li>Complete dbt calls and SQL columns, inspect macro parameters, validate YAML offline, and use native Rename and Safe Delete.</li>
+        <li>Trace column lineage, edit resource documentation, review selector/state plans, and inspect bounded typed query or CTE results.</li>
+        <li>Browse native test results and lineage execution evidence; optionally configure SQLFluff/sqlfmt, Metabase, local Airflow DAG discovery and a local read-only MCP server for AI assistants.</li>
       </ul>
       <p>Open a directory containing <code>dbt_project.yml</code> to get started. Enable the bundled YAML plugin.
       SQL navigation works with plain-text files and does not require Database Tools.
@@ -24,7 +27,7 @@
       Python model navigation additionally requires the free Python Community Edition plugin.</p>
       <p>Browse interactive lineage and documentation in the dbt tool window, run model commands and SQL previews,
       inspect native hover documentation and unresolved-reference warnings, and convert SQL relations with Copy for Target DB / Paste as dbt Refs.</p>
-      <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/README.md">User guide</a> ·
+      <p><a href="https://github.com/vbmacher/intellij-dbt/blob/main/docs/getting_started.md">User guide</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt">Source code</a> ·
       <a href="https://github.com/vbmacher/intellij-dbt/issues">Issue tracker</a></p>
     ]]></description>
@@ -45,6 +48,7 @@
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.intellij.modules.json</depends>
     <depends>com.intellij.modules.jcef</depends>
+    <depends>intellij.testRunner.plugin</depends>
     <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
@@ -73,16 +77,60 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtManifestReader" serviceImplementation="com.github.vbmacher.intellij.dbt.metadata.DbtJsonManifestReader"/>
+        <completion.contributor language="any" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtCompletionContributor"/>
+        <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>
+        <renamePsiElementProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtRenameProcessor"/>
+        <refactoring.safeDeleteProcessor implementation="com.github.vbmacher.intellij.dbt.ide.DbtSafeDelete"/>
+        <lang.refactoringSupport language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <lang.refactoringSupport language="dbt-symbol" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSafeDeleteSupport" order="first"/>
+        <formattingService implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormattingService"/>
+        <fileDocumentManagerListener implementation="com.github.vbmacher.intellij.dbt.ide.DbtFormatOnSave"/>
+        <localInspection language="" shortName="DbtSqlFluff" displayName="SQLFluff diagnostics (run Inspect dbt SQL)" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlFluffInspection"/>
+        <localInspection language="" shortName="DbtStaticAnalysis" displayName="dbt SQL, macro arguments and contracts" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtStaticInspection"/>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtExpandColumnsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtGenerateColumnsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
+        <intentionAction>
+            <className>com.github.vbmacher.intellij.dbt.ide.DbtInheritDescriptionsIntention</className>
+            <category>dbt</category>
+        </intentionAction>
+        <codeInsight.parameterInfo language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtParameterInfoHandler"/>
         <platform.backend.documentation.symbolTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtSymbolDocumentationTargetProvider"/>
         <platform.backend.documentation.psiTargetProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinPsiDocumentationTargetProvider"/>
         <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLinkHandler"/>
+        <platform.backend.documentation.linkHandler implementation="com.github.vbmacher.intellij.dbt.ide.DbtColumnDocumentationLinkHandler"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtDocumentationNavigation" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationNavigation"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationSource" serviceImplementation="com.github.vbmacher.intellij.dbt.ide.DbtBuiltinDocumentationLoader"/>
         <externalAnnotator language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedAnnotator"/>
         <localInspection language="" shortName="DbtUnresolvedReference" displayName="Unresolved dbt reference" groupName="dbt" enabledByDefault="true" level="WARNING" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtUnresolvedReferenceInspection"/>
         <notificationGroup id="dbt Workspace" displayType="BALLOON" isLogByDefault="true"/>
         <projectConfigurable id="dbt.workspace" displayName="dbt Workspace" instance="com.github.vbmacher.intellij.dbt.ide.DbtSettingsConfigurable"/>
-        <toolWindow id="dbt" anchor="bottom" factoryClass="com.github.vbmacher.intellij.dbt.ide.DbtToolWindowFactory" icon="/icons/dbt/table.svg"/>
+        <gotoRelatedProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtAirflowRelatedProvider"/>
+        <callHierarchyProvider language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="SQL" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <callHierarchyProvider language="yaml" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtHierarchyProvider"/>
+        <lang.psiStructureViewFactory language="TEXT" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewFactory" order="first"/>
+        <lang.psiStructureViewFactory language="textmate" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewFactory" order="first"/>
+        <lang.structureViewExtension implementation="com.github.vbmacher.intellij.dbt.ide.DbtSqlStructureViewExtension"/>
+        <xdebugger.breakpointType implementation="com.github.vbmacher.intellij.dbt.ide.DbtCteBreakpointType"/>
+        <configurationType implementation="com.github.vbmacher.intellij.dbt.ide.DbtConfigurationType"/>
+        <runConfigurationProducer implementation="com.github.vbmacher.intellij.dbt.ide.DbtRunProducer"/>
+        <runLineMarkerContributor language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtTestRunLineMarker"/>
+        <runLineMarkerContributor language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtModelRunLineMarker"/>
+        <toolWindow id="dbt" anchor="bottom" factoryClass="com.github.vbmacher.intellij.dbt.ide.DbtToolWindowFactory" icon="/icons/dbt/toolWindow.svg"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtLineMarkerProvider"/>
         <iconProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtIconProvider" order="first"/>
         <psi.referenceContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferenceContributor"/>
@@ -96,24 +144,74 @@
         <findUsagesHandlerFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtFindUsagesHandlerFactory" order="first"/>
         <referencesSearch implementation="com.github.vbmacher.intellij.dbt.ide.DbtReferencesSearch"/>
     </extensions>
+    <extensions defaultExtensionNs="JavaScript">
+        <JsonSchema.ProviderFactory implementation="com.github.vbmacher.intellij.dbt.ide.DbtYamlSchemaProvider"/>
+    </extensions>
     <actions>
+        <action id="Dbt.CompileProject" class="com.github.vbmacher.intellij.dbt.ide.DbtCompileProjectAction" text="Compile dbt Project" description="Compile the whole dbt project using its configured target and executable">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.EditProperties" class="com.github.vbmacher.intellij.dbt.ide.DbtEditPropertiesAction" text="Edit dbt Properties YAML">
+        </action>
+        <action id="Dbt.GenerateColumns" class="com.github.vbmacher.intellij.dbt.ide.DbtGenerateColumnsAction" text="dbt Columns">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
+        <action id="Dbt.InheritDescriptions" class="com.github.vbmacher.intellij.dbt.ide.DbtInheritDescriptionsAction" text="Inherit dbt Descriptions">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
+        <action id="Dbt.OpenCompiledSql" class="com.github.vbmacher.intellij.dbt.ide.DbtOpenCompiledSqlAction" text="Open Compiled dbt SQL">
+        </action>
+        <action id="Dbt.CompareSql" class="com.github.vbmacher.intellij.dbt.ide.DbtCompareSqlAction" text="Compare Authored and Compiled dbt SQL">
+        </action>
+
+        <action id="Dbt.PreviewModel" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewModelAction" text="Preview dbt model">
+        </action>
+        <action id="Dbt.PreviewSql" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewSqlAction" text="Preview selected dbt SQL">
+        </action>
+        <action id="Dbt.PreviewCte" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewCteAction" text="Preview dbt CTE">
+        </action>
+        <action id="Dbt.InspectSql" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectSqlAction" text="Inspect dbt SQL">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.Consumers" class="com.github.vbmacher.intellij.dbt.ide.DbtConsumersAction" text="dbt Downstream Consumers">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.AirflowContext" class="com.github.vbmacher.intellij.dbt.ide.DbtAirflowAction" text="dbt Airflow Context">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.AgentTools" class="com.github.vbmacher.intellij.dbt.ide.DbtAgentAction" text="dbt Local MCP Server">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="Dbt.InspectCtes" class="com.github.vbmacher.intellij.dbt.ide.DbtInspectCtesAction" text="Inspect dbt CTEs">
+        </action>
         <action id="Dbt.CopyForTarget" class="com.github.vbmacher.intellij.dbt.ide.DbtCopyForTargetAction" text="Copy for Target DB">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="EditMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="control shift C"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift C"/>
         </action>
         <action id="Dbt.PasteAsRefs" class="com.github.vbmacher.intellij.dbt.ide.DbtPasteAsRefsAction" text="Paste as dbt Refs">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="EditMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="control shift V"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift V"/>
         </action>
         <action id="Dbt.Properties" class="com.github.vbmacher.intellij.dbt.ide.DbtPropertiesAction" text="dbt Properties" description="Navigate to properties of the current resource">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
         <action id="Dbt.Dependencies" class="com.github.vbmacher.intellij.dbt.ide.DbtDependenciesAction" text="dbt Dependencies" description="Navigate resolved parents, children, and their call sites">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
+        <group id="Dbt.EditorPopup" text="dbt" popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <reference ref="Dbt.Properties"/>
+            <reference ref="Dbt.Dependencies"/>
+            <reference ref="Dbt.EditProperties"/>
+            <separator/>
+            <reference ref="Dbt.PreviewModel"/>
+            <reference ref="Dbt.PreviewSql"/>
+            <reference ref="Dbt.PreviewCte"/>
+            <reference ref="Dbt.InspectCtes"/>
+            <reference ref="Dbt.InspectSql"/>
+            <separator/>
+            <reference ref="Dbt.CompileProject"/>
+            <reference ref="Dbt.OpenCompiledSql"/>
+            <reference ref="Dbt.CompareSql"/>
+            <separator/>
+            <reference ref="Dbt.CopyForTarget"/>
+            <reference ref="Dbt.PasteAsRefs"/>
+        </group>
     </actions>
 </idea-plugin>

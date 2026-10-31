@@ -2,10 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.intellij.codeInsight.navigation.CtrlMouseData
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationAction
-import com.intellij.json.JsonFileType
 import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.junit.Assert._
@@ -14,7 +11,7 @@ import java.util.concurrent.{Callable, TimeUnit}
 import scala.jdk.CollectionConverters._
 
 /** Ctrl-hover should expose a link on exactly the navigable name under the pointer. */
-final class DbtCtrlHoverTest extends DbtCodeInsightTestCase {
+final class DbtCtrlHoverTest extends DbtTestCase {
   private def hoverData: CtrlMouseData = {
     val editor = myFixture.getEditor
     val file = myFixture.getFile
@@ -155,22 +152,10 @@ final class DbtCtrlHoverTest extends DbtCodeInsightTestCase {
 
   def testHighlightingWorksWithAnExistingLanguageParser(): Unit = {
     project("vars: {start_date: today}\n")
-    val fileTypes = FileTypeManager.getInstance
-    val original = fileTypes.getFileTypeByExtension("sql")
-    WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-      override def run(): Unit = fileTypes.associateExtension(JsonFileType.INSTANCE, "sql")
-    })
-    try {
+    withSqlParsedAsJson {
       val file = configure("models/report.sql", "{\"value\": \"{{ var('start_<caret>date') }}\"}")
       assertTrue(file.isInstanceOf[com.intellij.json.psi.JsonFile])
       assertLink("start_date")
-    } finally {
-      WriteCommandAction.runWriteCommandAction(getProject, new Runnable {
-        override def run(): Unit = {
-          fileTypes.removeAssociatedExtension(JsonFileType.INSTANCE, "sql")
-          fileTypes.associateExtension(original, "sql")
-        }
-      })
     }
   }
 

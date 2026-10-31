@@ -6,7 +6,7 @@ val testPackaged = taskKey[Unit]("Test the minimized plugin without the original
 val generatePackagedFixtures = taskKey[Unit]("Write Parquet fixtures using the test-only writer runtime")
 val pythonTestSdk = settingKey[File]("IntelliJ SDK containing the Python Community plugin")
 val pythonTestPlugins = settingKey[Seq[File]]("Installed Python test plugins and their dependencies")
-val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin"
+val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin,intellij.testRunner.plugin"
 val pythonNavigationTest = "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"
 val packagedRuntimeTest = "com.github.vbmacher.intellij.dbt.metadata.DbtPackagedRuntimeTest"
 lazy val PythonTest = config("python") extend Test
@@ -41,7 +41,8 @@ lazy val root = (project in file("."))
       "com.intellij.modules.json".toPlugin,
       "intellij.libraries.misc.plugin".toPlugin,
       "intellij.structureView.plugin".toPlugin,
-      "com.intellij.modules.jcef".toPlugin
+      "com.intellij.modules.jcef".toPlugin,
+      "intellij.testRunner.plugin".toPlugin
     ),
     resolvers += "IntelliJ releases" at intellijRepository,
     libraryDependencies ++= Seq(
@@ -92,7 +93,7 @@ lazy val root = (project in file("."))
     PythonTest / javaOptions := {
       val pluginPaths = (packageOutputDir.value +: pythonTestPlugins.value).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
       (Test / javaOptions).value.filterNot(opt => opt.startsWith("-Didea.load.plugins.id=") || opt.startsWith("-Dplugin.path=")) ++ Seq(
-        "-Didea.load.plugins.id=" + testPluginIds + ",PythonCore,org.toml.lang,com.intellij.modules.jcef,com.intellij.platform.testRunner",
+        "-Didea.load.plugins.id=" + testPluginIds + ",PythonCore,org.toml.lang,com.intellij.modules.jcef,intellij.testRunner.plugin",
         "-Dplugin.path=" + pluginPaths)
     },
     PythonTest / forkOptions := (Test / forkOptions).value.withRunJVMOptions((PythonTest / javaOptions).value.toVector),

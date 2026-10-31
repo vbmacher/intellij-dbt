@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt packages (current)",
+  "type": "object",
+  "properties": {
+    "packages": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "package": {
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\{[{%]"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "git": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              },
+              "local": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    },
+    "projects": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "\\{[{%]"
+        }
+      ]
+    }
+  },
+  "required": [],
+  "additionalProperties": true
+}

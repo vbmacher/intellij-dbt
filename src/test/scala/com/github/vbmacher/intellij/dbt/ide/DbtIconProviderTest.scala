@@ -13,7 +13,7 @@ import java.awt.image.BufferedImage
 import javax.swing.Icon
 import scala.jdk.CollectionConverters._
 
-final class DbtIconProviderTest extends DbtCodeInsightTestCase {
+final class DbtIconProviderTest extends DbtTestCase {
   private def icon(file: PsiFile): Icon = IconProvider.EXTENSION_POINT_NAME.getExtensionList.asScala
     .collectFirst { case provider: DbtIconProvider => provider.getIcon(file, 0) }
     .getOrElse(throw new AssertionError("dbt file icon provider is not registered"))
@@ -29,11 +29,13 @@ final class DbtIconProviderTest extends DbtCodeInsightTestCase {
       DbtIcons.Metric, DbtIcons.Alias, DbtIcons.Dimension, DbtIcons.Entity, DbtIcons.Column, DbtIcons.Export,
       DbtIcons.Group, DbtIcons.Package, DbtIcons.Variable, DbtIcons.Parameter, DbtIcons.Config,
       DbtIcons.Property, DbtIcons.Result, DbtIcons.Selector, DbtIcons.Materialization, DbtIcons.Gutter)
+
     def orange(pixel: Int): Boolean = {
       val red = (pixel >>> 16) & 255
       val green = (pixel >>> 8) & 255
       red > green && green > (pixel & 255)
     }
+
     icons.foreach { icon =>
       val rendered = Vector(false, true).map { dark =>
         val themed = IconLoader.getDarkIcon(icon, dark)
@@ -81,10 +83,12 @@ final class DbtIconProviderTest extends DbtCodeInsightTestCase {
     val unit = add("tests/example.yml", "unit_tests:\n- name: example\n  model: orders\n")
     val fixture = add("tests/fixtures/orders.csv", "id\n1")
     val abTest = add("tests/wms/ab_tests/final_packaging.yml", "models:\n- name: orders\n  data_tests:\n  - ab_test\n")
+
     def baseIcon(icon: Icon): Icon = icon match {
       case composite: CompositeIcon => baseIcon(composite.getIcon(0))
       case _ => icon
     }
+
     Vector(model -> DbtIcons.Table, macroFile -> DbtIcons.Macro, unit -> DbtIcons.Test,
       fixture -> DbtIcons.Test, abTest -> DbtIcons.Test)
       .foreach { case (file, expected) =>

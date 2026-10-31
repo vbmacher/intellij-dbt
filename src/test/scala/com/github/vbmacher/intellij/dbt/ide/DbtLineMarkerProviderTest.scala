@@ -9,7 +9,7 @@ import org.junit.Assert._
 import scala.jdk.CollectionConverters._
 
 /** Native highlighting proves placement in Community plain-text files and YAML. */
-final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
+final class DbtLineMarkerProviderTest extends DbtTestCase {
   private def gutters: Vector[LineMarkerGutterIconRenderer[_]] =
     myFixture.findAllGutters().asScala.collect {
       case renderer: LineMarkerGutterIconRenderer[_] if renderer.getTooltipText.startsWith("dbt:") => renderer
@@ -21,6 +21,16 @@ final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
       .filter(m => myFixture.getEditor.getDocument.getLineNumber(m.range.getStartOffset) == line)
     assertEquals("One dbt marker on the caret line", 1, markers.size)
     markers.head
+  }
+
+  def testMarkerCacheFollowsWorkspaceSettings(): Unit = {
+    project()
+    add("models/input.sql", "select 1 as id")
+    val model = configure("models/orders.sql", "<caret>select * from {{ ref('input') }}")
+    val before = DbtLineMarkerProvider.markers(model)
+    assertSame(before, DbtLineMarkerProvider.markers(model))
+    com.github.vbmacher.intellij.dbt.project.DbtProjectSettings.get(getProject).changed()
+    assertNotSame("Settings changes must recompute markers", before, DbtLineMarkerProvider.markers(model))
   }
 
   def testPlainSqlModelOffersPropertiesAndBothDependencyDirections(): Unit = {
@@ -113,7 +123,7 @@ final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
 
   def testMetadataStatusShowsStalenessAndYieldsToLocalSource(): Unit = {
     project()
-    add(".dbt-navigation.yml", "manifest: target/manifest.json\n")
+    configureSettings(_.manifestPath = "target/manifest.json")
     val content = """{"metadata":{"dbt_schema_version":"https://schemas.getdbt.com/dbt/manifest/v12.json","generated_at":"2000-01-01T00:00:00Z"},"nodes":{"model.analytics.remote":{"unique_id":"model.analytics.remote","resource_type":"model","name":"remote","package_name":"analytics","original_file_path":"models/remote.sql"}}}"""
     val manifest = add("target/manifest.json", content)
     configure("models/report.sql", "select * from {{ ref('re<caret>mote') }}")
@@ -131,7 +141,7 @@ final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
 
   def testUdfAndPythonModelFilesOfferYamlProperties(): Unit = {
     project()
-    add(".dbt-navigation.yml", "dbt-version: '1.12'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.12"; o.adapter = "snowflake" }
     val schema = add("functions/schema.yml", "functions:\n- name: hash_customer\n")
     configure("functions/hash_customer.js", "<caret>return customer_id;")
     assertEquals(1, gutters.size)
@@ -144,7 +154,7 @@ final class DbtLineMarkerProviderTest extends DbtCodeInsightTestCase {
 
   def testUnsupportedAndDisabledResourcesHaveNoMarkers(): Unit = {
     project()
-    add(".dbt-navigation.yml", "dbt-version: '1.11'\nadapter: snowflake\n")
+    configureSettings { o => o.dbtVersion = "1.11"; o.adapter = "snowflake" }
     val schema = add("functions/schema.yml", "functions:\n- name: hash_customer\n  language: javascript\n")
     configure("functions/hash_customer.js", "<caret>return customer_id;")
     assertEquals("JavaScript UDF navigation requires Core 1.12", 0, gutters.size)

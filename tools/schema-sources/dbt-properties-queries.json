@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dbt properties (Core 1.7)",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "dbt-properties-semantic.json#/properties/version"
+    },
+    "models": {
+      "$ref": "dbt-properties-semantic.json#/properties/models"
+    },
+    "seeds": {
+      "$ref": "dbt-properties-semantic.json#/properties/seeds"
+    },
+    "snapshots": {
+      "$ref": "dbt-properties-semantic.json#/properties/snapshots"
+    },
+    "sources": {
+      "$ref": "dbt-properties-semantic.json#/properties/sources"
+    },
+    "macros": {
+      "$ref": "dbt-properties-semantic.json#/properties/macros"
+    },
+    "exposures": {
+      "$ref": "dbt-properties-semantic.json#/properties/exposures"
+    },
+    "semantic_models": {
+      "$ref": "dbt-properties-semantic.json#/properties/semantic_models"
+    },
+    "metrics": {
+      "$ref": "dbt-properties-semantic.json#/properties/metrics"
+    },
+    "saved_queries": {
+      "$ref": "dbt-properties-units.json#/properties/saved_queries"
+    }
+  },
+  "additionalProperties": true,
+  "patternProperties": {
+    "^unit_tests$": false,
+    "^functions$": false
+  }
+}

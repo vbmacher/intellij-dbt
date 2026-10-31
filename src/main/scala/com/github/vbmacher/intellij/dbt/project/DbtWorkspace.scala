@@ -1,6 +1,8 @@
 package com.github.vbmacher.intellij.dbt.project
 
 import com.github.vbmacher.intellij.dbt.syntax.{DbtSyntax, DbtYaml}
+import com.google.gson.{JsonArray, JsonElement, JsonNull, JsonObject}
+import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
@@ -17,8 +19,10 @@ import scala.jdk.CollectionConverters._
 private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[DbtRoot], val files: Vector[PsiFile],
   val symbols: Vector[DbtSymbol]) extends com.intellij.openapi.util.UserDataHolderBase {
   private val documentation = new java.util.concurrent.ConcurrentHashMap[String, DbtResourceData]()
+
   def resourceData(symbol: DbtSymbol)(read: => DbtResourceData): DbtResourceData =
     documentation.computeIfAbsent(symbol.id, _ => read)
+
   private lazy val byKindAndName = symbols.groupBy(s => (s.kind, s.name))
 
   private def rootOf(file: VirtualFile): Option[DbtRoot] =
@@ -69,17 +73,21 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
       ProgressManager.checkCanceled()
       namespace.forall(_ == s.namespace) && visibleSymbol(s, from, namespace.nonEmpty)
     }
-    val local = candidates.filter(_.namespace == from.name)
-    val selected = if (namespace.isEmpty && local.nonEmpty) local else candidates
-    selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
-      .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
-        t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
-      .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
+
+    def usable(selected: Vector[DbtSymbol]): Vector[DbtSymbol] =
+      selected.filter(s => from.supportsKind(s.kind) && (s.kind != "function" || functionSupported(s, from)))
+        .filter(s => s.isEnabled || s.kind == "source" && symbols.exists(t => t.kind == "source_table" && t.owner == s.name &&
+          t.namespace == s.namespace && owner(t) == owner(s) && t.isEnabled && s.mapping.exists(_.getTextRange.contains(t.range))))
+        .filterNot(s => s.isProperty && selected.exists(c => !c.isProperty && c.sameResource(s)))
+
+    // Like dbt, an unqualified name falls back to packages when no enabled local declaration exists.
+    val local = if (namespace.isEmpty) usable(candidates.filter(_.namespace == from.name)) else Vector.empty
+    if (local.nonEmpty) local else usable(candidates)
   }
 
   private def functionSupported(symbol: DbtSymbol, from: DbtRoot): Boolean = {
     val language = if (symbol.isCode) Option(symbol.file.getVirtualFile.getExtension)
-      else symbol.attributes.get("language").orElse(symbol.attributes.get("node_language"))
+    else symbol.attributes.get("language").orElse(symbol.attributes.get("node_language"))
     val adapter = from.adapter
     val languages = language.forall {
       case "js" | "javascript" => from.supports(12) && adapter.forall(Set("snowflake", "bigquery"))
@@ -105,8 +113,18 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
   def columns(relation: DbtSymbol): Vector[DbtSymbol] = symbols.filter(c => c.kind == "column" && c.namespace == relation.namespace &&
     c.owner == relation.relationName && c.version == relation.version && owner(c) == owner(relation))
 
+  /** Relations owning a column: those of the same project, package and version named by the column's owner. */
+  def relations(column: DbtSymbol): Vector[DbtSymbol] = symbols.filter(s => DbtSymbol.RelationKinds(s.kind) &&
+    s.relationName == column.owner && s.namespace == column.namespace && s.version == column.version && owner(s) == owner(column))
+
   /** Symbols of the resources defined by a file itself, rather than by blocks or properties inside it. */
   def codeSymbols(file: PsiFile): Vector[DbtSymbol] = symbols.filter(s => s.file == file && s.isCode)
+
+  /** The model defined by a file. */
+  def model(file: PsiFile): Option[DbtSymbol] = codeSymbols(file).find(_.kind == "model")
+
+  /** The model defined by the file at a path. */
+  def model(path: String): Option[DbtSymbol] = symbols.find(s => s.isCode && s.kind == "model" && s.file.getVirtualFile.getPath == path)
 
   /** Macros a call may invoke, honouring an explicit `namespace.macro` qualifier. */
   def macros(call: DbtSyntax.Call, from: DbtRoot): Vector[DbtSymbol] = {
@@ -127,7 +145,6 @@ private[dbt] final class DbtWorkspace(val project: Project, val roots: Vector[Db
 
 private[dbt] object DbtWorkspace {
   val ProjectFileName = "dbt_project.yml"
-  private val SettingsFileName = ".dbt-navigation.yml"
   private val FileIndex = Key.create[CachedValue[Vector[DbtSymbol]]]("dbt.file.declarations")
 
   def get(project: Project): DbtWorkspace = CachedValuesManager.getManager(project).getCachedValue(project, () => {
@@ -137,19 +154,16 @@ private[dbt] object DbtWorkspace {
       VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)) ++ inputs): _*)
   })
 
-  private def configFile(project: Project, directory: VirtualFile): Option[PsiFile] =
-    DbtYaml.psiFile(project, directory.findChild(ProjectFileName))
-
-  private def settingsFile(project: Project, directory: VirtualFile): Option[PsiFile] =
-    DbtYaml.psiFile(project, directory.findChild(SettingsFileName))
+  private def child(project: Project, directory: VirtualFile, name: String): Option[PsiFile] =
+    DbtYaml.psiFile(project, directory.findChild(name))
 
   private def loadRoot(project: Project, directory: VirtualFile): Option[DbtRoot] =
-    configFile(project, directory).flatMap(DbtYaml.mapping)
-      .map(DbtRoot(directory, _, settingsFile(project, directory).flatMap(DbtYaml.mapping)))
+    child(project, directory, ProjectFileName).flatMap(DbtYaml.mapping)
+      .map(DbtRoot(directory, _))
 
   /** Nearest project configuration, without parsing the file or scanning all workspace resources. */
   def rootForFile(project: Project, file: VirtualFile): Option[DbtRoot] =
-    if (project.isDisposed || !file.isValid) None
+    if (file == null || project.isDisposed || !file.isValid) None
     else Iterator.iterate(file.getParent)(_.getParent).takeWhile(directory => directory != null && directory.isValid)
       .flatMap(directory => loadRoot(project, directory)).nextOption()
 
@@ -164,11 +178,14 @@ private[dbt] object DbtWorkspace {
     val bases = (Option(project.getBasePath).flatMap(p => Option(LocalFileSystem.getInstance.findFileByPath(p))).toVector ++
       ProjectRootManager.getInstance(project).getContentRoots.toVector).distinct
     val enclosing = mutable.Map.empty[VirtualFile, Option[DbtRoot]]
+
     def enclosingRoot(directory: VirtualFile): Option[DbtRoot] = if (directory == null) None
-      else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
+    else enclosing.getOrElseUpdate(directory, loadRoot(project, directory).orElse(enclosingRoot(directory.getParent)))
+
     // Installed packages are excluded from their owner's resources, but they are projects of their own.
-    def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", "target", "logs").contains(file.getName) &&
+    def discoverable(file: VirtualFile): Boolean = !Set(".git", ".idea", ".venv", "venv", "target", "logs").contains(file.getName) &&
       enclosingRoot(file.getParent).forall(r => !r.excluded(file) || r.relative(file).exists(r.pathContains(r.packagePath, _)))
+
     val configs = mutable.ArrayBuffer.empty[VirtualFile]
     bases.foreach(b => VfsUtilCore.iterateChildrenRecursively(b, discoverable(_), f => {
       ProgressManager.checkCanceled()
@@ -193,8 +210,8 @@ private[dbt] object DbtWorkspace {
   /** Declarations of a single file, cached until the file or its project configuration changes. */
   private def fileSymbols(project: Project, file: PsiFile, directory: VirtualFile): Vector[DbtSymbol] =
     CachedValuesManager.getManager(project).getCachedValue(file, FileIndex, () => {
-      val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS) ++
-        configFile(project, directory) ++ settingsFile(project, directory)
+      val dependencies: Vector[AnyRef] = Vector(file, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)) ++
+        child(project, directory, ProjectFileName)
       CachedValueProvider.Result.create(loadRoot(project, directory).map(DbtDeclarations.inFile(file, _))
         .getOrElse(Vector.empty), dependencies: _*)
     }, false)
@@ -222,4 +239,95 @@ private[dbt] object DbtWorkspace {
       new DbtWorkspace(project, roots, files, w.symbols ++ source.declarations(w))
     }
   }
+}
+
+/**
+ * Port of declarations not written in project sources, such as SQL projections, environment variables and artifacts.
+ * Sources are registered in `plugin.xml` in priority order; each one sees the declarations of the sources before it.
+ */
+private[dbt] trait DbtDeclarationSource {
+  def declarations(workspace: DbtWorkspace): Vector[DbtSymbol]
+
+  /** Files read outside of PSI whose changes invalidate the workspace. */
+  def inputs(workspace: DbtWorkspace): Vector[VirtualFile] = Vector.empty
+
+  /** Optional documentation/physical metadata; source properties remain authoritative. */
+  def documentation(workspace: DbtWorkspace, symbol: DbtSymbol): Option[DbtResourceData] = None
+
+  /** Missing references are not conclusive while configured metadata is unavailable or malformed. */
+  def canReportMissing(workspace: DbtWorkspace, root: DbtRoot): Boolean = true
+
+  def artifactStatus(root: DbtRoot): Vector[String] = Vector.empty
+}
+
+private[dbt] object DbtDeclarationSource {
+  val EP: ExtensionPointName[DbtDeclarationSource] = ExtensionPointName.create("com.github.vbmacher.intellij-dbt.declarationSource")
+}
+
+/** Consumers choose validation requirements; schema support and resource extraction have one owner.
+ * Baseline snapshots contain only resources participating in source-state comparison.
+ */
+private[dbt] sealed abstract class DbtManifestPolicy(val maxBytes: Int) extends Product with Serializable
+
+private[dbt] object DbtManifestPolicy {
+  case object Navigation extends DbtManifestPolicy(Int.MaxValue)
+
+  case object TestDiscovery extends DbtManifestPolicy(25000000)
+
+  case object Baseline extends DbtManifestPolicy(50000000)
+}
+
+/** Gson field access and construction; a field holding another JSON type is absent. */
+private[dbt] object DbtJson {
+  def child(o: JsonObject, key: String): Option[JsonObject] = Option(o.get(key)).filter(_.isJsonObject).map(_.getAsJsonObject)
+
+  /** A JSON string value; numbers, booleans and null are absent. */
+  def text(o: JsonObject, key: String): Option[String] =
+    Option(o.get(key)).filter(e => e.isJsonPrimitive && e.getAsJsonPrimitive.isString).map(_.getAsString)
+
+  /** Any JSON primitive as text, or empty. */
+  def string(o: JsonObject, key: String): String = Option(o.get(key)).filter(_.isJsonPrimitive).map(_.getAsString).getOrElse("")
+
+  /** A JSON object of string, boolean, number or JSON values in the given order; `null` becomes JSON null. */
+  def obj(values: (String, Any)*): JsonObject = {
+    val o = new JsonObject
+    values.foreach {
+      case (k, v: JsonElement) => o.add(k, v)
+      case (k, v: String) => o.addProperty(k, v)
+      case (k, v: java.lang.Boolean) => o.addProperty(k, v)
+      case (k, v: Number) => o.addProperty(k, v)
+      case (k, null) => o.add(k, JsonNull.INSTANCE)
+      case (k, v) => throw new IllegalArgumentException("Unsupported JSON value for " + k + ": " + v.getClass)
+    }
+    o
+  }
+
+  def strings(values: Iterable[String]): JsonArray = {
+    val a = new JsonArray;
+    values.foreach(a.add);
+    a
+  }
+
+  def array(values: Iterable[JsonElement]): JsonArray = {
+    val a = new JsonArray;
+    values.foreach(a.add);
+    a
+  }
+}
+
+private[dbt] final case class DbtManifestResource(section: String, id: String, data: JsonObject)
+
+private[dbt] final case class DbtManifest(schemaVersion: Int, projectName: Option[String], resources: Vector[DbtManifestResource]) {
+  def in(sections: String*): Vector[DbtManifestResource] = resources.filter(r => sections.contains(r.section))
+}
+
+/** Local manifest access, implemented by metadata. Baseline paths must be checked by the caller before reading. */
+private[dbt] trait DbtManifestReader {
+  def parse(text: String, policy: DbtManifestPolicy): Either[String, DbtManifest]
+
+  def read(root: DbtRoot, path: String, policy: DbtManifestPolicy): Either[String, DbtManifest]
+}
+
+private[dbt] object DbtManifestReader {
+  def get(project: Project): DbtManifestReader = project.getService(classOf[DbtManifestReader])
 }

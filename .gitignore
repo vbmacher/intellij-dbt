@@ -20,3 +20,10 @@ project/project/
 *.class
 *.log
 hs_err_pid*
+
+### Browser tests ###
+node_modules/
+
+### Local agent state ###
+/.agents/apex/
+/.impeccable/
