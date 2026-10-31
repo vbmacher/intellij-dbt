@@ -333,7 +333,8 @@ private[ide] object DbtTestRunLineMarker {
         PsiModificationTracker.MODIFICATION_COUNT, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS, DbtProjectSettings.get(project)), false)
   }
 
-  def testsAt(element: PsiElement): Option[Vector[DbtTestDefinition]] = Option(element).flatMap(e => Option(e.getContainingFile)).filter(_.isPhysical).map { file =>
+  def testsAt(element: PsiElement): Option[Vector[DbtTestDefinition]] = Option(element).flatMap(e => Option(e.getContainingFile))
+    .filter(file => file.isPhysical && DbtWorkspace.get(file.getProject).model(file).isEmpty).map { file =>
     val tests = definitions(file).filter(_.file == file.getVirtualFile)
     if (element.isInstanceOf[PsiFile] || tests.size == 1 && tests.head.offset == 0) tests
     else Option(file.getViewProvider.getDocument).fold(Vector.empty[DbtTestDefinition]) { document =>

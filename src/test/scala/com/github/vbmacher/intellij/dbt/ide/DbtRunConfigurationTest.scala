@@ -1,9 +1,11 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.github.vbmacher.intellij.dbt.project.{DbtDeclarationSource, DbtResourceData, DbtSymbol, DbtWorkspace}
+import com.intellij.execution.actions.ConfigurationContext
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.impl.ConsoleViewImpl
 import com.intellij.execution.runners.{ExecutionEnvironmentBuilder, ProgramRunner}
-import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.{Disposer, Ref}
 import com.intellij.testFramework.PlatformTestUtil
 import org.jdom.Element
 import org.junit.Assert._
@@ -160,6 +162,63 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     val test = configure("tests/check.sql", "select 1<caret>")
     assertNull(contributor.getSlowInfo(test.findElementAt(0)))
     assertFalse(new DbtTestRunLineMarker().getSlowInfo(test.findElementAt(0)).actions.exists(_.isInstanceOf[DbtInspectCtesAction]))
+  }
+
+  def testModelRunContextDoesNotDiscoverUnrelatedTests(): Unit = {
+    project()
+    val model = add("models/orders.sql", "select 1 as id")
+    val test = add("tests/check_orders.sql", "select * from {{ ref('orders') }}")
+    var testMetadataReads = 0
+    DbtDeclarationSource.EP.getPoint.registerExtension(new DbtDeclarationSource {
+      override def declarations(w: DbtWorkspace): Vector[DbtSymbol] = Vector.empty
+      override def documentation(w: DbtWorkspace, symbol: DbtSymbol): Option[DbtResourceData] = {
+        if (symbol.kind == "test") testMetadataReads += 1
+        None
+      }
+    }, getTestRootDisposable)
+    val configuration = runConfiguration()
+    val producer = new DbtRunProducer
+    val element = model.findElementAt(0)
+    val context = new ConfigurationContext(element)
+    assertTrue(DbtTestRunLineMarker.testsAt(element).forall(_.isEmpty))
+    assertTrue(producer.setupConfigurationFromContext(configuration, context, new Ref(element)))
+    assertEquals("Run", configuration.action)
+    assertEquals(model.getVirtualFile.getPath, configuration.scope)
+    assertTrue(producer.isConfigurationFromContext(configuration, context))
+    assertEquals("Opening a model Run menu must not load test metadata", 0, testMetadataReads)
+
+    val testElement = test.findElementAt(0)
+    assertTrue(producer.setupConfigurationFromContext(configuration, new ConfigurationContext(testElement), new Ref(testElement)))
+    assertEquals("Test", configuration.action)
+    assertTrue(configuration.exactTests)
+    assertEquals(Vector("fqn:analytics.check_orders"), configuration.selectors)
+    assertTrue("Test contexts still discover exact test identities", testMetadataReads > 0)
+  }
+
+  def testModelRunContextKeepsPackageOwnershipAndRejectsUnavailableModels(): Unit = {
+    project()
+    val local = add("models/orders.sql", "select 1")
+    val python = add("models/python_model.py", "def model(dbt, session):\n  return None")
+    add("dbt_packages/util/dbt_project.yml", "name: util\nconfig-version: 2\n")
+    val packaged = add("dbt_packages/util/models/orders.sql", "select 2")
+    val disabled = add("models/disabled.sql", "{{ config(enabled=false) }} select 3")
+    val generated = add("target/generated.sql", "select 4")
+    val macroFile = add("macros/example.sql", "{% macro example() %}select 5{% endmacro %}")
+    val producer = new DbtRunProducer
+    for (file <- Vector(local, python, packaged, disabled, generated, macroFile)) {
+      val configuration = runConfiguration()
+      val element = file.findElementAt(0)
+      val context = new ConfigurationContext(element)
+      val available = producer.setupConfigurationFromContext(configuration, context, new Ref(element))
+      assertEquals(file.getName, Vector(local, python, packaged).contains(file), available)
+      if (available) {
+        assertEquals("Package models execute in the consuming project", root.directory.getPath, configuration.root)
+        assertEquals(file.getVirtualFile.getPath, configuration.scope)
+        assertTrue(producer.isConfigurationFromContext(configuration, context))
+        configuration.scope = generated.getVirtualFile.getPath
+        assertFalse(producer.isConfigurationFromContext(configuration, context))
+      }
+    }
   }
 
   def testEveryCommandPreparesWithoutChangingProjectDefaultsAndRoundTripsOverrides(): Unit = {

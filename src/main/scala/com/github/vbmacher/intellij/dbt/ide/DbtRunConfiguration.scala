@@ -310,12 +310,17 @@ final class DbtRunProducer extends LazyRunConfigurationProducer[DbtRunConfigurat
         val w = DbtWorkspace.get(configuration.getProject)
         val file = Option(context.getDataContext.getData(CommonDataKeys.VIRTUAL_FILE))
           .orElse(Option(source.get()).flatMap(e => Option(e.getContainingFile)).map(_.getVirtualFile))
-        file.flatMap(f => DbtRunSelection.available(w).find(_.path == f.getPath)).flatMap(selected =>
-          DbtRunSelection.owner(w, selected).map(w.executionRoot).map(_ -> selected)).exists { case (root, selected) =>
+        val selected = file.flatMap { f =>
+          if (f.isDirectory) DbtRunSelection.available(w).find(_.path == f.getPath)
+            .flatMap(s => DbtRunSelection.owner(w, s)).map(_ -> f.getPath)
+          else w.model(f.getPath).filter(_.isEnabled).flatMap(w.owner).filterNot(_.excluded(f)).map(_ -> f.getPath)
+        }
+        selected.exists { case (owner, path) =>
+          val root = w.executionRoot(owner)
           configuration.root = root.directory.getPath;
-          configuration.scope = selected.path;
+          configuration.scope = path;
           configuration.action = "Run"
-          configuration.setName("dbt run · " + DbtUi.name(selected.path));
+          configuration.setName("dbt run · " + DbtUi.name(path));
           true
         }
     }
