@@ -1,6 +1,7 @@
 package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis
+import com.github.vbmacher.intellij.dbt.project.{DbtDeclarationSource, DbtSymbol, DbtWorkspace}
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.lang.annotation.HighlightSeverity
@@ -12,6 +13,26 @@ import scala.jdk.CollectionConverters._
 
 /** SQL authoring assistance: templates, completion, column analysis, macro Parameter Info and static inspection suppression. */
 final class DbtAuthoringTest extends DbtTestCase {
+  def testPackageCompletionIncludesShadowedInstalledPackages(): Unit = {
+    project()
+    add("models/orders.sql", "select 1 as id")
+    add("dbt_packages/finance/dbt_project.yml", "name: finance\nconfig-version: 2\n")
+    add("dbt_packages/finance/models/orders.sql", "select 2 as id")
+    val file = configure("models/report.sql", "select * from {{ ref('<caret>', 'orders') }}")
+    assertTrue(workspace.declarations(DbtSymbol.RefKinds, "orders", root, Some("finance")).nonEmpty)
+    assertEquals(Set("analytics", "finance"), DbtCompletion.suggestions(file, myFixture.getCaretOffset).map(_.text).toSet)
+  }
+
+  def testUnrelatedCompletionDoesNotDiscoverTheWorkspace(): Unit = {
+    project()
+    val file = configure("frontend/index.js", "const value = <caret>")
+    DbtDeclarationSource.EP.getPoint.registerExtension(new DbtDeclarationSource {
+      override def declarations(workspace: DbtWorkspace): Vector[DbtSymbol] =
+        throw new AssertionError("Unrelated completion must not scan dbt resources")
+    }, getTestRootDisposable)
+    assertEquals(Vector.empty, DbtCompletion.suggestions(file, myFixture.getCaretOffset))
+  }
+
   def testBundledTemplatesLoadThroughNativeTemplateSettings(): Unit = {
     val settings = com.intellij.codeInsight.template.impl.TemplateSettings.getInstance()
     Vector("dbtref", "dbtsource", "dbtconfig").foreach(name =>

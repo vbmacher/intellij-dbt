@@ -19,42 +19,42 @@ proposals and decisions are outside these specifications.
 | Capability | Usage reference |
 | --- | --- |
 | [Declaration navigation and Find Usages](navigation.md) | [User guide](../docs/navigation.md) |
-| [Properties, dependencies and gutter navigation](properties-and-dependencies.md) | [User guide](../docs/navigation.md#gutter-markers) |
+| [Properties, dependencies and gutter navigation](properties-and-dependencies.md) | [User guide](../docs/navigation.md#gutter-markers-and-popups) |
 | [Resource icons](resource-icons.md) | [User guide](../docs/icons.md) |
 
 ## Editing
 
 | Capability | Usage reference |
 | --- | --- |
-| [dbt and SQL completion](completion.md) | [User guide](../docs/editor.md#completion-and-parameter-information) |
-| [Macro parameter information](parameter-information.md) | [User guide](../docs/editor.md#completion-and-parameter-information) |
-| [Quick documentation](quick-documentation.md) | [User guide](../docs/editor.md#quick-documentation) |
-| [Reference, SQL and contract warnings](static-analysis.md) | [User guide](../docs/editor.md#editor-warnings) |
-| [YAML completion and validation](yaml-authoring.md) | [User guide](../docs/editor.md#editor-warnings) |
-| [Expand wildcard columns](wildcard-expansion.md) | [User guide](../docs/editor.md#expand-wildcard-columns) |
-| [Create missing resources](resource-creation.md) | [User guide](../docs/editor.md#create-a-missing-resource) |
-| [Rename dbt resources and SQL symbols](rename.md) | [User guide](../docs/editor.md#rename-and-safe-delete) |
-| [Safe Delete](safe-delete.md) | [User guide](../docs/editor.md#rename-and-safe-delete) |
-| [SQL formatting](sql-formatting.md) | [User guide](../docs/editor.md#sql-linting-and-formatting) |
-| [SQLFluff inspection and fixes](sql-inspection.md) | [User guide](../docs/editor.md#sql-linting-and-formatting) |
-| [SQL clipboard conversion](sql-clipboard.md) | [User guide](../docs/editor.md#sql-clipboard-conversion) |
-| [SQL, YAML and Markdown template highlighting](syntax-highlighting.md) | [User guide](../docs/editor.md#syntax-highlighting) |
+| [dbt and SQL completion](completion.md) | [User guide](../docs/editing.md#completion-and-parameter-information) |
+| [Macro parameter information](parameter-information.md) | [User guide](../docs/editing.md#completion-and-parameter-information) |
+| [Quick documentation](quick-documentation.md) | [User guide](../docs/editing.md#quick-documentation) |
+| [Reference, SQL and contract warnings](static-analysis.md) | [User guide](../docs/editing.md#editor-warnings) |
+| [YAML completion and validation](yaml-authoring.md) | [User guide](../docs/editing.md#editor-warnings) |
+| [Expand wildcard columns](wildcard-expansion.md) | [User guide](../docs/editing.md#expand-wildcard-columns) |
+| [Create missing resources](resource-creation.md) | [User guide](../docs/editing.md#create-a-missing-resource) |
+| [Rename dbt resources and SQL symbols](rename.md) | [User guide](../docs/editing.md#rename-and-safe-delete) |
+| [Safe Delete](safe-delete.md) | [User guide](../docs/editing.md#rename-and-safe-delete) |
+| [SQL formatting](sql-formatting.md) | [User guide](../docs/editing.md#sql-linting-and-formatting) |
+| [SQLFluff inspection and fixes](sql-inspection.md) | [User guide](../docs/editing.md#sql-linting-and-formatting) |
+| [SQL clipboard conversion](sql-clipboard.md) | [User guide](../docs/editing.md#sql-clipboard-conversion) |
+| [SQL, YAML and Markdown template highlighting](syntax-highlighting.md) | [User guide](../docs/editing.md#syntax-highlighting) |
 
 ## Workspace
 
 | Capability | Usage reference |
 | --- | --- |
-| [External command execution](external-command.md) | [User guide](../docs/configuration.md#external-tools-and-script-wrappers) |
-| [Workspace commands and execution context](workspace.md) | [User guide](../docs/execution.md#commands) |
-| [Selection review](selection-review.md) | [User guide](../docs/execution.md#selection-and-state) |
-| [Baseline comparison and deferral](state-comparison.md) | [User guide](../docs/execution.md#selection-and-state) |
-| [Model, selected SQL and CTE previews](query-preview.md) | [User guide](../docs/execution.md#preview-results) |
+| [External command execution](external-command.md) | [User guide](../docs/configuration.md#executables-and-wrapper-scripts) |
+| [Workspace commands and execution context](workspace.md) | [User guide](../docs/workspace.md#commands) |
+| [Selection review](selection-review.md) | [User guide](../docs/workspace.md#review-a-selection-and-compare-a-baseline) |
+| [Baseline comparison and deferral](state-comparison.md) | [User guide](../docs/workspace.md#review-a-selection-and-compare-a-baseline) |
+| [Model, selected SQL and CTE previews](query-preview.md) | [User guide](../docs/workspace.md#preview-query-results) |
 | [Step through CTE results](cte-inspection.md) | [User guide](../docs/workspace.md#inspect-cte-queries) |
 | [Resource lineage graph](resource-lineage.md) | [User guide](../docs/workspace.md#lineage) |
-| [Resource documentation](resource-documentation.md) | [User guide](../docs/editor.md#quick-documentation) |
-| [Column lineage](column-lineage.md) | [User guide](../docs/editor.md#quick-documentation) |
-| [Edit resource properties](documentation-editing.md) | [User guide](../docs/editor.md#edit-and-generate-yaml-properties) |
-| [Test discovery, execution and failures](test-execution.md) | [User guide](../docs/execution.md#tests) |
+| [Resource documentation](resource-documentation.md) | [User guide](../docs/editing.md#quick-documentation) |
+| [Column lineage](column-lineage.md) | [User guide](../docs/editing.md#quick-documentation) |
+| [Edit resource properties](documentation-editing.md) | [User guide](../docs/editing.md#edit-and-generate-yaml-properties) |
+| [Test discovery, execution and failures](test-execution.md) | [User guide](../docs/workspace.md#tests) |
 | [Build, test and freshness evidence](execution-evidence.md) | [User guide](../docs/workspace.md#build-and-freshness-badges) |
 
 ## Integrations

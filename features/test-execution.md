@@ -1,6 +1,6 @@
 # Test discovery, execution and failures
 
-[Capability index](README.md) · [User guide](../docs/execution.md#tests)
+[Capability index](README.md) · [User guide](../docs/workspace.md#tests)
 
 Find dbt tests, run a chosen scope and inspect their recorded outcomes.
 

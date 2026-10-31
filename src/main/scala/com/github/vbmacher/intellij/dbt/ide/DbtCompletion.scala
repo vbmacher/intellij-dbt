@@ -25,6 +25,8 @@ private[ide] object DbtCompletion {
     .sortBy(_.expressionRange.getLength).headOption
 
   def suggestions(file: PsiFile, offset: Int): Vector[DbtSuggestion] = {
+    if (!file.isPhysical || !DbtWorkspace.rootForFile(file.getProject, file.getVirtualFile).exists(r =>
+      !r.excluded(file.getVirtualFile) && (r.resource(file) || file.getName == "selectors.yml"))) return Vector.empty
     val w = DbtWorkspace.get(file.getProject)
     val root = w.root(file).filter(r => !r.excluded(file.getVirtualFile) && (r.resource(file) || file.getName == "selectors.yml"))
       .getOrElse(return Vector.empty)
@@ -60,12 +62,17 @@ private[ide] object DbtCompletion {
       c.name match {
         case "ref" | "builtins.ref" =>
           val namespace = if (index == 1) c.literal(0) else None
-          val defs = resources(DbtSymbol.RefKinds, namespace)
+          lazy val defs = resources(DbtSymbol.RefKinds, namespace)
           if (argument.exists(_._1.keyword.exists(Set("v", "version")))) {
             c.qualifiedName.toVector.flatMap { case (packageName, name) => resources(DbtSymbol.RefKinds, packageName).filter(_.name == name)
               .flatMap(_.version).distinct.map(v => DbtSuggestion(v, "model version", "model"))
             }
-          } else if (index == 0 && c.positional.size >= 2) defs.map(_.namespace).distinct.map(p => DbtSuggestion(p, "package", "package"))
+          } else if (index == 0 && c.positional.size >= 2) {
+            w.symbols.filter(s => DbtSymbol.RefKinds(s.kind)).groupBy(_.namespace).toVector.sortBy(_._1).collect {
+              case (packageName, symbols) if symbols.exists(s => w.declarations(Set(s.kind), s.name, root, Some(packageName)).nonEmpty) =>
+                DbtSuggestion(packageName, "package", "package")
+            }
+          }
           else if (c.version.contains(None)) Vector.empty
           else defs.groupBy(_.name).toVector.sortBy(_._1).flatMap { case (_, candidates) => DbtResolution.versioned(candidates, c.version.flatten).map(suggestion) }
         case "source" | "builtins.source" if index == 0 => resources(Set("source")).map(suggestion)

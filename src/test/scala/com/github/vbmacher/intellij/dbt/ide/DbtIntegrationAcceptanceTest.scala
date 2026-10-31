@@ -132,6 +132,45 @@ final class DbtIntegrationAcceptanceTest extends DbtTestCase {
     }
   }
 
+  def testOldMetabaseRequestsCannotPublishAfterConnectionSettingsChange(): Unit = {
+    project()
+    Vector(200, 503).foreach { status =>
+      val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+      val started = new java.util.concurrent.CountDownLatch(1)
+      val release = new java.util.concurrent.CountDownLatch(1)
+      server.createContext("/", exchange => {
+        if (exchange.getRequestURI.getPath == "/api/card") {
+          started.countDown()
+          release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        val bytes = "[]".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        exchange.sendResponseHeaders(status, bytes.length)
+        try exchange.getResponseBody.write(bytes) finally exchange.close()
+      })
+      server.start()
+      val service = getProject.getService(classOf[DbtConsumers])
+      val settings = getProject.getService(classOf[DbtConsumersSettings]).getState
+      try {
+        settings.metabaseUrl = "http://127.0.0.1:" + server.getAddress.getPort
+        service.setSecret("old-fixture-key")
+        val current = workspace
+        val pending = java.util.concurrent.CompletableFuture.supplyAsync(() => service.refresh(current))
+        await("The old connection request starts")(started.getCount == 0)
+        settings.metabaseUrl = "https://replacement.test"
+        service.setSecret("replacement-fixture-key")
+        service.clear()
+        val cleared = service.snapshot
+        release.countDown()
+        await("The old request completes")(pending.isDone)
+        assertEquals(cleared, pending.get(1, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(cleared, service.snapshot)
+      } finally {
+        release.countDown()
+        server.stop(0)
+      }
+    }
+  }
+
   def testAgentSchemasMatchRequiredArgumentsAndRejectAdditionalOrInvalidValues(): Unit = {
     project()
     add("models/orders.sql", "select 1")

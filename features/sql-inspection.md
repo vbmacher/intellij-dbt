@@ -1,6 +1,6 @@
 # SQLFluff inspection and fixes
 
-[Capability index](README.md) · [User guide](../docs/editor.md#sql-linting-and-formatting)
+[Capability index](README.md) · [User guide](../docs/editing.md#sql-linting-and-formatting)
 
 Run the configured SQLFluff lint rules and apply an offered source fix.
 

@@ -25,4 +25,4 @@ The context dialog lists `daily_finance` with its selected resources and opens `
 
 ## Interactions
 
-[Resource lineage](resource-lineage.md) supplies ingestion dependencies. [Resource documentation](resource-documentation.md) shows Airflow badges and source links, described in [Workspace](../docs/navigation.md#cte-structure-and-dependency-hierarchy).
+[Resource lineage](resource-lineage.md) supplies ingestion dependencies. [Resource documentation](resource-documentation.md) shows Airflow badges and source links, described in [Workspace](../docs/navigation.md#cte-structure-and-hierarchy).

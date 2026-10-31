@@ -17,13 +17,17 @@ a checkmark and border mark the selected card. Depth and layout direction are
 [Lineage settings](configuration.md#lineage-settings). If the tab is blank, check the
 [JCEF requirement](installation.md#requirements).
 
+Open **Lineage help** for mouse and keyboard gestures, selector examples and an
+explanation of dependency direction. Long card names show their beginning and end
+when they cannot fit; selecting a card shows its full name above the graph.
+
 | Control | Action |
 | --- | --- |
 | Click a card | Select it, show its documentation on the right and dim unrelated resources. |
 | Double-click a card | Focus the graph on it and open its definition. |
 | Enter / Shift+Enter | On a keyboard-focused card: select it / focus the graph on it and open its definition. |
 | **Inspect** | Choose a resource to center it at a readable size and open its details. |
-| **Search resources** | Find a resource by resource or package name. **Clear search** returns to the selection. |
+| **Search resources** | Highlight matching resource or package names and show the match count. If nothing matches, a message explains how to restore the graph. **Clear search** returns to the selection. |
 | **+ N more** | Reveal five more dependency levels in that direction. |
 | **Pin focus** / **Unpin focus** | Stop or resume following the editor. Double-clicking a card still changes focus. |
 | Drag | Move a card, or pan by dragging empty space. |
@@ -41,6 +45,8 @@ Click a test name to open its source declaration. Tests without an available sou
 location appear as plain text.
 The pane stays on the right as you move the mouse or pan the graph. Drag its left
 divider to change its width; with the divider focused, use Left and Right arrow keys.
+Opening or resizing the pane keeps the selected resource in view. Zoom stays the
+same when the card fits; otherwise the view adjusts while keeping a readable scale.
 **Close documentation** returns that space to the graph.
 
 Click a column name to inspect its upstream dependencies and downstream consumers
@@ -282,6 +288,8 @@ a read-only editor; process output stays in the console. After a CTE failure, **
 position in your source.
 
 ## Compiled SQL
+
+These actions use [background resource resolution](editing.md#background-resource-resolution).
 
 In a model editor, right-click and open **dbt**. **Open Compiled dbt SQL** opens the
 compiled SQL read-only, and

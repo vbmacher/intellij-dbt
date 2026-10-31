@@ -1,6 +1,6 @@
 # Rename dbt resources and SQL symbols
 
-[Capability index](README.md) · [User guide](../docs/editor.md#rename-and-safe-delete)
+[Capability index](README.md) · [User guide](../docs/editing.md#rename-and-safe-delete)
 
 Rename a local declaration and update the references that resolve to it.
 

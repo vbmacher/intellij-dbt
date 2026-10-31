@@ -68,6 +68,13 @@ Existing custom fields and tests are kept. Parameterized tests, YAML anchors,
 commented sequences and inherited model-version columns may need direct edits; the
 generator explains when it cannot preserve them.
 
+### Background resource resolution
+
+Resource actions resolve the selected resource in a background task. You can cancel
+the task from the IDE's progress indicator. If source files, settings or the selected
+resource change during resolution, the action stops and a notification explains
+why. Run the action again to use the current context.
+
 ## Editor warnings
 
 | Warning | When |

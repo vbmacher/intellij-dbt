@@ -16,6 +16,24 @@ import scala.collection.mutable.ArrayBuffer
 
 /** Query preview: action availability, the result grid and its exports, and mapping adapter errors to authored SQL. */
 final class DbtPreviewTest extends DbtTestCase {
+  def testLoadedEnvironmentChangesInvalidateTheCteSnapshot(): Unit = {
+    project()
+    val model = add("models/orders.sql", "with chosen as (select '{{ env_var(\"TENANT\") }}' as tenant) select * from chosen")
+    val environment = add(".env", "TENANT=before\n")
+    val before = workspace
+    val context = DbtCteInspection.context(before, before.model(model).get).get
+    edit(environment, "TENANT=after\n")
+    val after = workspace
+    assertEquals("after", com.github.vbmacher.intellij.dbt.project.DbtExecutionContext.environment(after.root(model).get)("TENANT"))
+    assertNotEquals(context, DbtCteInspection.context(after, after.model(model).get).get)
+    configureSettings(_.loadEnvironmentFiles = false)
+    val disabled = workspace
+    val disabledContext = DbtCteInspection.context(disabled, disabled.model(model).get).get
+    edit(environment, "TENANT=ignored\n")
+    val unchanged = workspace
+    assertEquals(disabledContext, DbtCteInspection.context(unchanged, unchanged.model(model).get).get)
+  }
+
   private def component[A](grid: DbtResultGrid, kind: Class[A]): A = components(grid).find(kind.isInstance).map(kind.cast).get
 
   def testExportSnapshotRetainsFilteredSortedReorderedViewAfterTheGridIsCleared(): Unit = {

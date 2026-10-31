@@ -1,6 +1,6 @@
 # External command execution
 
-[Capability index](README.md) · [User guide](../docs/configuration.md#external-tools-and-script-wrappers)
+[Capability index](README.md) · [User guide](../docs/configuration.md#executables-and-wrapper-scripts)
 
 Run dbt through an executable, interpreter or launcher with fixed prefix arguments.
 

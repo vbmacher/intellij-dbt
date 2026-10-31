@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-31T20:31:48+00:00",
+  "title": "Design System: dbt Workspace",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Cool interaction blue",
+        "tonalRamp": [
+          "oklch(0.15 0.0528 252.50)",
+          "oklch(0.26 0.0915 252.50)",
+          "oklch(0.38 0.1231 252.50)",
+          "oklch(0.50 0.1231 252.50)",
+          "oklch(0.62 0.1231 252.50)",
+          "oklch(0.74 0.1231 252.50)",
+          "oklch(0.86 0.0862 252.50)",
+          "oklch(0.95 0.0308 252.50)"
+        ]
+      },
+      "model": {
+        "role": "semantic",
+        "displayName": "Model blue",
+        "tonalRamp": [
+          "oklch(0.15 0.0527 259.03)",
+          "oklch(0.26 0.0913 259.03)",
+          "oklch(0.38 0.1229 259.03)",
+          "oklch(0.50 0.1229 259.03)",
+          "oklch(0.62 0.1229 259.03)",
+          "oklch(0.74 0.1229 259.03)",
+          "oklch(0.86 0.0860 259.03)",
+          "oklch(0.95 0.0307 259.03)"
+        ]
+      },
+      "source": {
+        "role": "semantic",
+        "displayName": "Source teal",
+        "tonalRamp": [
+          "oklch(0.15 0.0411 184.86)",
+          "oklch(0.26 0.0713 184.86)",
+          "oklch(0.38 0.0960 184.86)",
+          "oklch(0.50 0.0960 184.86)",
+          "oklch(0.62 0.0960 184.86)",
+          "oklch(0.74 0.0960 184.86)",
+          "oklch(0.86 0.0672 184.86)",
+          "oklch(0.95 0.0240 184.86)"
+        ]
+      },
+      "seed": {
+        "role": "semantic",
+        "displayName": "Seed gold",
+        "tonalRamp": [
+          "oklch(0.15 0.0416 84.80)",
+          "oklch(0.26 0.0721 84.80)",
+          "oklch(0.38 0.0971 84.80)",
+          "oklch(0.50 0.0971 84.80)",
+          "oklch(0.62 0.0971 84.80)",
+          "oklch(0.74 0.0971 84.80)",
+          "oklch(0.86 0.0680 84.80)",
+          "oklch(0.95 0.0243 84.80)"
+        ]
+      },
+      "snapshot": {
+        "role": "semantic",
+        "displayName": "Snapshot violet",
+        "tonalRamp": [
+          "oklch(0.15 0.0534 309.56)",
+          "oklch(0.26 0.0925 309.56)",
+          "oklch(0.38 0.1246 309.56)",
+          "oklch(0.50 0.1246 309.56)",
+          "oklch(0.62 0.1246 309.56)",
+          "oklch(0.74 0.1246 309.56)",
+          "oklch(0.86 0.0872 309.56)",
+          "oklch(0.95 0.0311 309.56)"
+        ]
+      },
+      "exposure": {
+        "role": "semantic",
+        "displayName": "Exposure coral",
+        "tonalRamp": [
+          "oklch(0.15 0.0444 36.79)",
+          "oklch(0.26 0.0770 36.79)",
+          "oklch(0.38 0.1037 36.79)",
+          "oklch(0.50 0.1037 36.79)",
+          "oklch(0.62 0.1037 36.79)",
+          "oklch(0.74 0.1037 36.79)",
+          "oklch(0.86 0.0726 36.79)",
+          "oklch(0.95 0.0259 36.79)"
+        ]
+      },
+      "error": {
+        "role": "semantic",
+        "displayName": "Error red",
+        "tonalRamp": [
+          "oklch(0.15 0.0584 21.31)",
+          "oklch(0.26 0.1012 21.31)",
+          "oklch(0.38 0.1363 21.31)",
+          "oklch(0.50 0.1363 21.31)",
+          "oklch(0.62 0.1363 21.31)",
+          "oklch(0.74 0.1363 21.31)",
+          "oklch(0.86 0.0954 21.31)",
+          "oklch(0.95 0.0341 21.31)"
+        ]
+      },
+      "edge": {
+        "role": "neutral",
+        "displayName": "Connector slate",
+        "tonalRamp": [
+          "oklch(0.15 0.0121 257.67)",
+          "oklch(0.26 0.0210 257.67)",
+          "oklch(0.38 0.0282 257.67)",
+          "oklch(0.50 0.0282 257.67)",
+          "oklch(0.62 0.0282 257.67)",
+          "oklch(0.74 0.0282 257.67)",
+          "oklch(0.86 0.0197 257.67)",
+          "oklch(0.95 0.0071 257.67)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Graphite canvas (fallback)",
+        "tonalRamp": [
+          "oklch(0.15 0.0025 271.18)",
+          "oklch(0.26 0.0043 271.18)",
+          "oklch(0.38 0.0058 271.18)",
+          "oklch(0.50 0.0058 271.18)",
+          "oklch(0.62 0.0058 271.18)",
+          "oklch(0.74 0.0058 271.18)",
+          "oklch(0.86 0.0041 271.18)",
+          "oklch(0.95 0.0015 271.18)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Graphite panel (fallback)",
+        "tonalRamp": [
+          "oklch(0.15 0.0026 258.36)",
+          "oklch(0.26 0.0046 258.36)",
+          "oklch(0.38 0.0061 258.36)",
+          "oklch(0.50 0.0061 258.36)",
+          "oklch(0.62 0.0061 258.36)",
+          "oklch(0.74 0.0061 258.36)",
+          "oklch(0.86 0.0043 258.36)",
+          "oklch(0.95 0.0015 258.36)"
+        ]
+      },
+      "fg": {
+        "role": "neutral",
+        "displayName": "Light foreground (fallback)",
+        "tonalRamp": [
+          "oklch(0.15 0.0025 264.53)",
+          "oklch(0.26 0.0043 264.53)",
+          "oklch(0.38 0.0058 264.53)",
+          "oklch(0.50 0.0058 264.53)",
+          "oklch(0.62 0.0058 264.53)",
+          "oklch(0.74 0.0058 264.53)",
+          "oklch(0.86 0.0041 264.53)",
+          "oklch(0.95 0.0015 264.53)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted foreground (theme-derived)"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Quiet separator (theme-derived)"
+      },
+      "link": {
+        "role": "primary",
+        "displayName": "Theme-aware link blue (theme-derived)"
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Body",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "resource-title": {
+        "displayName": "Resource Title",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "panel-heading": {
+        "displayName": "Panel Heading",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "status": {
+        "displayName": "Status",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "metadata": {
+        "displayName": "Metadata",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "chip": {
+        "displayName": "Chip",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "execution-badge": {
+        "displayName": "Execution Badge",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Embedded Lineage web typography; native controls inherit IntelliJ typography."
+      }
+    },
+    "shadows": [
+      {
+        "name": "resource-card",
+        "value": "0 2px 6px #0004",
+        "purpose": "Small ambient shadow on ordinary graph cards; selected and boundary variants remove it."
+      },
+      {
+        "name": "floating-content",
+        "value": "0 3px 12px #0005",
+        "purpose": "Existing tooltip and export-menu separation."
+      }
+    ],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "narrow-tool-window",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Toolbar text action",
+      "kind": "button",
+      "refersTo": "toolbar-action",
+      "description": "Existing compact Lineage text button.",
+      "html": "<button class=\"ds-action\">Fit graph</button>",
+      "css": ".ds-action{font:13px system-ui;color:var(--fg,#dfe1e5);background:var(--panel,#2b2d30);border:1px solid var(--line,color-mix(in srgb,#dfe1e5 30%,#202124));border-radius:4px;padding:3px 9px;height:28px;cursor:pointer;}.ds-action:hover{border-color:var(--accent,#68a7ee)}.ds-action:focus-visible{outline:2px solid var(--accent,#68a7ee);outline-offset:2px;}.ds-action:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Toolbar icon action",
+      "kind": "button",
+      "refersTo": "icon-action",
+      "description": "Existing transparent toolbar footprint, illustrated with the documentation close glyph.",
+      "html": "<button class=\"ds-icon\" aria-label=\"Close documentation\">×</button>",
+      "css": ".ds-icon{font:13px system-ui;color:var(--fg,#dfe1e5);display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:5px;border:0;border-radius:4px;background:transparent;cursor:pointer}.ds-icon:hover,.ds-icon[aria-pressed=true]{background:var(--line,color-mix(in srgb,#dfe1e5 30%,#202124))}.ds-icon:focus-visible{outline:2px solid var(--accent,#68a7ee);outline-offset:2px;}.ds-icon:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Resource search",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "Existing Lineage search field with inherited panel colors.",
+      "html": "<input class=\"ds-search\" aria-label=\"Search resources\" placeholder=\"Search resources\">",
+      "css": ".ds-search{font:13px system-ui;color:var(--fg,#dfe1e5);width:190px;max-width:240px;min-width:80px;background:var(--panel,#2b2d30);border:1px solid var(--line,color-mix(in srgb,#dfe1e5 30%,#202124));border-radius:4px;padding:5px 9px}.ds-search:focus-visible{outline:2px solid var(--accent,#68a7ee);outline-offset:2px;}"
+    },
+    {
+      "name": "Resource card",
+      "kind": "card",
+      "refersTo": "resource-card",
+      "description": "Existing model card, with classes for the separate selected and graph-focus states.",
+      "html": "<div class=\"ds-card\" tabindex=\"0\" role=\"button\" aria-label=\"orders · model · mart · analytics\"><small>▤ model · incremental</small><b>orders</b><small>mart · analytics</small></div>",
+      "css": ".ds-card{font:13px system-ui;color:var(--fg,#dfe1e5);position:relative;box-sizing:border-box;width:250px;height:104px;border-left:4px solid var(--model,#6b9be6);border-radius:4px;padding:8px 12px;background:var(--panel,#2b2d30);box-shadow:0 2px 6px #0004;user-select:none}.ds-card small{display:block;font-size:smaller;color:var(--muted,color-mix(in srgb,#dfe1e5 75%,#202124));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:15px}.ds-card b{display:block;overflow-wrap:anywhere;font-size:13px;line-height:17px;height:34px;margin:4px 0}.ds-card.ds-selected{border:2px solid var(--fg,#dfe1e5);border-left-width:4px;box-shadow:none}.ds-card.ds-selected b:before{content:\"✓ \"}.ds-card.ds-focus{outline:2px solid var(--accent,#68a7ee);outline-offset:2px}.ds-card:focus-visible{outline:3px dashed var(--accent,#68a7ee);outline-offset:5px}"
+    },
+    {
+      "name": "Metadata pill",
+      "kind": "chip",
+      "refersTo": "metadata-pill",
+      "description": "Existing noninteractive, outlined metadata treatment.",
+      "html": "<span class=\"ds-pill\">finance</span>",
+      "css": ".ds-pill{font:13px system-ui;color:var(--fg,#dfe1e5);display:inline-block;padding:2px 6px;margin:3px;border:1px solid var(--line,color-mix(in srgb,#dfe1e5 30%,#202124));border-radius:10px;font-size:11px}"
+    },
+    {
+      "name": "Documentation navigation link",
+      "kind": "nav",
+      "refersTo": "documentation-link",
+      "description": "Existing underlined navigation treatment for resource and column details; preview stays local.",
+      "html": "<a class=\"ds-link\" href=\"#column-details\">order_id</a>",
+      "css": ".ds-link{font:13px system-ui;color:var(--link,color-mix(in srgb,var(--accent,#68a7ee) 50%,var(--fg,#dfe1e5)));background:none;border:0;padding:0;text-decoration:underline;text-align:left;cursor:pointer}.ds-link:focus-visible{outline:2px solid var(--accent,#68a7ee);outline-offset:2px;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The IDE Workbench",
+    "overview": "The interface is restrained, practical, and clear. Familiar controls support\nfocused work, with readable resource names and concise secondary information.\nComponents should feel familiar, restrained, and immediately understandable.\nThe system fits the IntelliJ desktop environment and its existing visual language.\n\nThis record captures the current implementation, not a replacement visual identity.\nNative IntelliJ controls inherit the host theme, fonts, scale and interaction\nstates. The embedded Lineage view has its own compact web styling and receives\nhost colors. The frontmatter describes that web surface; it is not a replacement\npalette or sizing specification for native Swing controls. Product intent lives in\n[PRODUCT.md](PRODUCT.md).",
+    "keyCharacteristics": [
+      "Familiar native controls alongside a compact graph workspace.",
+      "Graphite fallback surfaces and cool blue interaction accents.",
+      "Resource colors supported by text, icons, outlines and border patterns.",
+      "Mostly flat surfaces, with small shadows for cards and floating content.",
+      "Immediate state changes rather than decorative motion."
+    ],
+    "rules": [
+      {
+        "name": "The Host Theme Rule",
+        "body": "Preserve host-supplied surface and text colors. Resolve\nnative colors through IntelliJ theme APIs rather than copying web fallback values.",
+        "section": "colors"
+      },
+      {
+        "name": "The Redundant Cue Rule",
+        "body": "Keep text, icons and border patterns alongside semantic\ncolor. Selection, focus and execution state must remain distinguishable concepts.",
+        "section": "colors"
+      },
+      {
+        "name": "The Host Type Rule",
+        "body": "Keep native typography host-controlled and preserve the\nweb view's system-font stack. Do not introduce a decorative font into either.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Workspace Rule",
+        "body": "Keep structural panels flat. Reserve the existing\nsmall shadows for graph cards and floating content; do not turn native settings\nsections into elevated web cards.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do let IntelliJ supply native themes, fonts, scaling and control states.",
+      "Do keep Lineage surface colors connected to the active host theme.",
+      "Do preserve resource identity and distinguish selection from focus.",
+      "Do use labels, icons and patterns alongside color to explain state.",
+      "Do use the current components and capability specifications as the source\n  for new work; confirm screenshots against current code."
+    ],
+    "donts": [
+      "Don't apply the dark fallback palette to every IDE theme or to Swing controls.",
+      "Don't turn compact tool surfaces into marketing layouts or invent a hero\n  type scale, filled primary action or decorative motion language.",
+      "Don't give a resource-kind color an unconditional execution-state meaning.",
+      "Don't flatten selected, focused, disabled and uncertain states into color alone.",
+      "Don't duplicate UI procedures or settings documentation in the design record."
+    ]
+  }
+}

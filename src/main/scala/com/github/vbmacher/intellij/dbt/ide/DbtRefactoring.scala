@@ -163,7 +163,8 @@ final class DbtRenameProcessor extends RenamePsiElementProcessor {
       }))) conflicts.putValue(e, "Some usages resolve ambiguously.")
       if ((s.kind == "sql_projection" || s.kind == "column" && s.file.getVirtualFile.getExtension == "sql") && DbtSqlAnalysis.get(w, s.file).forall(_.issues.nonEmpty))
         conflicts.putValue(e, "Column analysis is incomplete; review dynamic consumers before renaming.")
-      if (Set("column", "sql_projection", "model", "macro")(s.kind) && w.files.exists(f => DbtSyntax.inFile(f).flatMap(DbtSyntax.calls)
+      if (Set("column", "sql_projection", "model", "macro")(s.kind) && w.files.filter(f => w.root(f).exists(from =>
+        w.owner(s).exists(owner => w.namespaceVisible(from, owner, qualified = true)))).exists(f => DbtSyntax.inFile(f).flatMap(DbtSyntax.calls)
         .exists(c => Set("ref", "source", "adapter.dispatch")(c.name) && c.arguments.exists(_.literal.isEmpty))))
         conflicts.putValue(e, "Dynamic consumers exist; the complete set of usages cannot be proven.")
     case _ => ()

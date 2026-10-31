@@ -58,6 +58,7 @@ private[dbt] final case class DbtConsumersCache(consumers: Vector[DbtConsumer], 
 @Service(Array(Service.Level.PROJECT))
 final class DbtConsumers(project: Project) {
   @volatile private var cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations.")
+  private var generation = 0L
 
   def snapshot: DbtConsumersCache = cache
 
@@ -69,18 +70,26 @@ final class DbtConsumers(project: Project) {
 
   def setSecret(secret: String): Unit = PasswordSafe.getInstance().set(credential, if (secret.isEmpty) null else new Credentials("api-key", secret))
 
-  def clear(): Unit = {
+  def clear(): Unit = synchronized {
+    generation += 1
     cache = DbtConsumersCache(Vector.empty, 0, "Disconnected. Refresh Metabase metadata explicitly.")
+  }
+
+  private def publish(expectedGeneration: Long)(value: => DbtConsumersCache): DbtConsumersCache = synchronized {
+    if (generation == expectedGeneration) cache = value
+    cache
   }
 
   def refresh(w: DbtWorkspace): DbtConsumersCache = refresh(w, Duration.ofSeconds(10))
 
-  private[ide] def refresh(w: DbtWorkspace, requestTimeout: Duration): DbtConsumersCache = try {
+  private[ide] def refresh(w: DbtWorkspace, requestTimeout: Duration): DbtConsumersCache =
+    refresh(requestTimeout, synchronized { generation })
+
+  private def refresh(requestTimeout: Duration, expectedGeneration: Long): DbtConsumersCache = try {
     val url = project.getService(classOf[DbtConsumersSettings]).getState.metabaseUrl
     val key = Some(apiKey).filter(_.nonEmpty)
     if (DbtAirflow.safeUrl(url).isEmpty || key.isEmpty) {
-      cache = cache.copy(status = "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations.");
-      cache
+      publish(expectedGeneration)(cache.copy(status = "Disconnected. Configure Metabase URL and API key in Settings > dbt Workspace > Integrations."))
     } else {
       val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build()
       val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60)
@@ -143,12 +152,11 @@ final class DbtConsumers(project: Project) {
         DbtConsumersCache((questions ++ dashboardConsumers).distinct, System.currentTimeMillis(),
           if (list.size > 100) "Partial: first 100 dashboards only." else "Metadata refreshed. Dashboard details unavailable to this key are omitted.")
       }
-      cache = refreshed.fold(error => cache.copy(status = error), identity);
-      cache
+      publish(expectedGeneration)(refreshed.fold(error => cache.copy(status = error), identity))
     }
   } catch {
     case canceled: com.intellij.openapi.progress.ProcessCanceledException => throw canceled
-    case NonFatal(_) => cache = cache.copy(status = "Metabase returned unsupported or invalid metadata; previous cache retained."); cache
+    case NonFatal(_) => publish(expectedGeneration)(cache.copy(status = "Metabase returned unsupported or invalid metadata; previous cache retained."))
   }
 }
 

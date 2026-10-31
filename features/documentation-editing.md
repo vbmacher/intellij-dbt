@@ -1,6 +1,6 @@
 # Edit resource properties
 
-[Capability index](README.md) · [User guide](../docs/editor.md#edit-and-generate-yaml-properties)
+[Capability index](README.md) · [User guide](../docs/editing.md#edit-and-generate-yaml-properties)
 
 Edit authored properties in YAML and generate reviewed column changes.
 

@@ -1,6 +1,6 @@
 # Properties, dependencies and gutter navigation
 
-[Capability index](README.md) · [User guide](../docs/navigation.md#gutter-markers)
+[Capability index](README.md) · [User guide](../docs/navigation.md#gutter-markers-and-popups)
 
 Browse a resource’s declarations, upstream dependencies and downstream callers without running dbt.
 

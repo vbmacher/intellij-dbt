@@ -1,6 +1,6 @@
 # Baseline comparison and deferral
 
-[Capability index](README.md) · [User guide](../docs/execution.md#selection-and-state)
+[Capability index](README.md) · [User guide](../docs/workspace.md#review-a-selection-and-compare-a-baseline)
 
 Compare resources with a baseline manifest and review upstream relations eligible for dbt deferral.
 
@@ -11,7 +11,7 @@ Compare resources with a baseline manifest and review upstream relations eligibl
 - Source comparison is static; it cannot prove warehouse relation existence or guarantee that runtime `dbt ls` matches the local approximation.
 - Unknown physical provenance stays unknown. Baseline files are read-only inputs and must be separate from the artifact output directory.
 - Missing, incompatible or overlapping baselines block dependent operations rather than silently selecting all resources.
-- Deferral and favor-state eligibility, version requirements and size bounds are defined in [Configuration](../docs/configuration.md#state-comparison-and-deferral).
+- Deferral and favor-state eligibility, version requirements and size bounds are defined in [Configuration](../docs/configuration.md#baseline-state-and-deferral).
 
 ## Example
 

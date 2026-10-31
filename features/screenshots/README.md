@@ -22,7 +22,7 @@ HTTP fixture. Airflow discovery uses local Python files without contacting a liv
 The stopped agent view contains no endpoint authorization token.
 
 Command, property-form and CTE captures in this table show custom layouts and do
-not represent the current native controls. Use [Execution](../../docs/execution.md),
+not represent the current native controls. Use [Execution](../../docs/workspace.md),
 [Workspace](../../docs/workspace.md) and [Configuration](../../docs/configuration.md)
 for current procedures. Editor and navigation captures illustrate their named
 source operations.

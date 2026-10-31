@@ -1,6 +1,6 @@
 # SQL, YAML and Markdown template highlighting
 
-[Capability index](README.md) · [User guide](../docs/editor.md#syntax-highlighting)
+[Capability index](README.md) · [User guide](../docs/editing.md#syntax-highlighting)
 
 Distinguish SQL and Jinja syntax while editing dbt resources and configuration.
 

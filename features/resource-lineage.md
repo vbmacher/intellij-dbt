@@ -15,7 +15,8 @@ Explore resource dependencies visually and share a focused graph.
   resizable pane on the right. Hovering opens nothing. Column details stay in that
   pane; see [Workspace](../docs/workspace.md#resource-documentation).
 - Resource identities stay distinct across packages, versions and owning projects. Missing or partial metadata must not invent edges.
-- The graph's controls and export limits are owned by [Workspace](../docs/workspace.md#filter-group-and-share).
+- Clipped card names retain their beginning and end; accessible names retain the full resource name and location. Search reports matches, including an explicit no-match result. Opening or resizing documentation keeps the selected resource visible, preserving zoom when the card fits and otherwise using the readable automatic framing limits.
+- The graph's controls and export limits are owned by [Workspace](../docs/workspace.md#filter-group-and-export).
 
 ## Example
 

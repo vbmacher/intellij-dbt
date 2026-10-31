@@ -1,6 +1,6 @@
 # Model, selected SQL and CTE previews
 
-[Capability index](README.md) · [User guide](../docs/execution.md#preview-results)
+[Capability index](README.md) · [User guide](../docs/workspace.md#preview-query-results)
 
 Inspect a bounded query result without editing the model source.
 

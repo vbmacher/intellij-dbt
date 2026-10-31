@@ -1,6 +1,6 @@
 # Workspace commands and execution context
 
-[Capability index](README.md) · [User guide](../docs/execution.md#commands)
+[Capability index](README.md) · [User guide](../docs/workspace.md#commands)
 
 Run dbt commands through native Run configurations for an explicitly chosen
 project, target and resource scope.

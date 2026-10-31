@@ -1,6 +1,6 @@
 # YAML completion and validation
 
-[Capability index](README.md) · [User guide](../docs/editor.md#editor-warnings)
+[Capability index](README.md) · [User guide](../docs/editing.md#editor-warnings)
 
 Help author dbt project, dependency, selector and resource-property YAML offline.
 

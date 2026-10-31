@@ -2,11 +2,13 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.github.vbmacher.intellij.dbt.project.{DbtArtifactContext, DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtArtifactContext, DbtProjectSettings, DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.intellij.ide.DataManager
+import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.diff.{DiffContentFactory, DiffManager}
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys, DataContext}
+import com.intellij.openapi.actionSystem.{ActionUpdateThread, AnAction, AnActionEvent, CommonDataKeys, DataContext, PlatformCoreDataKeys}
 import com.intellij.openapi.application.{ModalityState, ReadAction}
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.{FileDocumentManager, FileEditorManager, OpenFileDescriptor}
@@ -16,8 +18,9 @@ import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.{DialogWrapper, Messages}
 import com.intellij.openapi.ui.popup.{JBPopup, JBPopupFactory, ListItemDescriptor}
-import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.{LocalFileSystem, VirtualFileManager}
 import com.intellij.psi.{PsiDocumentManager, PsiFile}
+import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -161,7 +164,43 @@ private[ide] abstract class DbtResourceAction(perform: (DbtWorkspace, DbtSymbol)
 
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(resource(event).nonEmpty)
 
-  override def actionPerformed(event: AnActionEvent): Unit = DbtUi.read(resource(event)).foreach(perform.tupled)
+  override def actionPerformed(event: AnActionEvent): Unit =
+    DbtEditorAction.caret(event.getDataContext).foreach { case (project, source, offset) =>
+      val editor = Option(event.getData(CommonDataKeys.EDITOR))
+      val component = Option(event.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT))
+      val document = source.flatMap(f => Option(f.getViewProvider.getDocument))
+      val stamp = document.map(_.getModificationStamp)
+      val settings = DbtProjectSettings.get(project).getModificationCount
+      val structure = VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS.getModificationCount
+
+      def unchanged: Boolean = source.forall(_.isValid) && document.map(_.getModificationStamp) == stamp &&
+        DbtProjectSettings.get(project).getModificationCount == settings &&
+        VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS.getModificationCount == structure
+
+      def stopped(message: String): Unit = NotificationGroupManager.getInstance.getNotificationGroup("dbt Workspace")
+        .createNotification("dbt action stopped", message, NotificationType.INFORMATION).notify(project)
+
+      DbtUi.background(project, "Resolve dbt resource", canceled = () => stopped("Resource resolution was canceled. Run the action again when ready.")) { indicator =>
+        ReadAction.nonBlocking[(Long, Option[(DbtWorkspace, DbtSymbol)])](() => {
+          val result = if (!unchanged) None
+          else {
+            val result = DbtResourceAction.at(project, source, offset)
+            result.foreach { case (workspace, symbol) => DbtResourceData.get(workspace, symbol) }
+            result
+          }
+          (PsiModificationTracker.getInstance(project).getModificationCount, result)
+        }).expireWith(project).withDocumentsCommitted(project).wrapProgress(indicator).executeSynchronously()
+      } { case (modifications, result) =>
+        val sameSelection = editor match {
+          case Some(e) => !e.isDisposed && e.getCaretModel.getOffset == offset &&
+            FileEditorManager.getInstance(project).getSelectedTextEditor == e
+          case None => component.forall(c => Option(CommonDataKeys.PSI_FILE.getData(DataManager.getInstance.getDataContext(c))) == source)
+        }
+        if (!unchanged || !sameSelection || PsiModificationTracker.getInstance(project).getModificationCount != modifications)
+          stopped("Source, settings or selection changed during resolution. Run the action again.")
+        else result.foreach(perform.tupled)
+      }
+    }
 }
 
 private[ide] object DbtResourceAction {
@@ -274,7 +313,8 @@ private[ide] object DbtUi {
    * A cancellable background task; its result is shown on the EDT while the project is open. Failures are reported by
    * `failed` while the project is open, or by a generic error dialog. `finished` runs after every outcome.
    */
-  def background[A](project: Project, title: String, failed: Option[Throwable => Unit] = None, finished: () => Unit = () => ())(
+  def background[A](project: Project, title: String, failed: Option[Throwable => Unit] = None, finished: () => Unit = () => (),
+    canceled: () => Unit = () => ())(
     work: ProgressIndicator => A)(show: A => Unit): Unit =
     new Task.Backgroundable(project, title, true) {
       private var result: Option[A] = None
@@ -284,6 +324,8 @@ private[ide] object DbtUi {
       }
 
       override def onSuccess(): Unit = if (!project.isDisposed) result.foreach(show)
+
+      override def onCancel(): Unit = if (!project.isDisposed) canceled()
 
       override def onThrowable(error: Throwable): Unit = if (!project.isDisposed) failed.fold(
         Messages.showErrorDialog(project, "Analysis failed or was canceled. Refresh and try again.", title))(_(error))

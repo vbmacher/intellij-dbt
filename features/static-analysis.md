@@ -1,6 +1,6 @@
 # Reference, SQL and contract warnings
 
-[Capability index](README.md) · [User guide](../docs/editor.md#editor-warnings)
+[Capability index](README.md) · [User guide](../docs/editing.md#editor-warnings)
 
 Identify reference and SQL problems that can be established from the project’s current source.
 
@@ -11,7 +11,7 @@ Identify reference and SQL problems that can be established from the project’s
 - Unknown sources and unknown source tables have distinct diagnostics. Runtime-computed resource names are not treated as missing literals.
 - A uniquely defined macro without `kwargs` can report unknown keyword names. Argument counts and value types are not checked.
 - Enforced model contracts compare known outputs with YAML column declarations and supported known string, integer and decimal types. Incomplete SQL analysis cannot prove a complete contract.
-- SQL/macro/contract warnings support statement or file suppression as described in [Editor warnings](../docs/editor.md#editor-warnings). Suppression does not change SQL semantics.
+- SQL/macro/contract warnings support statement or file suppression as described in [Editor warnings](../docs/editing.md#editor-warnings). Suppression does not change SQL semantics.
 
 ## Example
 

@@ -1,6 +1,6 @@
 # SQL formatting
 
-[Capability index](README.md) · [User guide](../docs/editor.md#sql-linting-and-formatting)
+[Capability index](README.md) · [User guide](../docs/editing.md#sql-linting-and-formatting)
 
 Format a dbt SQL/Jinja document with the project’s chosen formatter.
 
@@ -10,7 +10,7 @@ Format a dbt SQL/Jinja document with the project’s chosen formatter.
 - **Output:** formatted document text from a background process, applied with Undo.
 - Reformat Code and optional format-on-save use the same owning execution context.
 - SQLFluff formatting uses its `format` command; lint inspection is a [separate capability](sql-inspection.md).
-- Failure, cancellation, timeout or document changes while formatting preserve the current document. Executable and environment requirements belong to [Configuration](../docs/configuration.md#sql-linting-and-formatting).
+- Failure, cancellation, timeout or document changes while formatting preserve the current document. Executable and environment requirements belong to [Configuration](../docs/configuration.md#sql-formatter).
 
 ## Example
 

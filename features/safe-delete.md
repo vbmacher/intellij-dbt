@@ -1,6 +1,6 @@
 # Safe Delete
 
-[Capability index](README.md) · [User guide](../docs/editor.md#rename-and-safe-delete)
+[Capability index](README.md) · [User guide](../docs/editing.md#rename-and-safe-delete)
 
 Remove supported local declarations only after reviewing their usages and conflicts.
 

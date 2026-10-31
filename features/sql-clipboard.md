@@ -1,6 +1,6 @@
 # SQL clipboard conversion
 
-[Capability index](README.md) · [User guide](../docs/editor.md#sql-clipboard-conversion)
+[Capability index](README.md) · [User guide](../docs/editing.md#sql-clipboard-conversion)
 
 Convert static dbt relations for a target database and convert uniquely known physical names back to dbt references.
 

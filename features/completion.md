@@ -1,6 +1,6 @@
 # dbt and SQL completion
 
-[Capability index](README.md) · [User guide](../docs/editor.md#completion-and-parameter-information)
+[Capability index](README.md) · [User guide](../docs/editing.md#completion-and-parameter-information)
 
 When you press **Ctrl+Space** (or choose **Code → Code Completion → Basic**), the plugin suggests dbt names and SQL columns that are valid at the caret position.
 

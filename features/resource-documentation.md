@@ -1,6 +1,6 @@
 # Resource documentation
 
-[Capability index](README.md) · [User guide](../docs/editor.md#quick-documentation)
+[Capability index](README.md) · [User guide](../docs/editing.md#quick-documentation)
 
 Read resource properties through native Quick Documentation or the Lineage details pane.
 

@@ -1,6 +1,6 @@
 # Column lineage
 
-[Capability index](README.md) · [User guide](../docs/editor.md#quick-documentation)
+[Capability index](README.md) · [User guide](../docs/editing.md#quick-documentation)
 
 ## What it does
 

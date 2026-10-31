@@ -1,6 +1,6 @@
 # Create missing resources
 
-[Capability index](README.md) · [User guide](../docs/editor.md#create-a-missing-resource)
+[Capability index](README.md) · [User guide](../docs/editing.md#create-a-missing-resource)
 
 Create a local model or source-table declaration from a supported unresolved literal reference.
 

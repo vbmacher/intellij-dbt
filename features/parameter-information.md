@@ -1,6 +1,6 @@
 # Macro parameter information
 
-[Capability index](README.md) · [User guide](../docs/editor.md#completion-and-parameter-information)
+[Capability index](README.md) · [User guide](../docs/editing.md#completion-and-parameter-information)
 
 Show a macro’s argument names and defaults while writing a call.
 

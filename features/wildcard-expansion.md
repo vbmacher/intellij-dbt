@@ -1,6 +1,6 @@
 # Expand wildcard columns
 
-[Capability index](README.md) · [User guide](../docs/editor.md#expand-wildcard-columns)
+[Capability index](README.md) · [User guide](../docs/editing.md#expand-wildcard-columns)
 
 Replace a SQL wildcard with an explicit projection that can be reviewed before applying.
 

@@ -7,12 +7,16 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../../main/resources/lineage');
 let browser, page, errors=[];
 const fixture = {canGenerateDocs:true,focus:'model',nodes:[{id:'source',name:'events',kind:'source_table',package:'analytics',schema:'raw'},{id:'model',name:'orders',kind:'model',package:'analytics',schema:'mart',focus:true,materialized:'incremental'},{id:'report',name:'report',kind:'model',package:'analytics'},{id:'other',name:'unrelated',kind:'seed',package:'analytics'}],edges:[{source:'source',target:'model'},{source:'model',target:'report'}],boundary:[{direction:'upstream',count:7,anchors:['source']}],direction:'LR'};
-before(async()=>{
- browser=await chromium.launch({headless:true,executablePath:process.env.DBT_CHROMIUM, args:['--no-sandbox']});
- page=await browser.newPage({viewport:{width:1400,height:850}});page.on('pageerror',e=>errors.push(e.message));
+async function createLineagePage(viewport={width:1400,height:850}){
+ const view=await browser.newPage({viewport});view.on('pageerror',e=>errors.push(e.message));
  const scripts=['cytoscape.min.js','dagre.min.js','cytoscape-dagre.min.js'].map(x=>'<script>'+fs.readFileSync(path.join(root,'vendor',x),'utf8').replaceAll('</script','<\\/script')+'</script>').join('');
  const html=fs.readFileSync(path.join(root,'index.html'),'utf8').replace('<!-- SCRIPTS -->',()=>scripts+'<script>window.events=[];window.dbtSend=x=>window.events.push(JSON.parse(x));</script>');
- await page.setContent(html); await page.evaluate(p=>window.dbtUpdate(p),fixture);
+ await view.setContent(html);await view.evaluate(p=>window.dbtUpdate(p),fixture);
+ return view;
+}
+before(async()=>{
+ browser=await chromium.launch({headless:true,executablePath:process.env.DBT_CHROMIUM, args:['--no-sandbox']});
+ page=await createLineagePage();
 });
 after(async()=>{await browser.close()});
 const update=payload=>page.evaluate(p=>dbtUpdate(p),payload);
@@ -64,6 +68,32 @@ test('Regenerate Docs requires an an identified execution project',async()=>{
 });
 test('zoom, fit and search controls work',async()=>{const zoom=await page.evaluate(()=>cy.zoom());await page.locator('#zoom-in').click();assert.ok(await page.evaluate(()=>cy.zoom())>zoom);await page.locator('#fit').click();await page.locator('#search').fill('orders');assert.equal(await page.locator('.card:not(.dim):not(.boundary)').count(),1);await page.locator('#clear-search').click()});
 test('viewport survives same-focus artifact and theme refresh',async()=>{await page.evaluate(()=>{cy.zoom(.75);cy.pan({x:123,y:65})});await update({...fixture,theme:{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}});assert.equal(await page.evaluate(()=>cy.zoom()),.75);assert.deepEqual(await page.evaluate(()=>cy.pan()),{x:123,y:65});assert.equal(await page.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(250, 250, 250)')});
+test('resource and evidence keyboard focus survive refresh without moving the viewport',async()=>{
+ const view=await createLineagePage();
+ try{
+  const payload={...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,execution:{status:'passed',label:'Build passed',details:'dev',failingTests:0}}:n)};
+  await view.evaluate(p=>dbtUpdate(p),payload);
+  for(const selector of ['.card[data-kind="model"][aria-label^="orders"]','.execution-badge']){
+   await view.locator(selector).focus();
+   const viewport=await view.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()}));
+   await view.evaluate(p=>dbtUpdate(p),payload);
+   assert.equal(await view.locator(selector).evaluate(e=>e===document.activeElement),true);
+   assert.deepEqual(await view.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()})),viewport);
+  }
+  await view.evaluate(p=>dbtUpdate({...p,nodes:p.nodes.filter(n=>n.id!=='model'),edges:[]}),payload);
+  assert.equal(await view.locator('#resource-picker').evaluate(e=>e===document.activeElement),true);
+ }finally{await view.close()}
+});
+test('boundary expansion is available through Enter and Space',async()=>{
+ const view=await createLineagePage();
+ try{
+  const boundary=view.getByRole('button',{name:'+ 7 more · expand upstream dependencies',exact:true});
+  await boundary.focus();
+  for(const key of ['Enter','Space'])await view.keyboard.press(key);
+  assert.equal(await view.evaluate(()=>events.filter(e=>e.type==='expand'&&e.id==='upstream').length),2);
+  assert.equal(await view.evaluate(()=>events.filter(e=>e.type==='focus').length),0);
+ }finally{await view.close()}
+});
 test('mouse wheel zoom responds promptly in both directions and keeps the cursor anchored',async()=>{
  const original=await page.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()}));
  try{
@@ -464,4 +494,93 @@ test('documentation refresh preserves scroll while explicit resource navigation 
  await page.evaluate(html=>dbtShowDocumentation({id:'source',column:'',html}),html);
  assert.equal(await page.locator('#docs').evaluate(e=>e.scrollTop),0);
  await page.evaluate(()=>closeDocumentation());
+});
+
+test('opening documentation keeps the clicked card visible at a readable zoom in narrow tool windows',async()=>{
+ for(const width of [600,640])for(const direction of ['LR','TB']){
+  const view=await createLineagePage({width,height:650});
+  try{
+   await view.evaluate(p=>dbtUpdate(p),{...fixture,direction});
+   const before=await view.evaluate(()=>({point:cy.getElementById('model').renderedPosition(),zoom:cy.zoom()}));
+   const pane=await view.locator('#cy').boundingBox();
+   await view.mouse.click(pane.x+before.point.x,pane.y+before.point.y);
+   await view.locator('#docs').waitFor({state:'visible'});
+   const card=await view.locator('.card.selected').boundingBox(),graph=await view.locator('#graph-pane').boundingBox();
+   assert.ok(card.x>=graph.x&&card.x+card.width<=graph.x+graph.width,'The selected resource remains entirely visible beside its documentation');
+   assert.ok(card.y>=graph.y&&card.y+card.height<=graph.y+graph.height);
+   const zoom=await view.evaluate(()=>cy.zoom());
+   assert.ok(zoom>=.8&&zoom<=before.zoom,'Opening documentation retains a readable zoom');
+   if(direction==='LR')assert.equal(zoom,before.zoom,'Keep the zoom when the resource already fits');
+  }finally{await view.close()}
+ }
+});
+
+test('documentation links remain legible in light and dark host themes',async()=>{
+ const view=await createLineagePage();
+ try{
+  for(const theme of [{bg:'#202124',fg:'#dfe1e5',panel:'#2b2d30'},{bg:'#fafafa',fg:'#222222',panel:'#eeeeee'}]){
+   await view.evaluate(p=>dbtUpdate(p),{...fixture,theme});
+   await view.evaluate(()=>{select('model');dbtShowDocumentation({id:'model',column:'',html:'<a href="dbt-column:order_id">order_id</a>'})});
+   const contrast=await view.evaluate(()=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const context=canvas.getContext('2d');
+    function luminance(color){context.fillStyle=color;context.fillRect(0,0,1,1);const rgb=[...context.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722}
+    const a=luminance(getComputedStyle(document.querySelector('#docs a')).color),b=luminance(getComputedStyle(document.querySelector('#docs')).backgroundColor);
+    return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+   });
+   assert.ok(contrast>=4.5,`Documentation text contrast is ${contrast.toFixed(2)}:1 for ${theme.panel}`);
+  }
+ }finally{await view.close()}
+});
+
+test('clipped model titles expose different suffixes while keeping full accessible identities',async()=>{
+ const view=await createLineagePage();
+ try{
+  const prefix='customer_orders_daily_revenue_by_marketing_campaign_and_region_';
+  const nodes=['current','previous'].map(suffix=>({id:suffix,name:prefix+suffix,kind:'model',package:'analytics',schema:'mart'}));
+  await view.evaluate(p=>dbtUpdate(p),{...fixture,focus:'current',nodes,edges:[],boundary:[]});
+  for(const node of nodes){
+   const card=view.getByRole('button',{name:new RegExp(node.name)});
+   assert.match(await card.getAttribute('aria-label'),/mart · analytics/);
+   assert.equal(await card.locator('small').last().innerText(),'mart · analytics');
+   const tail=card.locator('.name-end');assert.ok((await tail.innerText()).endsWith(node.id));
+   const visible=await tail.evaluate((element,suffix)=>{
+    const range=document.createRange(),text=element.firstChild;range.setStart(text,text.length-suffix.length);range.setEnd(text,text.length);
+    const word=range.getBoundingClientRect(),title=element.closest('b').getBoundingClientRect();
+    return word.x>=title.x&&word.right<=title.right+1&&word.y>=title.y&&word.bottom<=title.bottom+1;
+   },node.id);
+   assert.ok(visible,`The distinguishing ${node.id} suffix is visible`);
+  }
+  assert.equal(await view.locator('.card[title]').count(),0,'Resource identity does not require a hover tooltip');
+ }finally{await view.close()}
+});
+
+test('search reports zero, one and multiple matches and clears its own feedback',async()=>{
+ const view=await createLineagePage();
+ try{
+  await view.locator('#search').fill('zzzz_no_match');
+  assert.equal(await view.locator('#search-status').innerText(),'No resources match. Clear search to restore the graph.');
+  assert.equal(await view.locator('#search-status').isVisible(),true);
+  await view.locator('#search').fill('orders');
+  assert.equal(await view.locator('#search-status').innerText(),'1 matching resource');
+  await view.locator('#search').fill('analytics');
+  assert.equal(await view.locator('#search-status').innerText(),'4 matching resources');
+  await view.getByRole('button',{name:'Clear search',exact:true}).click();
+  assert.equal(await view.locator('#search-status').innerText(),'');
+  assert.equal(await view.locator('.card:not(.dim):not(.boundary)').count(),3,'Clearing search restores the selected resource and its dependencies');
+ }finally{await view.close()}
+});
+
+test('lineage guidance stays discoverable after loading and selection, with keyboard disclosure',async()=>{
+ const view=await createLineagePage();
+ try{
+  const help=view.locator('#lineage-help'),summary=help.locator('summary');
+  assert.equal(await summary.innerText(),'Lineage help');assert.equal(await help.evaluate(e=>e.open),false);
+  await view.evaluate(()=>select('model'));
+  await summary.focus();await view.keyboard.press('Enter');
+  assert.equal(await help.evaluate(e=>e.open),true);
+  assert.match(await help.innerText(),/Shift\+Enter/);
+  assert.match(await help.innerText(),/tag:finance\+/);
+  assert.match(await help.innerText(),/five more dependency levels/);
+  await view.keyboard.press('Enter');assert.equal(await help.evaluate(e=>e.open),false);
+ }finally{await view.close()}
 });
