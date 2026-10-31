@@ -159,8 +159,8 @@ Formatting and fixes support Undo.
 
 ## SQL clipboard conversion
 
-**Copy for Target DB** (Edit menu, editor context menu under **dbt**,
-**Ctrl+Shift+C** / macOS **Cmd+Shift+C**) copies the selection or whole document without changing it. Static
+In a SQL editor, **Copy for Target DB** (Edit menu or editor context menu under
+**dbt**) copies the selection or whole document without changing it. Static
 `ref`, `source` and `this` references become physical relation names, including
 aliases and quoting; other Jinja is wrapped in marked SQL comments:
 
@@ -170,11 +170,12 @@ select * from {{ ref('orders') }}
 select * from "analytics"."reporting"."orders"
 ```
 
-**Paste as dbt Refs** (same menus, **Ctrl+Shift+V** / macOS **Cmd+Shift+V**) replaces the
+**Paste as dbt Refs** (same menus) replaces the
 selection or inserts at the caret. Two- or three-part table names become `ref` or
 `source` calls only when they uniquely match physical metadata; package names and
 explicit versions are kept and other text is unchanged. Marked Jinja comments from
 the copy action are restored. Pasting supports Undo.
+Both actions have no default shortcut; assign one in **Settings → Keymap** if needed.
 
 Both actions need [Generate Docs](workspace.md#commands) output for the current
 project and target, and warn when the metadata may belong to another project or

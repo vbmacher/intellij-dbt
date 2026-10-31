@@ -46,6 +46,9 @@ divider to change its width; with the divider focused, use Left and Right arrow 
 Click a column name to inspect its upstream dependencies and downstream consumers
 in the same pane. **Resource details** returns to the resource. **Airflow context**
 appears only when the resource has detected Airflow tasks.
+Descriptions render Markdown headings, lists, code and HTTP/HTTPS links. Links
+open in your browser. Open details update when the project changes; a closed pane
+stays closed.
 
 ![Orders documentation beside the Lineage graph, with a divider for resizing.](screenshots/lineage-documentation.png)
 
@@ -64,9 +67,9 @@ panel beside the graph lists the groups: click one to collapse or expand it and 
 the view to it.
 
 Click or drag in the **Minimap** to navigate; arrow keys pan when it has focus.
-Clear the **Minimap** checkbox to hide it. **PNG**, **SVG** and **Copy image**
-capture the graph as filtered and collapsed; **Include legend** adds a legend. If a
-graph is too large for PNG, collapse groups, narrow the filter or use SVG.
+Clear the **Minimap** checkbox to hide it. Open **Export** for **PNG**, **SVG**,
+**Copy image** and **Include legend**. Exports capture the graph as filtered and
+collapsed. If a graph is too large for PNG, collapse groups, narrow the filter or use SVG.
 
 ### Build and freshness badges
 
@@ -169,12 +172,15 @@ Create a **dbt** configuration in **Run → Edit Configurations…**, or start o
 | **Exclude** | Selection terms to remove; also supports **Ctrl+Space**. |
 | **Named selector (overrides Selection)** | A definition in `selectors.yml`. |
 | **Full Refresh (Run / Build)** | Rebuild selected incremental resources from all source data. |
-| **Inline SQL (Preview only)** | A SELECT query previewed in the selected model's context. Blank previews the complete model. |
+| **Inline SQL** (Preview only) | A SELECT query previewed in the selected model's context. Blank previews the complete model. |
 | **Executable override** | Executable or wrapper for this configuration. Blank uses the project's executable and prefix arguments. |
 | **Prefix arguments** | Fixed arguments for the overridden executable, before the dbt command. |
 | **Profiles directory override** | Directory containing `profiles.yml`. Blank uses the project setting. |
 
-A configuration keeps its scope when you switch editors. Overrides do not change
+A configuration keeps its scope when you switch editors. **Effective scope** shows
+which selection takes precedence; overridden fields are disabled. Command-specific
+fields appear only for the applicable commands. Select **Show execution overrides** to
+change the executable, prefix arguments or profiles directory. Overrides do not change
 project settings; other values come from the [execution settings](configuration.md#execution-settings)
 current at launch. Installed-package models run through their consuming project.
 
@@ -244,8 +250,10 @@ identity stops the run with an explanation; the selection is never widened.
 
 ## Preview query results
 
-**Preview** needs a dbt version that supports `show`. In a Run configuration, select
-one model in **Scope** and leave **Selection** and **Exclude** empty. In a local model
+**Preview** needs a dbt version that supports `show`. In a SQL model, click the Run gutter
+and choose **Preview dbt model**, or choose **dbt → Preview dbt model** in its editor
+context menu, to preview the complete model immediately. In a Run configuration,
+select one model in **Scope**. In a local model
 editor, right-click and open **dbt**:
 
 - **Preview selected dbt SQL** runs the selected SELECT query.
@@ -257,8 +265,8 @@ the complete installed-package model instead.
 If **Preview dbt CTE** cannot analyze the model, its dialog explains the reason
 and confirms that no preview query ran. Parsing failures include the line and
 column where available; the SQL may be incomplete or use syntax the plugin does
-not support. To preview the complete model, use **Preview** in a dbt Run
-configuration.
+not support. Choose **Preview model** in the dialog to preview the complete model,
+or **Cancel** to leave without running a query.
 
 The **Rows** view shows the target, row count, limit and elapsed time. **May be
 truncated** means the row limit was reached. Sort by column headers, resize or
@@ -266,6 +274,7 @@ reorder columns, and use **Filter** to search the returned rows. **Copy selectio
 copies selected cells as tab-separated text. Choose CSV or TSV and click **Export
 CSV** / **Export TSV** to save the filtered rows; SQL null exports as unquoted
 `NULL` and the string NULL as `"NULL"`.
+Replacing an existing export requires confirmation; **Cancel** keeps the file.
 
 Changing **Preview row limit** alone runs nothing; **Run with limit** runs the query
 again with that limit. **Open SQL** or **Open preview SQL** opens the executed SQL in
@@ -277,8 +286,10 @@ position in your source.
 In a model editor, right-click and open **dbt**. **Open Compiled dbt SQL** opens the
 compiled SQL read-only, and
 **Compare Authored and Compiled dbt SQL** opens a diff of **Authored SQL** and
-**Compiled SQL**. Run **Compile** or
-**Generate Docs** for the matching project and target first.
+**Compiled SQL**. If matching compiled SQL is unavailable, choose **Compile and
+open** or **Compile and compare**. The plugin compiles the selected model with its
+project execution settings and opens the result after successful compilation.
+**Cancel** runs nothing; compilation failures remain in **Run**.
 
 ## Inspect CTE queries
 

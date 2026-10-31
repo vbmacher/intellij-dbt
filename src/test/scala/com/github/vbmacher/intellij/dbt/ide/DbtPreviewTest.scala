@@ -33,6 +33,32 @@ final class DbtPreviewTest extends DbtTestCase {
     assertEquals(0, table.getRowCount)
   }
 
+  def testExportRequiresConfirmationBeforeReplacingAnExistingFile(): Unit = {
+    val grid = new DbtResultGrid(getProject)
+    grid.showResult(DbtQueryResult.parse("""{"show":[{"id":7}]}""", "dev", 10, 1, "select 7").toOption.get)
+    val directory = tempDirectory("preview export")
+    val destination = directory.resolve("report.csv")
+    java.nio.file.Files.writeString(destination, "existing report")
+    var prompts = 0
+    var answer = com.intellij.openapi.ui.Messages.NO
+    val previous = TestDialogManager.setTestDialog(new TestDialog {
+      override def show(text: String): Int = { prompts += 1; answer }
+    })
+    try {
+      grid.exportTo(destination)
+      assertEquals(1, prompts)
+      assertEquals("existing report", java.nio.file.Files.readString(destination))
+      answer = com.intellij.openapi.ui.Messages.YES
+      grid.exportTo(destination)
+      await("Confirmed export replaces the report") { java.nio.file.Files.readString(destination).startsWith("\"id\"") }
+      assertEquals(2, prompts)
+      val fresh = directory.resolve("new.csv")
+      grid.exportTo(fresh)
+      await("A new destination needs no replacement prompt") { java.nio.file.Files.exists(fresh) }
+      assertEquals(2, prompts)
+    } finally TestDialogManager.setTestDialog(previous)
+  }
+
   def testLargeWideRowsStayBoundedAndExportWithoutTouchingTheClearedGrid(): Unit = {
     val rows = new JsonArray
     val wide = "日本語\t\"quoted\"\n" + "x" * 2048
@@ -131,7 +157,7 @@ select * from container<caret>""")
     val previous = TestDialogManager.setTestDialog(new TestDialog {
       override def show(text: String): Int = {
         message = Some(text)
-        0
+        com.intellij.openapi.ui.Messages.NO
       }
     })
     try {
@@ -143,7 +169,7 @@ select * from container<caret>""")
       assertTrue(text, text.contains("line 2, column"))
       assertTrue(text, text.contains("syntax the plugin does not support"))
       assertTrue(text, text.contains("No preview query was run."))
-      assertTrue(text, text.contains("use Preview in a dbt Run configuration"))
+      assertTrue(text, text.contains("Choose Preview model"))
       assertFalse(getProject.getService(classOf[DbtRunner]).isRunning)
     } finally TestDialogManager.setTestDialog(previous)
   }

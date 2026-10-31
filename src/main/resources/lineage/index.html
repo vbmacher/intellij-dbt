@@ -12,6 +12,7 @@
 .card{width:250px;height:104px;padding:8px 12px;border-radius:4px;overflow:visible}.card.has-execution{height:132px}.card b{white-space:normal;overflow-wrap:anywhere;font-size:13px;line-height:17px;height:34px;margin:4px 0}.card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:15px}.card.boundary{width:250px;height:44px}.card.boundary b{height:auto}.card.focus{outline:2px solid var(--accent);outline-offset:2px}.card.selected{border:2px solid var(--fg);border-left-width:4px;box-shadow:none}.card:focus-visible{outline:3px dashed var(--accent);outline-offset:5px}.card-state{position:absolute;right:8px;top:7px;font-size:10px;color:var(--fg);background:var(--panel);padding-left:6px}.card.selected b:before{content:'✓ '}.card.filtered-boundary b:before{content:'↔ '}.execution-badge{display:block;width:auto;max-width:222px;height:22px;margin:4px 0 0;line-height:16px}.column-origin,.navigation{color:var(--accent);background:none;border:0;padding:0;text-decoration:underline;text-align:left;cursor:pointer}#main{min-width:0}#graph-pane{min-width:120px}#resource-picker{max-width:230px;min-width:90px}#selection-context{font-size:12px;color:var(--muted);padding:4px 10px;overflow-wrap:anywhere;border-bottom:1px solid var(--line)}
 @media(max-width:700px){#toolbar{gap:3px;padding:4px}#toolbar-actions{margin-left:auto}#minimap{width:120px;height:74px}#groups{flex-basis:170px}}
 #docs{flex:0 1 var(--docs-width,360px);max-width:60%;min-width:0;overflow:auto;padding:12px 16px;background:var(--panel);overflow-wrap:anywhere}#docs[hidden],#docs-divider[hidden]{display:none}#docs header{display:flex;align-items:center;gap:8px;margin-bottom:12px}#docs header h2{font-size:14px;margin:0;flex:1}#docs a{color:var(--accent)}#docs .definition{margin:8px 0 12px}#docs .content{margin:12px 0}#docs td{padding:6px}#docs-divider{flex:0 0 6px;background:var(--line);cursor:col-resize;touch-action:none}#docs-divider:hover,#docs-divider:focus{background:var(--accent);outline:none}
+#export-menu{position:relative}#export-menu summary{cursor:pointer;border:1px solid var(--line);border-radius:4px;padding:4px 9px}#export-menu summary:focus-visible{outline:2px solid var(--accent)}#export-options{position:absolute;top:100%;right:0;z-index:5;min-width:170px;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:4px;box-shadow:0 3px 12px #0005;flex-direction:column;align-items:stretch}#export-options button{text-align:left}#export-options label{white-space:nowrap}
 </style></head><body><div id="toolbar" role="toolbar" aria-label="Lineage actions">
 <input id="search" aria-label="Search resources" placeholder="Search resources">
 <button id="clear-search" class="tool-button" aria-label="Clear search" title="Clear search"></button>
@@ -20,14 +21,15 @@
 <button id="fit" aria-label="Fit graph" title="Show the entire graph">Fit graph</button>
 <button id="reset-zoom" aria-label="Reset zoom to 100%" title="Show selected or focused resource at 100%">100%</button>
 <button id="pin-focus" class="tool-button" aria-pressed="false" aria-label="Pin focus" title="Pin focus"></button>
-<button id="copy-image" class="tool-button" aria-label="Copy image" title="Copy graph image"></button>
+<details id="export-menu"><summary>Export</summary><div id="export-options">
+<button id="copy-image" aria-label="Copy image" title="Copy graph image">Copy image</button>
 <button id="export-png" aria-label="Export PNG" title="Export PNG">PNG</button>
 <button id="export-svg" aria-label="Export SVG" title="Export SVG">SVG</button>
+<label><input id="export-legend" type="checkbox" checked>Include legend</label></div></details>
 <div id="toolbar-actions"><button id="show-docs" class="tool-button" aria-label="Open Documentation" title="Show documentation on the right for the selected resource"></button><button id="regenerate" class="tool-button" aria-label="Regenerate Docs" title="Configure Generate Docs for this execution project"></button></div>
 </div><div id="graph-controls">
 <form id="filter-form"><label for="selector">Selection</label><input id="selector" placeholder="tag:finance+"><label for="exclude">Exclude</label><input id="exclude" placeholder="tag:deprecated"><button id="apply-filter" type="submit" aria-label="Apply filter" title="Apply filter">Apply</button><button id="clear-filter" type="button" aria-label="Clear filter" title="Clear filter">Clear</button><button id="use-config" type="button" aria-label="Use in Run Configuration" title="Create a dbt run configuration from Selection and Exclude">Run configuration…</button></form>
 <div id="view-options"><label for="group-by">Group by</label><select id="group-by" title="Tag groups use the first tag alphabetically; resources appear once"><option value="">None</option><option value="schema">Schema</option><option value="folder">Folder</option><option value="tag">Tag (first alphabetically)</option></select><label><input id="show-minimap" type="checkbox" checked>Minimap</label></div>
-<div id="export-options"><label><input id="export-legend" type="checkbox" checked>Include legend</label></div>
 <label for="resource-picker">Inspect</label><select id="resource-picker" aria-label="Inspect resource"><option value="">Choose resource</option></select>
 </div><div id="lineage-status" role="status"><span id="status">Loading dbt resources…</span> <span id="filter-status"></span> <span id="export-status"></span></div><div id="selection-context" role="status">Focus follows the editor. Select a resource to inspect it; double-click to focus its graph.</div><div id="main"><aside id="groups" aria-label="Lineage groups"></aside><div id="graph-pane"><div id="cy"></div><div id="cards"></div><div id="empty"></div><svg id="minimap" viewBox="0 0 180 110" tabindex="0" role="application" aria-label="Lineage minimap. Click to navigate; arrow keys pan."></svg></div><div id="docs-divider" role="separator" aria-label="Resize documentation" aria-orientation="vertical" aria-controls="docs" tabindex="0" hidden></div><aside id="docs" aria-label="Resource documentation" hidden><header><h2>Documentation</h2><button id="resource-docs" class="navigation" hidden>Resource details</button><button id="close-docs" class="tool-button" aria-label="Close documentation" title="Close documentation">×</button></header><div id="docs-content" aria-live="polite"></div></aside></div>
 <div id="button-tooltip" role="tooltip"></div>
@@ -55,18 +57,19 @@ function resizeGraph(){if(cy){cy.resize();positions()}}
 function openDocumentation(id,column=''){
  documentationId=id;documentationColumn=column;
  $('docs').hidden=false;$('docs-divider').hidden=false;$('resource-docs').hidden=!column;
- $('docs-content').textContent='Loading documentation…';resizeGraph();
+ $('docs-content').textContent='Loading documentation…';$('docs').scrollTop=0;resizeGraph();
  send(column?'column':'select',id,column);
 }
 function closeDocumentation(){documentationId='';documentationColumn='';$('docs').hidden=true;$('docs-divider').hidden=true;$('docs-content').replaceChildren();resizeGraph()}
 window.dbtShowDocumentation=p=>{
  if(p.id!==documentationId||p.column!==documentationColumn)return;
- $('docs-content').innerHTML=p.html;$('docs').scrollTop=0;
+ const scroll=$('docs').scrollTop;$('docs-content').innerHTML=p.html;$('docs').scrollTop=scroll;
 };
 $('docs-content').onclick=e=>{
  const link=e.target.closest('a');if(!link)return;e.preventDefault();
  if(link.getAttribute('href')?.startsWith('dbt-column:'))openDocumentation(documentationId,decodeURIComponent(link.getAttribute('href').slice(11).replace(/\+/g,' ')));
  else if(link.getAttribute('href')?.startsWith('dbt-test:'))send('test-source',documentationId,decodeURIComponent(link.getAttribute('href').slice(9).replace(/\+/g,' ')));
+ else if(/^https?:\/\//i.test(link.getAttribute('href')||''))send('external-link','',link.getAttribute('href'));
 };
 $('resource-docs').onclick=()=>openDocumentation(documentationId);
 $('close-docs').onclick=closeDocumentation;
@@ -167,7 +170,7 @@ window.dbtUpdate=function(p){
  if(!d.boundary&&!d.collapsed){
  card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',d.name+' · '+d.kind+(d.focus?' · graph focus':'')+(d.filteredBoundary?' · filtered boundary':''));
  if(d.focus)card.append(element('span','Focus','card-state'));
- card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(n.id());if(e.shiftKey)send('focus',n.id())}};
+ card.onkeydown=e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();select(n.id());if(e.shiftKey)send('focus',n.id())}};
  card.onfocus=()=>{if(!cy.extent().w)return;cy.zoom(Math.max(.8,cy.zoom()));cy.center(n);positions()};
  }
  $('cards').append(card);cards.set(n.id(),card);
@@ -178,7 +181,9 @@ window.dbtUpdate=function(p){
  if(same&&pan&&!topologyChanged){cy.zoom(zoom);cy.pan(pan)}else readableView(cy.elements(),same?selected||p.focus:p.focus);
  if(selected&&!cy.getElementById(selected).length)selected='';
  if(documentationId&&!p.nodes.some(n=>n.id===documentationId))closeDocumentation();
+ else if(documentationId&&!p.relayout)send(documentationColumn?'column':'select',documentationId,documentationColumn);
  if(!same){selected=cy.getElementById(p.focus).length?p.focus:'';if(selected)select(selected,false)}else if(selected)dim(selected);selectionContext();
+ if($('search').value)searchResources(false);
  if(filter&&!p.relayout)send('filter',$('selector').value,$('exclude').value);
  $('pin-focus').setAttribute('aria-pressed',String(!!p.pinned));$('pin-focus').setAttribute('aria-label',p.pinned?'Unpin focus':'Pin focus');$('pin-focus').dataset.tooltip=p.pinned?'Unpin focus':'Pin focus';$('pin-focus').disabled=!p.focus;
  positions();
@@ -198,9 +203,12 @@ $('pin-focus').onclick=()=>{const pinned=$('pin-focus').getAttribute('aria-press
 $('show-minimap').onchange=e=>{$('minimap').style.display=e.target.checked?'block':'none';drawMinimap()};
 $('minimap').onpointerdown=e=>{$('minimap').setPointerCapture(e.pointerId);minimapNavigate(e)};$('minimap').onpointermove=e=>{if(e.buttons===1)minimapNavigate(e)};
 $('minimap').onkeydown=e=>{const shifts={ArrowLeft:[60,0],ArrowRight:[-60,0],ArrowUp:[0,60],ArrowDown:[0,-60]};if(shifts[e.key]){e.preventDefault();const p=cy.pan(),d=shifts[e.key];cy.pan({x:p.x+d[0],y:p.y+d[1]})}};
-$('export-png').onclick=()=>exportGraph('png');$('export-svg').onclick=()=>exportGraph('svg');$('copy-image').onclick=()=>exportGraph('clipboard');
+for(const [id,format]of [['export-png','png'],['export-svg','svg'],['copy-image','clipboard']])$(id).onclick=()=>{$('export-menu').open=false;exportGraph(format)};
+document.addEventListener('pointerdown',e=>{if(!$('export-menu').contains(e.target))$('export-menu').open=false});
 $('fit').onclick=()=>cy&&cy.fit(undefined,35);$('reset-zoom').onclick=()=>{if(!cy)return;cy.zoom(1);const anchor=cy.getElementById(selected||current?.focus),first=cy.nodes().filter(n=>!n.data('group')).first();if(anchor.length||first.length)cy.center(anchor.length?anchor:first);positions()};$('zoom-in').onclick=()=>cy&&cy.zoom(cy.zoom()*1.2);$('zoom-out').onclick=()=>cy&&cy.zoom(cy.zoom()/1.2);
-$('clear-search').onclick=()=>{$('search').value='';dim(selected)};$('search').oninput=()=>{if(!cy)return;const q=$('search').value.toLowerCase();if(!q){dim(selected);return}const matches=cy.nodes().filter(n=>!n.data('boundary')&&(n.data('name')+' '+n.data('package')).toLowerCase().includes(q));cy.elements().addClass('dim');matches.removeClass('dim');for(const n of cy.nodes())cards.get(n.id())?.classList.toggle('dim',!matches.contains(n));if(matches.length)readableView(matches)};
+function searchResources(move=true){if(!cy)return;const q=$('search').value.toLowerCase();if(!q){dim(selected);return}const matches=cy.nodes().filter(n=>!n.data('boundary')&&(n.data('name')+' '+n.data('package')).toLowerCase().includes(q));cy.elements().addClass('dim');matches.removeClass('dim');for(const n of cy.nodes())cards.get(n.id())?.classList.toggle('dim',!matches.contains(n));if(move&&matches.length)readableView(matches)}
+$('clear-search').onclick=()=>{$('search').value='';dim(selected)};$('search').oninput=()=>searchResources();
+$('export-menu').onkeydown=e=>{if(e.key==='Escape'){$('export-menu').open=false;$('export-menu').querySelector('summary').focus()}};
 $('regenerate').onclick=()=>send('regenerate');$('show-docs').onclick=()=>{if(selected||current?.focus)openDocumentation(selected||current.focus)};
 window.dbtRunnerState=(running,message)=>{$('regenerate').disabled=running||!current?.canGenerateDocs;$('status').textContent=message};window.addEventListener('resize',()=>{if(cy){cy.resize();if(selected)cy.center(cy.getElementById(selected));positions()}});send('ready');
 </script></body></html>

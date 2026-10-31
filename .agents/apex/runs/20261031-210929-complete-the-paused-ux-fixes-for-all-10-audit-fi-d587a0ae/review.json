@@ -1,0 +1,36 @@
+{
+  "reviewer": "ux_final_review",
+  "lens": "Correctness, lifecycle, state normalization and acceptance",
+  "scope": "Current UX diff vs 2e1b5dc",
+  "findings": [
+    {
+      "id": "R1",
+      "classification": "CONFIRMED",
+      "issue": "exactTests survived normalization to whole-project/Preview commands",
+      "resolution": "Reset exactTests with normalized empty selection; regression added",
+      "status": "resolved"
+    },
+    {
+      "id": "R2",
+      "classification": "CONFIRMED",
+      "issue": "Automatic documentation refresh reset scroll",
+      "resolution": "Preserve refresh scroll; reset only explicit navigation; browser regression passed",
+      "status": "resolved"
+    },
+    {
+      "id": "R3",
+      "classification": "CONFIRMED",
+      "issue": "Completion callback survived temporary configuration edits",
+      "resolution": "Clear callback on apply, use active console snapshot; native regression added",
+      "status": "resolved"
+    }
+  ],
+  "rereview": "All three confirmed resolved; no remaining concrete defects in targeted source rereview",
+  "limits": "Read-only source review; coordinator owns test and rendered evidence",
+  "api_followup": {
+    "issue": "API verifier rejected an internal converter and deprecated disclosure panels",
+    "resolution": "Public MarkdownParser cancellation-aware CharSequence overload and HtmlGenerator TagRenderer overload; standard Swing checkboxes control disclosure panels",
+    "review": "Targeted independent source rereview found no concrete functional issue",
+    "status": "resolved: final verifier compatible, no internal or deprecated usage"
+  }
+}

@@ -368,7 +368,7 @@ final class DbtModelRunLineMarker extends RunLineMarkerContributor {
       debug.getTemplatePresentation.setText("Debug dbt CTEs")
       debug.getTemplatePresentation.setDescription("Inspect CTE results with stepping and CTE breakpoints")
       debug.getTemplatePresentation.setIcon(AllIcons.Actions.StartDebugger)
-      DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model / Debug dbt CTEs", debug)
+      DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run / Preview dbt model / Debug dbt CTEs", new DbtPreviewModelAction, debug)
     } else DbtTestRunLineMarker.info(AllIcons.RunConfigurations.TestState.Run, "Run dbt model")
   }
 }

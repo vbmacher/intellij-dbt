@@ -99,7 +99,7 @@ private[ide] object DbtClipboard {
 }
 
 abstract class DbtClipboardAction(copying: Boolean) extends DbtEditorAction {
-  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabled(DbtEditorAction.editorContext(event).exists {
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event, editor = true) && DbtEditorAction.editorContext(event).exists {
     case (project, file, _) => Option(file.getVirtualFile).exists(f => DbtWorkspace.rootForFile(project, f).exists(r => !r.excluded(f)))
   })
 

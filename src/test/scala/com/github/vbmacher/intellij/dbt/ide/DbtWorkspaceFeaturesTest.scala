@@ -96,12 +96,34 @@ sources:
     assertEquals(Vector("analytics.raw.events"), doc.getAsJsonArray("upstream").asScala.map(_.getAsString).toVector)
     assertEquals(Vector("analytics.report"), doc.getAsJsonArray("downstream").asScala.map(_.getAsString).toVector)
     val html = DbtDocumentation.render(workspace, s)
-    assertTrue(html.contains("Orders &lt;strong&gt; &amp; details"))
-    assertFalse(html.contains("Orders <strong>"))
+    assertTrue(org.jsoup.Jsoup.parse(html).text().contains("Orders & details"))
     assertTrue(html.contains("Upstream (1)"))
     assertFalse("Hide Airflow context when no tasks are available", html.contains("Airflow context"))
     assertFalse(html.contains("<li>analytics.materialized</li>"))
     assertFalse(html.contains("<li>analytics.raw</li>"))
+  }
+
+  def testMarkdownDescriptionsRenderFormattingAndOnlySafeLinks(): Unit = {
+    val html = DbtDocumentation.markdown("""# Orders
+
+- **Important** `id`
+- [Guide](https://example.com/docs)
+
+```sql
+select '<value>'
+```
+
+<script>alert('bad')</script><img src=x onerror=alert(1)>
+[Bad](javascript:alert) [Local](file:///etc/passwd)
+""")
+    val doc = org.jsoup.Jsoup.parse(html)
+    assertEquals("Orders", doc.select("h1").text())
+    assertEquals(2, doc.select("li").size())
+    assertEquals("Important", doc.select("strong").text())
+    assertTrue(doc.select("pre code").text().contains("<value>"))
+    assertEquals("https://example.com/docs", doc.select("a[href]").attr("href"))
+    assertEquals(1, doc.select("a[href]").size())
+    assertTrue(doc.select("script,img,[onerror]").isEmpty)
   }
 
   def testNativeDocumentationProviderUsesExactReferenceRangesAndRefreshesAfterEdit(): Unit = {

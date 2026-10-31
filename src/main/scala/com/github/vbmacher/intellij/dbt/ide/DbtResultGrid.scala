@@ -86,10 +86,16 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
   private val `export` = DbtUi.button("Export CSV")(result.foreach { _ =>
     val chooser = new JFileChooser
     chooser.setSelectedFile(new java.io.File(if (format.getSelectedItem == "TSV") "preview.tsv" else "preview.csv"))
-    if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-      val destination = chooser.getSelectedFile.toPath
+    if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) exportTo(chooser.getSelectedFile.toPath)
+  })
+
+  private[ide] def exportTo(destination: java.nio.file.Path): Unit = {
+    val replace = !Files.exists(destination) || com.intellij.openapi.ui.Messages.showYesNoDialog(project,
+      s"Replace ${destination.getFileName}? Its current contents will be lost.", "Replace preview export",
+      "Replace", "Cancel", com.intellij.openapi.ui.Messages.getWarningIcon) == com.intellij.openapi.ui.Messages.YES
+    if (replace) {
       val snapshot = exportSnapshot(if (format.getSelectedItem == "TSV") '\t' else ',')
-      new Task.Backgroundable(null, "Export dbt preview", true) {
+      new Task.Backgroundable(project, "Export dbt preview", true) {
         override def run(indicator: ProgressIndicator): Unit = {
           indicator.checkCanceled()
           val text = snapshot()
@@ -98,10 +104,10 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
         }
 
         override def onThrowable(error: Throwable): Unit =
-          DbtNotifications.show(null, "Cannot export dbt preview", Option(error.getMessage).getOrElse(error.toString))
+          DbtNotifications.show(project, "Cannot export dbt preview", Option(error.getMessage).getOrElse(error.toString))
       }.queue()
     }
-  })
+  }
   format.addActionListener(_ => export.setText("Export " + format.getSelectedItem))
   private val sql = DbtUi.button("Open SQL")(result.foreach(r => DbtSqlEditors.open(project, "dbt preview", r.sql)))
   Vector[Component](copy, format, export, sql).foreach(bar.add)

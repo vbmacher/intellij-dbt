@@ -292,6 +292,87 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     assertTrue("Unknown CLI identities must never widen execution", config.prepare().isLeft)
   }
 
+  def testRunEditorExplainsPrecedenceAndDropsInactiveCommandFields(): Unit = {
+    project()
+    val model = add("models/orders.sql", "select 1 as id")
+    val config = runConfiguration()
+    config.action = "Preview"
+    config.scope = model.getVirtualFile.getPath
+    config.inlineSql = "select 7"
+    config.completed = Some(_ => ())
+    val editor = new DbtRunEditor(getProject)
+    try {
+      val ui = editor.getComponent
+      editor.resetFrom(config)
+      def field[A](label: String): A = components(ui).collectFirst {
+        case l: javax.swing.JLabel if l.getText == label => l.getLabelFor.asInstanceOf[A]
+      }.get
+      val command = field[javax.swing.JComboBox[String]]("Command:")
+      val scope = field[com.intellij.openapi.ui.TextFieldWithBrowseButton]("Scope:")
+      val selection = field[javax.swing.JTextField]("Selection:")
+      val named = field[javax.swing.JTextField]("Named selector (overrides Selection):")
+      assertFalse(selection.isEnabled)
+      command.setSelectedItem("Run")
+      assertTrue(selection.isEnabled)
+      selection.setText("orders+")
+      assertFalse(scope.isEnabled)
+      named.setText("nightly")
+      assertFalse(selection.isEnabled)
+      assertTrue(components(ui).collect { case l: javax.swing.JLabel => l.getText }.contains("Effective scope: Named selector: nightly"))
+      editor.applyTo(config)
+      assertEquals("", config.inlineSql)
+      assertTrue(config.completed.isEmpty)
+      assertEquals(Vector.empty, config.selectors)
+      assertEquals("nightly", config.namedSelector)
+      command.setSelectedItem("Source Freshness")
+      editor.applyTo(config)
+      assertEquals("", config.scope)
+      assertEquals("", config.namedSelector)
+      assertEquals(DbtCommandScope.All, config.prepare().toOption.get._1.request.scope)
+    } finally Disposer.dispose(editor)
+  }
+
+  def testSwitchingAnExactTestConfigurationToAWholeProjectCommandDropsTestIdentity(): Unit = {
+    project()
+    add("models/orders.sql", "select 1")
+    val config = runConfiguration()
+    config.action = "Test"
+    config.exactTests = true
+    config.selectors = Vector("fqn:analytics.check_orders")
+    val editor = new DbtRunEditor(getProject)
+    try {
+      val ui = editor.getComponent
+      editor.resetFrom(config)
+      val command = components(ui).collectFirst { case box: javax.swing.JComboBox[_] => box.asInstanceOf[javax.swing.JComboBox[String]] }.get
+      command.setSelectedItem("Source Freshness")
+      editor.applyTo(config)
+      assertFalse(config.exactTests)
+      assertTrue(config.selectors.isEmpty)
+      assertEquals(DbtCommandScope.All, config.prepare().toOption.get._1.request.scope)
+    } finally Disposer.dispose(editor)
+  }
+
+  def testSuccessfulCompletionCallbackDoesNotRunAfterFailure(): Unit = {
+    val (config, directory) = setup()
+    config.action = "Compile"
+    var completed = Vector.empty[DbtCommand]
+    config.completed = Some(command => completed :+= command)
+    Files.writeString(directory.resolve("release"), "")
+    val successful = start(config)
+    config.completed = None
+    await("Successful compilation invokes its completion action") { successful.process.isProcessTerminated && completed.nonEmpty }
+    assertEquals(Vector("Compile"), completed.map(_.action))
+    val failed = runConfiguration("failed compilation")
+    failed.action = "Compile"
+    failed.executable = "/usr/bin/python3"
+    failed.executableArguments = "-c 'import sys; sys.exit(1)'"
+    failed.completed = Some(command => completed :+= command)
+    val failure = start(failed)
+    await("Failed compilation completes without opening a result") { failure.process.isProcessTerminated }
+    assertEquals(1, failure.process.getExitCode.intValue())
+    assertEquals(1, completed.size)
+  }
+
   def testPreviewRejectsFoldersAndFreshnessRemainsProjectWide(): Unit = {
     project();
     val model = add("models/orders.sql", "select 1")

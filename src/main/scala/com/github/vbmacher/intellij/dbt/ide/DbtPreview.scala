@@ -40,13 +40,40 @@ final class DbtPreviewSqlAction extends AnAction("Preview selected dbt SQL") {
   }
 }
 
+final class DbtPreviewModelAction extends DbtEditorAction {
+  getTemplatePresentation.setText("Preview dbt model")
+
+  override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(
+    DbtEditorAction.sql(event) && DbtEditorAction.fileContext(event).exists { case (project, file) =>
+      DbtWorkspace.get(project).model(file).exists(_.isEnabled)
+    })
+
+  override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.fileContext(event).foreach {
+    case (project, file) => DbtPreviewModelAction.launch(project, file)
+  }
+}
+
+private[ide] object DbtPreviewModelAction {
+  def launch(project: Project, file: PsiFile): Unit = {
+    DbtUi.saveAndCommit(project)
+    DbtUi.readLater(project) {
+      val w = DbtWorkspace.get(project)
+      DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getPath).toRight("Choose an available dbt model.")
+        .flatMap(DbtCommand.create(w, _, "Preview", fullRefresh = false))
+    } {
+      case Left(error) => Messages.showInfoMessage(project, error, "Preview dbt model")
+      case Right(command) => DbtRunConfiguration.launch(project, command)
+    }
+  }
+}
+
 final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
   override def getActionUpdateThread: ActionUpdateThread = ActionUpdateThread.BGT
 
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event, editor = true))
 
   override def actionPerformed(event: AnActionEvent): Unit =
-    DbtCteInspection.launchPreview[(DbtCteContext, DbtCommand)](event, "Preview dbt CTE") { (file, editor) =>
+    DbtCteInspection.launchPreview[(DbtCteContext, DbtCommand)](event, "Preview dbt CTE", offerModelPreview = true) { (file, editor) =>
       val offset = editor.getCaretModel.getOffset
       (w, _) =>
         for {
@@ -54,7 +81,7 @@ final class DbtPreviewCteAction extends AnAction("Preview dbt CTE") {
           snapshot <- DbtCteInspection.context(w, resource).toRight("The execution project is unavailable.")
           analysis <- DbtSqlAnalysis.result(w, file).left.map(reason =>
             "Cannot preview this CTE.\n\n" + reason +
-              "\n\nNo preview query was run.\nTo preview the complete model, use Preview in a dbt Run configuration.")
+              "\n\nNo preview query was run.\nChoose Preview model to preview the complete model.")
           cte <- DbtCteInspection.at(w, file, analysis, offset)
             .toRight("Place the caret at a recognized CTE definition or reference.")
           query <- DbtCteInspection.plan(snapshot.source, analysis, cte)
@@ -74,7 +101,7 @@ private[ide] object DbtCteInspection {
    * Editor preview flow: `input` reads the editor before documents are saved and committed, then prepares off the EDT
    * against the model context captured before preparation. `verify` sees that context and the current one on the EDT.
    */
-  def launchPreview[T](event: AnActionEvent, title: String)(
+  def launchPreview[T](event: AnActionEvent, title: String, offerModelPreview: Boolean = false)(
     input: (PsiFile, Editor) => (DbtWorkspace, Option[DbtCteContext]) => Either[String, T])(
     verify: (T, Option[DbtCteContext], () => Option[DbtCteContext]) => Either[String, DbtCommand]): Unit = WriteIntentReadAction.run(() =>
     DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
@@ -89,6 +116,9 @@ private[ide] object DbtCteInspection {
       val before = current()
       DbtUi.readLater(project)(prepare(DbtWorkspace.get(project), before)) { result =>
         result.flatMap(verify(_, before, () => current())) match {
+          case Left(error) if offerModelPreview =>
+            if (Messages.showYesNoDialog(project, error, title, "Preview model", "Cancel", Messages.getInformationIcon) == Messages.YES)
+              DbtPreviewModelAction.launch(project, file)
           case Left(error) => Messages.showInfoMessage(project, error, title)
           case Right(command) => DbtRunConfiguration.launch(project, command)
         }

@@ -16,6 +16,8 @@ before(async()=>{
 });
 after(async()=>{await browser.close()});
 const update=payload=>page.evaluate(p=>dbtUpdate(p),payload);
+async function openExport(){if(!await page.locator('#export-menu').evaluate(e=>e.open))await page.locator('#export-menu summary').click()}
+async function clickExport(id){await openExport();await page.locator('#'+id).click()}
 const lastExport=id=>page.evaluate(id=>events.filter(e=>e.type==='export'&&e.id===id).at(-1).value,id);
 const exportedSvg=async()=>Buffer.from((await lastExport('svg')).split(',')[1],'base64').toString('latin1');
 const hasEvent=(type,id)=>page.evaluate(([type,id])=>events.some(e=>e.type===type&&e.id===id),[type,id]);
@@ -140,22 +142,22 @@ test('SVG, PNG and clipboard exports include local visible labels, Unicode, them
 
  await page.locator('#selector').fill('orders');await page.evaluate(()=>dbtShowFilter({expression:'orders',exclude:'',ids:['model'],diagnostics:[]}));
 
- await page.locator('#export-svg').click();
+ await clickExport('export-svg');
  const svg=await exportedSvg();
  const decoded=Buffer.from(svg,'binary').toString('utf8');
  assert.match(decoded,/objednávky 日本語 &amp; &lt;orders&gt;/);assert.doesNotMatch(decoded,/unrelated/);assert.match(decoded,/downstream dependency/);
  assert.match(decoded,/#fafafa/);assert.doesNotMatch(decoded,/var\(--/);assert.doesNotMatch(decoded,/<script|https:|foreignObject/);
 
- await page.locator('#export-legend').uncheck();
- await page.locator('#export-svg').click();
+ await openExport();await page.locator('#export-legend').uncheck();
+ await clickExport('export-svg');
  assert.doesNotMatch(await exportedSvg(),/downstream dependency/);
 
- await page.locator('#export-png').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='png'));
+ await clickExport('export-png');await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='png'));
  const png=await lastExport('png');assert.ok(png.startsWith('data:image/png;base64,iVBOR'));
 
- await page.locator('#copy-image').click();await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok((await lastExport('clipboard')).startsWith('data:image/png;base64,'));
+ await clickExport('copy-image');await page.waitForFunction(()=>events.some(e=>e.type==='export'&&e.id==='clipboard'));assert.ok((await lastExport('clipboard')).startsWith('data:image/png;base64,'));
 
- await page.locator('#export-legend').check();
+ await openExport();await page.locator('#export-legend').check();await page.locator('#export-menu').evaluate(e=>e.open=false);
  await page.locator('#clear-filter').click();await update(fixture);assert.deepEqual(errors,[]);
 });
 test('grouping preserves package and version collisions on representative large graphs',async()=>{
@@ -179,7 +181,7 @@ test('execution badges expose provenance and route failed tests without relying 
  await badge.click();assert.ok(await hasEvent('execution','model'));
 
 
- await page.locator('#export-svg').click();assert.match(await exportedSvg(),/Build failed/);
+ await clickExport('export-svg');assert.match(await exportedSvg(),/Build failed/);
  await update({...fixture,nodes:fixture.nodes.map(n=>({...n,execution:{status:'unknown',label:'Not run / result unavailable',failingTests:0,details:'Artifact no longer compatible'}}))});
  assert.equal(await page.getByRole('button',{name:/Build failed/}).count(),0);
  assert.equal(await page.locator('.execution-badge[data-status=unknown]').count(),0);
@@ -239,19 +241,28 @@ test('Lineage filters remain independent and only Use in Run Configuration reque
 });
 
 
-test('lineage actions stay flat and fields remain visible at narrow widths',async()=>{
+test('everyday lineage controls remain visible and export options fit at narrow widths',async()=>{
  try{
   for(const width of [600,1400]){
    await page.setViewportSize({width,height:850});
    assert.equal(await page.locator('#graph-controls details').count(),0);
-   for(const id of ['selector','exclude','group-by','show-minimap','export-legend','resource-picker'])
+   for(const id of ['selector','exclude','group-by','show-minimap','resource-picker'])
     assert.equal(await page.locator('#'+id).isVisible(),true);
-   for(const name of ['Apply filter','Clear filter','Use in Run Configuration','Export PNG','Export SVG','Copy image']){
+   for(const name of ['Apply filter','Clear filter','Use in Run Configuration']){
     const button=page.getByRole('button',{name,exact:true});
     assert.equal(await button.isVisible(),true);
     const box=await button.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
     assert.equal(await button.evaluate(e=>e.closest('details,[popover]')),null);
    }
+   await page.locator('#export-menu').evaluate(e=>e.open=false);
+   assert.equal(await page.locator('#export-svg').isVisible(),false);
+   await page.locator('#export-menu summary').click();
+   for(const id of ['export-png','export-svg','copy-image','export-legend']){
+    assert.equal(await page.locator('#'+id).isVisible(),true);
+    const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
+   }
+   await page.locator('#export-menu summary').focus();await page.keyboard.press('Escape');
+   assert.equal(await page.locator('#export-svg').isVisible(),false);
    for(const id of ['apply-filter','clear-filter','use-config'])assert.equal(await page.locator('#'+id).evaluate(e=>e.closest('form')?.id),'filter-form');
    const graph=await page.locator('#main').boundingBox();
    assert.ok(graph.height>430,'The graph retains usable space with visible controls');
@@ -274,14 +285,14 @@ test('resource cards hide unresolved configuration and unknown result badges, wi
  await update(fixture);
 });
 
-test('documentation requests are explicit and refreshes do not reopen documentation',async()=>{
+test('open documentation refreshes in place while closed documentation stays closed',async()=>{
  await update(fixture);
  await page.evaluate(()=>{events=[];select('model',false)});
  await page.getByRole('button',{name:'Open Documentation',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'select',id:'model',value:''});
  await page.evaluate(()=>events=[]);
  await update(fixture);
- assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),0);
+ assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='select').length),1);
  assert.equal(await page.locator('#docs').isVisible(),true);
  await page.locator('#close-docs').click();await update(fixture);
  assert.equal(await page.locator('#docs').isVisible(),false);
@@ -398,11 +409,59 @@ test('large graphs stay readable and group controls never cover the canvas',asyn
 test('native icon refresh preserves visible action labels and clearing selection updates context',async()=>{
  const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=';
  await page.evaluate(({fixture,image})=>dbtUpdate({...fixture,icons:Object.fromEntries(['fit','apply-filter','clear-filter','use-config','export-png','export-svg','zoom-in'].map(id=>[id,image]))}),{fixture,image});
+ await openExport();
  for(const [id,text]of [['fit','Fit graph'],['apply-filter','Apply'],['clear-filter','Clear'],['use-config','Run configuration…'],['export-png','PNG'],['export-svg','SVG']])assert.equal(await page.locator('#'+id).innerText(),text);
  assert.equal(await page.locator('#zoom-in img').count(),1);
+ await page.locator('#export-menu').evaluate(e=>e.open=false);
  await page.locator('#resource-picker').selectOption('model');
  await page.mouse.click(10,820);
  assert.equal(await page.locator('#resource-picker').inputValue(),'');
  assert.doesNotMatch(await page.locator('#selection-context').innerText(),/Selected:/);
  assert.deepEqual(errors,[]);
+});
+
+
+test('search highlighting survives graph refresh without moving the viewport',async()=>{
+ await page.evaluate(()=>closeDocumentation());await update(fixture);
+ await page.locator('#search').fill('orders');
+ const before=await page.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()}));
+ await update({...fixture,status:'Source changed'});
+ assert.equal(await page.locator('#search').inputValue(),'orders');
+ assert.equal(await page.locator('.card:not(.dim):not(.boundary)').count(),1);
+ assert.equal(await page.locator('.card:not(.dim):not(.boundary) b').innerText(),'orders');
+ assert.deepEqual(await page.evaluate(()=>({zoom:cy.zoom(),pan:cy.pan()})),before);
+ await page.locator('#clear-search').click();
+});
+test('execution badge Enter and Space each open results without selecting documentation',async()=>{
+ const execution={status:'failed',label:'Build failed',failingTests:1,details:'dev · invocation-1'};
+ await update({...fixture,nodes:fixture.nodes.map(n=>n.id==='model'?{...n,execution}:n)});
+ const badge=page.locator('.execution-badge');
+ for(const key of ['Enter','Space']){
+  await page.evaluate(()=>events=[]);await badge.focus();await page.keyboard.press(key);
+  assert.deepEqual(await page.evaluate(()=>events.map(e=>e.type)),['execution']);
+ }
+ await update(fixture);
+});
+test('documentation Markdown links request browser navigation',async()=>{
+ await page.evaluate(()=>select('model'));
+ await page.evaluate(()=>dbtShowDocumentation({id:'model',column:'',html:'<p><a href="https://example.com/docs">Guide</a></p>'}));
+ await page.getByRole('link',{name:'Guide',exact:true}).click();
+ assert.deepEqual(await page.evaluate(()=>events.at(-1)),{type:'external-link',id:'',value:'https://example.com/docs'});
+ await page.locator('#close-docs').click();
+});
+
+
+test('documentation refresh preserves scroll while explicit resource navigation resets it',async()=>{
+ await update(fixture);await page.evaluate(()=>select('model'));
+ const html='<h3>Orders</h3>'+Array.from({length:70},(_,i)=>'<p>Column '+i+' description</p>').join('');
+ await page.evaluate(html=>dbtShowDocumentation({id:'model',column:'',html}),html);
+ await page.locator('#docs').evaluate(e=>e.scrollTop=400);
+ const scroll=await page.locator('#docs').evaluate(e=>e.scrollTop);assert.ok(scroll>0);
+ await update({...fixture,status:'Metadata refreshed'});
+ await page.evaluate(html=>dbtShowDocumentation({id:'model',column:'',html}),html);
+ assert.equal(await page.locator('#docs').evaluate(e=>e.scrollTop),scroll);
+ await page.evaluate(()=>select('source'));
+ await page.evaluate(html=>dbtShowDocumentation({id:'source',column:'',html}),html);
+ assert.equal(await page.locator('#docs').evaluate(e=>e.scrollTop),0);
+ await page.evaluate(()=>closeDocumentation());
 });

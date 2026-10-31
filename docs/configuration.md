@@ -11,8 +11,11 @@ The page has two tabs: **General** for navigation, execution, formatting and lin
 and **Integrations** for Metabase, Airflow and the local MCP server. **Apply** saves
 both tabs. On **General**, choose **Owning dbt root** first: navigation, execution,
 environment, formatter and baseline settings apply to that dbt project only.
+The page groups **Execution**, **Navigation**, **Formatting** and **Lineage**.
+Select **Show advanced metadata** under Navigation for explicit metadata paths and
+local builtin definitions. Lineage settings apply across dbt roots.
 
-![Per-root navigation settings in dbt Workspace.](screenshots/configuration.png)
+![General settings grouped by capability, with advanced metadata hidden.](screenshots/configuration.png)
 
 ### Navigation settings
 

@@ -1,0 +1,76 @@
+{
+  "environment": "Local IntelliJ 262.9437.185/JDK25 fixtures and bundled Chromium via Python Playwright driver",
+  "scope": "Local UI and fake CLI only; no real warehouse, deployed IDE installation or remote delivery",
+  "status": "PASS",
+  "rows": [
+    {
+      "id": "P1",
+      "acceptance": "Lineage search refresh, keyboard evidence, documentation freshness and scroll",
+      "evidence": "/tmp/intellij-dbt-ux-final-browser.log",
+      "status": "PASS"
+    },
+    {
+      "id": "P2",
+      "acceptance": "Safe Markdown rendering and browser links",
+      "evidence": [
+        "DbtWorkspaceFeaturesTest.testMarkdownDescriptionsRenderFormattingAndOnlySafeLinks",
+        "/tmp/intellij-dbt-ux-final-browser.log"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "P3",
+      "acceptance": "Export menu wide and narrow layout plus image export controls",
+      "evidence": [
+        "/tmp/intellij-dbt-ux-export-wide.png",
+        "/tmp/intellij-dbt-ux-export-narrow.png",
+        "docs/screenshots/lineage-documentation.png"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "P4",
+      "acceptance": "Preview export replacement confirm and cancel",
+      "evidence": "DbtPreviewTest.testExportRequiresConfirmationBeforeReplacingAnExistingFile",
+      "status": "PASS"
+    },
+    {
+      "id": "P5",
+      "acceptance": "SQL-only conversion and no default shortcut conflicts",
+      "evidence": "DbtClipboardActionTest.testConversionActionsDoNotClaimYamlOrMarkdownEditorsOrStandardShortcuts",
+      "status": "PASS"
+    },
+    {
+      "id": "P6",
+      "acceptance": "Direct whole-model preview and compile/open recovery through native Run",
+      "evidence": "DbtEditorCommandTest",
+      "status": "PASS"
+    },
+    {
+      "id": "P7",
+      "acceptance": "Run command field precedence and normalization plus completion snapshot lifecycle",
+      "evidence": "DbtRunConfigurationTest",
+      "status": "PASS"
+    },
+    {
+      "id": "P8",
+      "acceptance": "Grouped General settings, collapsed advanced metadata",
+      "evidence": [
+        "DbtSettingsTest",
+        "docs/screenshots/configuration.png"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "P9",
+      "acceptance": "Current distributable ZIP and public API compatibility",
+      "evidence": [
+        "target/intellij-dbt-1.1.0.zip",
+        "target/verifier/reports/IC-262.9437.185/plugins/com.github.vbmacher.intellij-dbt/1.1.0/verification-verdict.txt"
+      ],
+      "status": "PASS"
+    }
+  ],
+  "timestamp": "2026-10-31T20:29:06.530671+00:00",
+  "artifact_sha256": "9ec3221947b890df913c7e5c9f554e71fa48425d67c9b661845321f031945d26"
+}

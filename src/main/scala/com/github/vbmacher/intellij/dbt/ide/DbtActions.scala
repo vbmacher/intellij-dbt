@@ -2,7 +2,7 @@ package com.github.vbmacher.intellij.dbt.ide
 
 import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
-import com.github.vbmacher.intellij.dbt.project.{DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
+import com.github.vbmacher.intellij.dbt.project.{DbtArtifactContext, DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.intellij.diff.{DiffContentFactory, DiffManager}
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
@@ -186,21 +186,50 @@ final class DbtGenerateColumnsAction extends DbtResourceAction(DbtPropertiesEdit
 
 final class DbtInheritDescriptionsAction extends DbtResourceAction(DbtPropertiesEditor.generate(_, _, inherit = true))
 
-final class DbtOpenCompiledSqlAction extends DbtResourceAction((w, symbol) => DbtResourceData.get(w, symbol).compiledSql match {
-  case Some(sql) => DbtSqlEditors.open(w.project, symbol.name + " compiled", sql)
-  case None => Messages.showInfoMessage(w.project,
-    "Compiled SQL is unavailable. Run Compile or Generate Docs for this project and target.", "dbt compiled SQL")
-})
+final class DbtOpenCompiledSqlAction extends DbtResourceAction(DbtCompiledSql.show(_, _, compare = false))
 
-final class DbtCompareSqlAction extends DbtResourceAction((w, symbol) => {
-  val data = DbtResourceData.get(w, symbol)
-  data.compiledSql match {
-    case Some(sql) =>
-      DbtSqlEditors.compare(w.project, symbol.name, data.rawSql.getOrElse(symbol.file.getText), sql, "Authored SQL", "Compiled SQL")
-    case None =>
-      Messages.showInfoMessage(w.project, "Compile this model for the matching target before comparing SQL.", "dbt SQL comparison")
+final class DbtCompareSqlAction extends DbtResourceAction(DbtCompiledSql.show(_, _, compare = true))
+
+private[ide] object DbtCompiledSql {
+  def show(w: DbtWorkspace, symbol: DbtSymbol, compare: Boolean): Unit = {
+    def open(current: DbtWorkspace, model: DbtSymbol): Boolean = {
+      val data = DbtResourceData.get(current, model)
+      data.compiledSql.foreach { sql =>
+        if (compare) DbtSqlEditors.compare(current.project, model.name, data.rawSql.getOrElse(model.file.getText), sql, "Authored SQL", "Compiled SQL")
+        else DbtSqlEditors.open(current.project, model.name + " compiled", sql)
+      }
+      data.compiledSql.nonEmpty
+    }
+
+    if (!open(w, symbol)) {
+      val label = if (compare) "Compile and compare" else "Compile and open"
+      val model = w.model(symbol.file).filter(_.isEnabled)
+      if (model.isEmpty) Messages.showInfoMessage(w.project, "Compiled SQL is unavailable. Choose a source model to compile.", "dbt compiled SQL")
+      else if (Messages.showYesNoDialog(w.project, "Compiled SQL is unavailable for this model and target.",
+        "dbt compiled SQL", label, "Cancel", Messages.getQuestionIcon) == Messages.YES) {
+        val path = symbol.file.getVirtualFile.getPath
+        DbtUi.saveAndCommit(w.project)
+        DbtUi.readLater(w.project) {
+          val current = DbtWorkspace.get(w.project)
+          DbtRunSelection.available(current).find(_.path == path).toRight("The source model is unavailable.")
+            .flatMap(DbtCommand.create(current, _, "Compile", fullRefresh = false))
+        } {
+          case Left(error) => Messages.showErrorDialog(w.project, error, "dbt compiled SQL")
+          case Right(command) => DbtRunConfiguration.launch(w.project, command, Some(finished =>
+            LocalFileSystem.getInstance.refreshIoFiles(java.util.List.of(new java.io.File(finished.artifactDirectory)), true, true, () =>
+              DbtUi.readLater(w.project) {
+                val current = DbtWorkspace.get(w.project)
+                current.model(path).filter(m => current.owner(m).exists(r =>
+                  DbtArtifactContext.identity(current.executionRoot(r)) == finished.artifactContext)).map(current -> _)
+              } { result =>
+                if (!result.exists { case (current, resource) => open(current, resource) })
+                  Messages.showInfoMessage(w.project, "Compilation finished, but matching compiled SQL is unavailable. Check the Run output and current source and target.", "dbt compiled SQL")
+              })))
+        }
+      }
+    }
   }
-})
+}
 
 /** Read-only SQL shown in editors and diffs. */
 private[ide] object DbtSqlEditors {

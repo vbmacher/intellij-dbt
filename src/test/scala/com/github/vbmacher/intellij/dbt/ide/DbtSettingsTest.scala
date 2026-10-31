@@ -96,7 +96,10 @@ final class DbtSettingsTest extends DbtTestCase {
         val updates = toolbars.map(_.updateActionsAsync())
         await("Mapping toolbar icons are rendered")(updates.forall(_.isDone) && toolbars.forall(_.hasVisibleActions))
         layout(tabs)
-        assertTrue("Builtin mapping rows remain visible", builtinTable.getVisibleRect.height >= builtinTable.getRowHeight)
+        val metadata = components(form).collectFirst {
+          case box: JCheckBox if box.getText == "Show advanced metadata" => box
+        }.get
+        assertFalse("Advanced metadata stays collapsed until requested", metadata.isSelected)
         assertTrue("Environment rows remain visible", field("environmentVariables").getVisibleRect.height >= builtinTable.getRowHeight)
         val image = new java.awt.image.BufferedImage(tabs.getWidth, tabs.getHeight, java.awt.image.BufferedImage.TYPE_INT_RGB)
         val graphics = image.createGraphics()

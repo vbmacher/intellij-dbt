@@ -9,6 +9,9 @@ Inspect a bounded query result without editing the model source.
 - **Inputs:** one model, selected SELECT query or supported CTE, owning execution context and row limit.
 - **Outputs:** returned rows with available value types, target, elapsed time, limit/truncation context and SQL/raw-output evidence.
 - Querying is explicit and shares the [managed command lifecycle](workspace.md). Local sorting/filtering/copy/export operate on returned rows only.
+- The model gutter and editor menu offer a whole-model preview. Failed CTE analysis
+  offers that preview explicitly; canceling the dialog runs nothing.
+- Exporting over an existing file requires confirmation before replacement.
 - Reaching the row limit is labeled as potentially truncated. SQL null and the string `NULL` remain distinct when exported.
 - Model previews require a dbt executable supporting `show`; selected SQL and CTE previews require Core 1.5+ and supported query structure.
 - Available adapter SQL is shown only when it can be tied to the invocation/query; submitted SQL and raw output remain distinct. Error navigation requires an exact unchanged source mapping. Otherwise the location is unavailable.

@@ -236,6 +236,7 @@ private[ide] final class DbtToolWindowPanel(project: Project) extends Disposable
       case "pin" => settings.getState.pinnedFocus = if (field("value") == "true") focus.getOrElse(id) else ""; refresh(follow = false)
       case "use-configuration-selection" => executionRoot.foreach(path => DbtRunConfiguration.edit(project, path, "Build", id.take(4000), field("value").take(4000)))
       case "filter" => showSelectionInLineage(id, field("value"))
+      case "external-link" => DbtAirflow.safeUrl(field("value")).foreach(com.intellij.ide.BrowserUtil.browse)
       case "export" => DbtGraphExport.show(project, id, field("value"))
       case "execution" => DbtRunConfiguration.openEvidence(project, id)
       case _ => ()

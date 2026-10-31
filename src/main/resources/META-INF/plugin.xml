@@ -164,6 +164,8 @@
         <action id="Dbt.CompareSql" class="com.github.vbmacher.intellij.dbt.ide.DbtCompareSqlAction" text="Compare Authored and Compiled dbt SQL">
         </action>
 
+        <action id="Dbt.PreviewModel" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewModelAction" text="Preview dbt model">
+        </action>
         <action id="Dbt.PreviewSql" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewSqlAction" text="Preview selected dbt SQL">
         </action>
         <action id="Dbt.PreviewCte" class="com.github.vbmacher.intellij.dbt.ide.DbtPreviewCteAction" text="Preview dbt CTE">
@@ -184,13 +186,9 @@
         </action>
         <action id="Dbt.CopyForTarget" class="com.github.vbmacher.intellij.dbt.ide.DbtCopyForTargetAction" text="Copy for Target DB">
             <add-to-group group-id="EditMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="control shift C"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift C"/>
         </action>
         <action id="Dbt.PasteAsRefs" class="com.github.vbmacher.intellij.dbt.ide.DbtPasteAsRefsAction" text="Paste as dbt Refs">
             <add-to-group group-id="EditMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="control shift V"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift V"/>
         </action>
         <action id="Dbt.Properties" class="com.github.vbmacher.intellij.dbt.ide.DbtPropertiesAction" text="dbt Properties" description="Navigate to properties of the current resource">
         </action>
@@ -202,6 +200,7 @@
             <reference ref="Dbt.Dependencies"/>
             <reference ref="Dbt.EditProperties"/>
             <separator/>
+            <reference ref="Dbt.PreviewModel"/>
             <reference ref="Dbt.PreviewSql"/>
             <reference ref="Dbt.PreviewCte"/>
             <reference ref="Dbt.InspectCtes"/>

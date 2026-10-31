@@ -153,18 +153,32 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     executableArguments.setToolTipText("Passed before every dbt command. Example: uv + run dbt → uv run dbt test. Quote paths with spaces; shell expressions are not evaluated.")
     upstream.setToolTipText("How many dependency levels to show before the focused resource in Lineage. 1 shows its direct inputs; 2 also shows their inputs. Accepts 1–20.")
     downstream.setToolTipText("How many dependent levels to show after the focused resource in Lineage. 1 shows resources that use it directly; 2 also shows resources that use those. Accepts 1–20.")
-    val rows = Vector("Owning dbt root" -> root,
-      "Engine" -> engine, "dbt version (optional)" -> dbtVersion, "Adapter (optional)" -> adapter,
-      "Profiles file for navigation (optional)" -> profilesFile, "Variables (JSON)" -> variablesPane,
-      "Environment variables" -> mappings(environmentVariables, environmentModel),
+    val metadataForm = new JPanel(new GridBagLayout)
+    val showMetadata = new JBCheckBox("Show advanced metadata")
+    metadataForm.setVisible(false)
+    showMetadata.addActionListener(_ => metadataForm.setVisible(showMetadata.isSelected))
+    DbtUi.labeledRows(metadataForm, new Insets(4, 5, 4, 10), Vector(
+      "Profiles file for navigation (optional)" -> profilesFile,
       "Local builtin definitions" -> mappings(builtinSources, builtinModel),
-      "Catalog file (optional)" -> catalog, "State manifest for navigation (optional)" -> stateManifest,
-      "Information Schema v1 directory (optional)" -> infoSchema, "Executable or external tool" -> executable, "Arguments before dbt command" -> executableArguments, "Project root override" -> projectRoot,
-      "" -> loadEnvironmentFiles, "Environment files" -> environmentFiles, "Profiles directory" -> profiles, "Artifact directory" -> artifacts, "Manifest file (optional)" -> manifest, "Active target (blank uses profile default)" -> target,
+      "Catalog file (optional)" -> catalog, "Manifest file (optional)" -> manifest,
+      "State manifest for navigation (optional)" -> stateManifest,
+      "Information Schema v1 directory (optional)" -> infoSchema))
+    val rows = Vector("Owning dbt root" -> root,
+      "" -> new TitledSeparator("Execution"),
+      "Executable or external tool" -> executable, "Arguments before dbt command" -> executableArguments,
+      "Active target (blank uses profile default)" -> target, "Profiles directory" -> profiles,
+      "Project root override" -> projectRoot, "Artifact directory" -> artifacts,
+      "" -> loadEnvironmentFiles, "Environment files" -> environmentFiles,
+      "Environment variables" -> mappings(environmentVariables, environmentModel), "Variables (JSON)" -> variablesPane,
+      "Preview row limit" -> limit, "" -> colors, "" -> notifications,
       "Baseline state directory" -> stateDirectory, "" -> defer, "" -> favorState,
+      "" -> new TitledSeparator("Navigation"),
+      "Engine" -> engine, "dbt version (optional)" -> dbtVersion, "Adapter (optional)" -> adapter,
+      "" -> showMetadata, "" -> metadataForm,
+      "" -> new TitledSeparator("Formatting"),
       "SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> formatOnSave,
-      "Preview row limit" -> limit, "" -> colors, "" -> notifications, "Upstream levels to show" -> upstream,
-      "Downstream levels to show" -> downstream, "Layout direction" -> direction)
+      "" -> new TitledSeparator("Lineage — shared across dbt roots"),
+      "Upstream levels to show" -> upstream, "Downstream levels to show" -> downstream, "Layout direction" -> direction)
     rows.foreach { case (_, field) => field.setMinimumSize(new Dimension(0, field.getMinimumSize.height)) }
     DbtUi.labeledRows(panel, new Insets(4, 5, 4, 10), rows)
     root.addActionListener(_ => {

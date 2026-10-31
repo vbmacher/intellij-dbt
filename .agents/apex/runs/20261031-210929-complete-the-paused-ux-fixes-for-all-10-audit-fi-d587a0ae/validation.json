@@ -1,0 +1,51 @@
+{
+  "revision": "2e1b5dc1e21ee24887e6f8f9ca0026aff254b2ac",
+  "current_diff": "Uncommitted UX changes plus requested APEX state; no delivery action requested",
+  "checks": [
+    {
+      "command": "sbt -java-home /usr/lib/jvm/java-25 -Ddownload-resources=false test testPackaged packageArtifactZip runPluginVerifier",
+      "status": "PASS",
+      "exit_code": 0,
+      "log": "/tmp/intellij-dbt-ux-final-validation4.log",
+      "result": "572 normal and 561 packaged tests passed; ZIP built; verifier compatible with experimental APIs only, no deprecated/internal findings"
+    },
+    {
+      "command": "node src/test/js/lineage.test.cjs (installed Playwright driver + Chromium)",
+      "status": "PASS",
+      "exit_code": 0,
+      "log": "/tmp/intellij-dbt-ux-final-browser.log",
+      "result": "34 browser regressions passed"
+    },
+    {
+      "command": "impeccable detect --json src/main/resources/lineage/index.html",
+      "status": "PASS",
+      "log": "/tmp/intellij-dbt-ux-design-check.json",
+      "result": "No findings"
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS"
+    },
+    {
+      "command": "ZIP content inspection and SHA256",
+      "status": "PASS",
+      "sha256": "9ec3221947b890df913c7e5c9f554e71fa48425d67c9b661845321f031945d26"
+    }
+  ],
+  "historical_failures": [
+    {
+      "status": "FAIL_INTRODUCED_RESOLVED",
+      "issue": "Old flat-toolbar/metadata visibility assertions and temporary Run configuration test leakage",
+      "fix": "Updated intended UI expectations and cleaned up native Run configurations"
+    },
+    {
+      "status": "FAIL_INTRODUCED_RESOLVED",
+      "issue": "Internal Markdown helper and deprecated disclosure/API overloads rejected by verifier",
+      "fix": "Public cancellation-aware MarkdownParser/TagRenderer APIs and standard Swing disclosure checkboxes"
+    }
+  ],
+  "scope_notes": [
+    "PRODUCT.md and .impeccable appeared after baseline; not authored or edited by coordinator and left untouched as ownership-uncertain concurrent work."
+  ],
+  "proof_boundary": "Local IDE/browser fixtures with fake dbt CLI; no real warehouse or installed-plugin manual acceptance; no commit/push/PR/deploy."
+}

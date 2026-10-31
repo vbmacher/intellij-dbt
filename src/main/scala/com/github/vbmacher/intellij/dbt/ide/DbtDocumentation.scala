@@ -19,6 +19,9 @@ import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.io.HttpRequests
 import org.jsoup.Jsoup
 import org.jsoup.safety.Safelist
+import org.intellij.markdown.flavours.commonmark.CommonMarkFlavourDescriptor
+import org.intellij.markdown.html.{HtmlGenerator, HtmlGeneratorKt}
+import org.intellij.markdown.parser.MarkdownParser
 import java.io.IOException
 import java.net.{URI, URLDecoder, URLEncoder}
 import java.nio.charset.StandardCharsets
@@ -67,6 +70,17 @@ private[ide] final class DbtResourceDocumentationTarget(resource: DbtSymbol) ext
 }
 
 private[ide] object DbtDocumentation {
+  def markdown(text: String): String = {
+    val flavour = new CommonMarkFlavourDescriptor(true, false)
+    val tree = new MarkdownParser(flavour, false, () => com.intellij.openapi.progress.ProgressManager.checkCanceled())
+      .buildMarkdownTreeFromString(text: CharSequence)
+    val renderer = new HtmlGenerator.DefaultTagRenderer(HtmlGeneratorKt.getDUMMY_ATTRIBUTES_CUSTOMIZER(), false)
+    val html = new HtmlGenerator(text, tree, flavour, false).generateHtml(renderer)
+    val allowed = Safelist.basic().addTags("h1", "h2", "h3", "h4", "h5", "h6", "pre", "hr")
+      .removeProtocols("a", "href", "ftp", "mailto")
+    Jsoup.clean(html, "", allowed, new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false))
+  }
+
   /** The documentation target of a resolved symbol; `resource` documents resources and macros. */
   def target(project: Project, symbol: DbtSymbol)(resource: DbtSymbol => DocumentationTarget): Option[DocumentationTarget] =
     if (symbol.kind == "documentation") Some(new DbtBuiltinDocumentationTarget(symbol))
@@ -137,15 +151,15 @@ private[ide] object DbtDocumentation {
       } ++ Option(relation).filter(_.nonEmpty).map("Relation" -> _)
     val signature = if (s.kind == "macro") {
       val names = if (data.arguments.nonEmpty) data.arguments.map(_.name) else w.symbols.filter(p => p.kind == "parameter" && p.owner == s.name && p.file == s.file).map(_.name)
-      s"<pre>${e(s.name + names.mkString("(", ", ", ")"))}</pre>" + data.arguments.map(a => s"<p>${e(a.name)}: ${e(a.dataType)} ${e(a.description)}</p>").mkString
+      s"<pre>${e(s.name + names.mkString("(", ", ", ")"))}</pre>" + data.arguments.map(a => s"<p>${e(a.name)}: ${e(a.dataType)}</p>${markdown(a.description)}").mkString
     } else ""
     val airflow = DbtAirflow.context(w, s)
     s"<div class='definition'><b>${e(displayName(s))}</b> — ${e(s.kind)}</div>" + signature +
       "<table>" + metadata.map { case (label, value) => s"<tr><td>$label</td><td>${e(value)}</td></tr>" }.mkString + "</table>" +
-      s"<div class='content'>${e(data.description).replace("\n", "<br>")}</div>" +
+      s"<div class='content'>${markdown(data.description)}</div>" +
       s"<p>Tags: ${e(data.tags.mkString(", "))}</p><h3>Columns (${data.columns.size})</h3>" +
       (if (data.columns.isEmpty) "<p>No columns documented</p>" else "<table>" + data.columns.map(c =>
-        s"<tr><td><a href=\"dbt-column:${URLEncoder.encode(c.name, StandardCharsets.UTF_8)}\">${e(c.name)}</a></td><td>${e(c.dataType)}</td><td>${e(c.description)}</td></tr>").mkString + "</table>") +
+        s"<tr><td><a href=\"dbt-column:${URLEncoder.encode(c.name, StandardCharsets.UTF_8)}\">${e(c.name)}</a></td><td>${e(c.dataType)}</td><td>${markdown(c.description)}</td></tr>").mkString + "</table>") +
       list("Upstream", upstream) + list("Downstream", downstream) +
       s"<h3>Tests (${data.tests.size})</h3>" + data.tests.map { t =>
         val name = t.sourceId.filter(_ => linkTestSources).fold(e(t.name))(id =>
@@ -285,7 +299,7 @@ private[ide] final class DbtColumnDocumentationTarget(resource: DbtSymbol, name:
 
       val origin = DbtPropertiesEditor.origins(w, model, name)._1
       s"<div class='definition'><b>${e(model.name)}.${e(name)}</b></div><p>${e(origin)}</p>" +
-        data.map(c => s"<p>${e(c.dataType)}</p><p>${e(c.description)}</p>").getOrElse("") +
+        data.map(c => s"<p>${e(c.dataType)}</p>${DbtDocumentation.markdown(c.description)}").getOrElse("") +
         "<h3>Upstream dependencies</h3>" + related(false) + "<h3>Downstream consumers</h3>" + related(true)
     }
   }

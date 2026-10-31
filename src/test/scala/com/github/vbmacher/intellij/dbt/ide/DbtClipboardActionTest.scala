@@ -19,6 +19,21 @@ import scala.jdk.CollectionConverters._
 final class DbtClipboardActionTest extends DbtTestCase {
   override protected def createTempDirTestFixture(): TempDirTestFixture = IdeaTestFixtureFactory.getFixtureFactory.createTempDirTestFixture()
 
+  def testConversionActionsDoNotClaimYamlOrMarkdownEditorsOrStandardShortcuts(): Unit = {
+    project()
+    for (path <- Vector("models/schema.yml", "docs/readme.md")) {
+      configure(path, "text<caret>")
+      for (id <- Vector("Dbt.CopyForTarget", "Dbt.PasteAsRefs")) {
+        val action = com.intellij.openapi.actionSystem.ActionManager.getInstance.getAction(id)
+        val event = com.intellij.openapi.actionSystem.AnActionEvent.createEvent(action, com.intellij.ide.DataManager.getInstance.getDataContext(myFixture.getEditor.getContentComponent),
+          null, com.intellij.openapi.actionSystem.ActionPlaces.EDITOR_POPUP, com.intellij.openapi.actionSystem.ActionUiKind.NONE, null)
+        action.update(event)
+        assertFalse(path, event.getPresentation.isEnabledAndVisible)
+        assertTrue(action.getShortcutSet.getShortcuts.isEmpty)
+      }
+    }
+  }
+
   private def setupRelations(): Unit = {
     val config = project()
     PsiTestUtil.addContentRoot(getModule, config.getVirtualFile.getParent)
@@ -242,7 +257,7 @@ final class DbtClipboardActionTest extends DbtTestCase {
     actions.foreach { a =>
       assertFalse(enabled(a, outside))
       assertTrue("Available without requiring loaded artifacts", enabled(a, model))
-      assertTrue(enabled(a, config))
+      assertFalse("SQL conversion is unavailable in project YAML", enabled(a, config))
       assertFalse(enabled(a, excluded))
     }
   }

@@ -70,6 +70,7 @@ final class DbtRunConfiguration(project: Project, factory: ConfigurationFactory,
   // Commands launched from context actions and failed-test reruns retain their captured execution context.
   private[ide] var selectionResolved: Option[Vector[String] => Unit] = None
   private[ide] var captured: Option[DbtCommand] = None
+  private[ide] var completed: Option[DbtCommand => Unit] = None
 
   override def getConfigurationEditor: SettingsEditor[DbtRunConfiguration] = new DbtRunEditor(project)
 
@@ -258,10 +259,11 @@ private[ide] object DbtRunConfiguration {
     ()
   }
 
-  def launch(project: Project, command: DbtCommand): Unit = {
+  def launch(project: Project, command: DbtCommand, completed: Option[DbtCommand => Unit] = None): Unit = {
     val (settings, configuration) = create(project, command.action, command.root)
     configuration.root = command.root
     configuration.captured = Some(command)
+    configuration.completed = completed
     configuration.target = command.target
     configuration.executable = command.prefix.headOption.getOrElse("")
     configuration.executableArguments = ParametersListUtil.join(command.prefix.drop(1).asJava)
@@ -347,9 +349,43 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
   private val named = new JBTextField
   private val action = new JComboBox[String]((DbtCommand.Actions :+ "Resolve Selection").toArray)
   private val refresh = new JCheckBox("Full Refresh (Run / Build)")
+  private val effective = new JBLabel
+  private val inlineLabel = new JBLabel("Inline SQL:")
+  private val inlinePane = new JBScrollPane(inline)
+  private val overrides = new JPanel(new BorderLayout)
+  private val showOverrides = new JCheckBox("Show execution overrides")
+  overrides.setVisible(false)
+  showOverrides.addActionListener(_ => overrides.setVisible(showOverrides.isSelected))
   private var configuration: DbtRunConfiguration = _
   private var resolved = Option.empty[(Vector[String], Vector[String])]
   private var disposed = false
+  private def updateControls(): Unit = {
+    val command = action.getSelectedItem.toString
+    val whole = Set("Generate Docs", "Source Freshness")(command)
+    val preview = command == "Preview"
+    val hasNamed = named.getText.trim.nonEmpty
+    val hasSelection = selectors.getText.trim.nonEmpty
+    scope.setEnabled(!whole && (preview || !hasNamed && !hasSelection))
+    selectors.setEnabled(!whole && !preview && !hasNamed)
+    named.setEnabled(!whole && !preview)
+    excluded.setEnabled(!whole && !preview)
+    refresh.setVisible(Set("Run", "Build")(command))
+    inlineLabel.setVisible(preview)
+    inlinePane.setVisible(preview)
+    arguments.setEnabled(executable.getText.trim.nonEmpty)
+    val selected = if (whole) "Whole execution project"
+    else if (!preview && hasNamed) "Named selector: " + named.getText.trim
+    else if (!preview && hasSelection) "Selection: " + selectors.getText.trim
+    else Option(scope.getText.trim).filter(_.nonEmpty).getOrElse("Whole execution project")
+    effective.setText("Effective scope: " + selected +
+      (if (!whole && !preview && excluded.getText.trim.nonEmpty) " · Exclude: " + excluded.getText.trim else ""))
+    effective.setToolTipText(effective.getText)
+  }
+  action.addActionListener(_ => updateControls())
+  Vector(selectors, excluded, named, scope.getTextField, executable.getTextField).foreach(_.getDocument.addDocumentListener(
+    new com.intellij.ui.DocumentAdapter {
+      override def textChanged(event: javax.swing.event.DocumentEvent): Unit = updateControls()
+    }))
   root.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleDir().withTitle("Choose owning dbt project"))
   scope.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFileOrDir().withTitle("Choose dbt model or directory"))
   executable.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile().withTitle("Choose dbt executable or wrapper"))
@@ -416,16 +452,24 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       .addLabeledComponent("Selection:", selectors)
       .addLabeledComponent("Exclude:", excluded)
       .addLabeledComponent("Named selector (overrides Selection):", named)
+      .addComponent(effective)
       .addComponent(refresh).addComponent(buttons)
-      .addLabeledComponent("Inline SQL (Preview only):", new JBScrollPane(inline))
+      .addLabeledComponent(inlineLabel, inlinePane)
+      .addComponent(showOverrides)
+      .getPanel
+    overrides.add(FormBuilder.createFormBuilder()
       .addLabeledComponent("Executable override:", executable)
       .addLabeledComponent("Prefix arguments:", arguments)
       .addLabeledComponent("Profiles directory override:", profiles)
       .addComponent(new JBLabel("Other execution defaults: Settings → dbt Workspace"))
-      .getPanel
+      .getPanel, BorderLayout.CENTER)
     val panel = new JPanel(new BorderLayout);
-    panel.add(form, BorderLayout.NORTH);
-    panel
+    val content = new JPanel(new BorderLayout)
+    content.add(form, BorderLayout.NORTH)
+    content.add(overrides, BorderLayout.CENTER)
+    panel.add(content, BorderLayout.NORTH)
+    updateControls()
+    new JBScrollPane(panel)
   }
 
   override def resetEditorFrom(value: DbtRunConfiguration): Unit = {
@@ -443,6 +487,9 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
     named.setText(value.namedSelector)
     action.setSelectedItem(value.action);
     refresh.setSelected(value.fullRefresh)
+    showOverrides.setSelected(value.executable.nonEmpty || value.profilesDirectory.nonEmpty)
+    overrides.setVisible(showOverrides.isSelected)
+    updateControls()
   }
 
   override def applyEditorTo(value: DbtRunConfiguration): Unit = {
@@ -459,8 +506,19 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
     value.exclude = DbtRunConfiguration.terms(excluded.getText)
     value.namedSelector = named.getText.trim;
     value.action = action.getSelectedItem.toString
-    value.fullRefresh = refresh.isSelected;
+    val whole = Set("Generate Docs", "Source Freshness")(value.action)
+    if (whole) value.scope = ""
+    if (whole || value.action == "Preview") {
+      value.exactTests = false
+      value.selectors = Vector.empty
+      value.exclude = Vector.empty
+      value.namedSelector = ""
+    } else if (value.namedSelector.nonEmpty) value.selectors = Vector.empty
+    if (!whole && value.action != "Preview" && (value.selectors.nonEmpty || value.namedSelector.nonEmpty)) value.scope = ""
+    if (value.action != "Preview") value.inlineSql = ""
+    value.fullRefresh = refresh.isSelected && Set("Run", "Build")(value.action);
     value.captured = None;
+    value.completed = None;
     value.cliSelection = resolved
   }
 
@@ -546,6 +604,7 @@ private[ide] final class DbtCommandConsole(configuration: DbtRunConfiguration) e
       if (event.result.isEmpty && event.previewEvidence.nonEmpty) panel.add(evidence, BorderLayout.SOUTH)
       event.selectionOutput.foreach(raw => DbtSelectionResults.showCli(configuration, raw))
       process.complete(event.exitCode.getOrElse(if (canceled) 130 else 1))
+      if (!canceled && event.exitCode.contains(0)) active.foreach(command => snapshot.completed.foreach(_(command)))
       panel.revalidate()
     }
   })

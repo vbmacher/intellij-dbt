@@ -1,0 +1,31 @@
+{
+  "objective": "Complete all ten reviewed UX findings and grouped General settings",
+  "non_goals": [
+    "No new dependencies or large refactors",
+    "No commit, push, PR or deployment"
+  ],
+  "risk": "medium",
+  "proof_policy": "risk-based",
+  "execution_step": "step-03-execute.md",
+  "baseline_revision": "2e1b5dc1e21ee24887e6f8f9ca0026aff254b2ac",
+  "baseline": "All current dirty paths are preserved resumed task work; earlier unrelated model-context edits have been committed independently. New EditorCommandTest is unfinished.",
+  "acceptance": [
+    "Lineage search survives refresh, execution badges work by keyboard, open documentation refreshes",
+    "Descriptions render safe Markdown and external links",
+    "One Export menu contains image formats and legend; preview file replacement requires confirmation",
+    "SQL conversion has no conflicting default shortcuts and is restricted to SQL",
+    "Whole-model preview and compile-and-open/compare recovery work through native Run",
+    "Run editor shows precedence and applicable fields; General settings have sections and collapsed metadata",
+    "Relevant tests, rendered UI inspection, diff review and package/public API validation pass"
+  ],
+  "constraints": [
+    "JDK 25",
+    "Use existing SDK/runtime and Python Playwright npm driver",
+    "No real warehouse or dbt production command"
+  ],
+  "known_unknowns": [
+    "Native action recovery test interrupted",
+    "Latest browser label assertion update not yet rerun",
+    "Full suite and public API verification pending"
+  ]
+}
