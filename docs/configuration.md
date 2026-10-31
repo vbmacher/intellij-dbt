@@ -27,6 +27,28 @@ succeeds. **Reset** restores the saved values.
 
 ![General settings with basic setup visible and optional groups collapsed.](screenshots/configuration.png)
 
+### Resolved defaults and execution context
+
+Blank fields show their resolved defaults where available. Select **Show resolved
+execution context** to inspect the command directory, executable, command profiles
+file, target, artifact directory and environment file paths for the selected root.
+The summary uses your current edits, including environment overrides, before you
+click **Apply**. It updates when you edit those settings, switch roots or reopen
+the summary. You can select and copy its text.
+
+Command names such as `dbt` or `uv` can be looked up on `PATH` when run. A discovered
+local dbt executable is shown as a path. Missing environment files are labeled
+**missing; skipped**. If the profile's default target cannot be read as a literal
+value, the summary says it is not resolved locally; dbt may resolve it when run or
+report an error. Invalid paths or environment names replace the summary with a
+correction message.
+
+Environment values, variable values and wrapper argument values are not repeated
+in the summary. It does not run dbt or check a warehouse connection. Run
+configurations can override these project defaults.
+
+![Resolved execution context for the selected root.](screenshots/configuration-context.png)
+
 ### Navigation settings
 
 Paths below are absolute or relative to the owning dbt root, except **Manifest file
@@ -34,7 +56,7 @@ Paths below are absolute or relative to the owning dbt root, except **Manifest f
 
 | Setting | Default and effect |
 | --- | --- |
-| **Engine** | `core` or `v2`; defaults to `core`. See [Engine and version](#engine-and-version). |
+| **Engine** | **dbt Core** or **dbt v2**; defaults to **dbt Core**. See [Engine and version](#engine-and-version). |
 | **dbt version (optional)** | Blank uses `require-dbt-version` from `dbt_project.yml`, or Core 1.10. |
 | **Adapter (optional)** | Blank uses the selected profile output type. See [Profiles and adapters](#profiles-and-adapters). |
 | **Profiles file for navigation (optional)** | Blank uses `profiles.yml` in the resolved profiles directory. Commands use **Profiles directory**. |
@@ -47,13 +69,16 @@ Paths below are absolute or relative to the owning dbt root, except **Manifest f
 
 ### Engine and version
 
+These settings guide editor navigation. They do not select or change the dbt
+executable used by commands.
+
 The default is dbt Core 1.10. When `require-dbt-version` is set in `dbt_project.yml`,
 the plugin uses the lowest stable version allowed by all its bounds, including the
 patch number. Bounds can be a comma-separated string or a list, in any order.
 Invalid, contradictory or prerelease bounds leave version-dependent features
 disabled. A range with only upper bounds establishes no minimum feature support.
 Set **dbt version (optional)** to override this; for example, enter `1.12`
-and choose `core` in **Engine**.
+and choose **dbt Core** in **Engine**.
 
 A minor version such as `1.10` uses that series' supported patch level. Set a full
 version such as `1.10.5` for patch-specific behavior.
@@ -67,17 +92,19 @@ version such as `1.10.5` for patch-specific behavior.
 | Generic-test `arguments` mapping | Core 1.10.5+ |
 | UDF resources | Core 1.11+ |
 | `vars.yml`, model-embedded semantics, UDF overloads, JavaScript UDFs and string `selector:` terms | Core 1.12+ |
-| Checks and Information Schema v1 | **Engine** set to `v2` |
+| Checks and Information Schema v1 | **Engine** set to **dbt v2** |
 
 ### Profiles and adapters
 
 For example, set **Profiles file for navigation (optional)** to `profiles.yml`,
-**Active target (blank uses profile default)** to `dev`, and **Adapter (optional)**
+**Target** to `dev`, and **Adapter (optional)**
 to `postgres`. Click **Apply**.
 
 The selected profile output defines fields such as `target.schema`. The adapter
 narrows dispatch and function targets; without it, navigation can offer several
 candidates.
+A **Profiles file for navigation (optional)** override does not change the profiles
+file or default target used by commands.
 
 | UDF language | Supported adapters |
 | --- | --- |
@@ -103,7 +130,7 @@ Go to Declaration for an overridden variable or environment name opens a read-on
 list of names labeled **IntelliJ settings**. Values are edited only in this settings
 page and are not included in that list.
 
-Select the active target through **Active target (blank uses profile default)**.
+Select the active target through **Target**.
 Use the [Runner and native Run configuration controls](workspace.md#run-configurations)
 for selection, exclusion and named selectors. Standard `selectors.yml` definitions
 support [selector navigation](navigation.md#selectors).
@@ -153,9 +180,9 @@ target.
 
 ### dbt v2 Information Schema
 
-Requires **Engine** set to `v2` and, if set in `dbt_project.yml`, `info_schema.version: 1`.
+Requires **Engine** set to **dbt v2** and, if set in `dbt_project.yml`, `info_schema.version: 1`.
 
-Choose `v2` in **Engine** and enter `target/info_schema/v1` in
+Choose **dbt v2** in **Engine** and enter `target/info_schema/v1` in
 **Information Schema v1 directory (optional)**, then click **Apply**.
 
 Files include resources (`dbt.models.parquet`), columns (`dbt.node_columns.parquet`)
@@ -171,7 +198,7 @@ and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2)
 
 | Setting | Default and effect |
 | --- | --- |
-| **Executable or external tool** | `dbt`; a project `.venv` or `venv` is discovered first. A command name, executable or wrapper script is accepted. See [Executables and wrapper scripts](#executables-and-wrapper-scripts). |
+| **Executable or tool** | `dbt`; a project `.venv` or `venv` is discovered first. A command name, executable or wrapper script is accepted. See [Executables and wrapper scripts](#executables-and-wrapper-scripts). |
 | **Arguments before dbt command** | Empty. Arguments placed before the dbt command; quote arguments containing spaces. |
 | **Load environment files** | Enabled. Clear to skip environment files. |
 | **Environment files** | Blank uses `.env` when **Load environment files** is enabled. See [Environment files](#environment-files). |
@@ -179,14 +206,14 @@ and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2)
 | **Profiles directory** | Blank uses `DBT_PROFILES_DIR`, a project-local `profiles.yml`, then `~/.dbt`. Choose the directory containing `profiles.yml`. |
 | **Artifact directory** | `target`. Commands write artifacts here. |
 | **Manifest file (optional)** | Blank uses `manifest.json` in the artifact directory. Choose a file, or enter a path relative to the execution project. |
-| **Active target (blank uses profile default)** | Blank uses the selected profile's default target. |
+| **Target** | Blank uses the selected profile's default target. |
 | **Preview row limit** | 10; accepts 1–1000. |
 | **Colored output** | Enabled. |
 | **Desktop notifications when dbt commands finish** | Enabled. Notifications appear only while the IDE window is inactive and require **Settings → Appearance & Behavior → Notifications → Enable system notifications**. |
 
 Commands run with `DBT_TARGET_PATH` set from **Artifact directory**,
 `DBT_PROFILES_DIR` from **Profiles directory** (this takes precedence over a value
-from environment files) and `--target` from **Active target**. A discovered local
+from environment files) and `--target` from **Target**. A discovered local
 virtual environment is prepended to `PATH`. A [dbt Run configuration](workspace.md#run-configurations)
 can override the executable, prefix arguments, profiles directory and target.
 
@@ -199,7 +226,7 @@ is started as:
 <executable> <arguments before dbt command> <dbt command> <dbt options>
 ```
 
-| Executable or external tool | Arguments before dbt command | Example invocation |
+| Executable or tool | Arguments before dbt command | Example invocation |
 | --- | --- | --- |
 | `dbt` | *(empty)* | `dbt test …` |
 | `uv` | `run dbt` | `uv run dbt test …` |
@@ -272,7 +299,7 @@ symbolic links. Baselines larger than 50 MB or 50,000 resources cannot be compar
 | **Defer unselected upstream resources to baseline state** | Adds `--defer --state <directory>`. Requires a valid baseline and dbt Core. |
 | **Favor baseline relations (dbt Core 1.4+)** | Adds `--favor-state`. Requires deferral and Core 1.4+. Without it, dbt uses a relation that already exists in the active target instead of the baseline one. |
 
-Both options are off by default and unavailable for **Engine** set to `v2`. Set the
+Both options are off by default and unavailable for **Engine** set to **dbt v2**. Set the
 [engine and version](#engine-and-version) to match your executable.
 Deferral becomes available when you choose Core and enter a baseline directory.
 **Apply** checks that the directory contains `manifest.json` and is separate from
@@ -283,7 +310,7 @@ configured Core version of at least 1.4, including version requirements from
 When a prerequisite changes, an existing selection remains available to clear.
 Restore its prerequisites or clear it before clicking **Apply**. Disabled path fields
 keep their entered values; for example, an Information Schema path is retained
-while **Engine** is set to `core`.
+while **Engine** is set to **dbt Core**.
 
 ### SQL formatter
 
@@ -309,7 +336,7 @@ These apply to the [Lineage tab](workspace.md#lineage) of the IDE project.
 | --- | --- |
 | **Upstream levels to show** | Dependency levels before the focused resource; 1 shows direct inputs. Default 5; accepts 1–20. |
 | **Downstream levels to show** | Dependent levels after the focused resource; 1 shows direct consumers. Default 5; accepts 1–20. |
-| **Layout direction** | `LR` (left to right, default), `TB` (top to bottom), `RL` (right to left) or `BT` (bottom to top). |
+| **Layout direction** | **Left to right** (default), **Top to bottom**, **Right to left** or **Bottom to top**. |
 
 ### Metabase connection
 

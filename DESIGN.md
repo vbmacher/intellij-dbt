@@ -202,10 +202,16 @@ Native forms use aligned labels and horizontally growing fields, with titled
 separators and scrollable sections. General settings keep the owning-root selector
 above the scrolling form. Basic execution, navigation, formatting and lineage
 sections remain expanded; checkboxes reveal optional command, environment, baseline
-and metadata groups. General settings provide top, left, bottom
-and right insets of (11, 16, 16, 16) logical units. Integration sections use
-host-scaled spacing. These observed values are local layout choices, not a
-universal spacing grid to impose on every native surface.
+and metadata groups. Both tab bodies track the viewport width and provide top,
+left, bottom and right insets of (11, 16, 16, 16) logical units. Labels use their
+natural widths with trailing space; standalone groups use the full form width.
+Help text wraps in native labels and keeps its full height when fields shrink.
+These observed values are local layout choices, not a universal spacing grid to
+impose on every native surface.
+
+Resolved execution context is an optional read-only text view with selectable,
+wrapping content. Blank inputs show resolved defaults; engine and direction choices
+use readable names while retaining their configuration values.
 
 Lineage fills its available height. Wrapping toolbars sit above the graph, with
 compact gaps and status rows. A group rail, graph canvas and documentation pane

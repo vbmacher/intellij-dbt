@@ -9,7 +9,7 @@ import org.junit.Assert._
 
 import java.awt.Container
 import java.nio.file.{Files, Paths}
-import javax.swing.{JComboBox, JScrollPane, JTabbedPane}
+import javax.swing.{JComboBox, JScrollPane, JTabbedPane, JTextArea, JTextField, JTable, JCheckBox}
 
 /** Contract: features/configuration.md and external-command.md: configured environment reaches child tools. */
 final class DbtEnvironmentTest extends DbtTestCase {
@@ -130,6 +130,79 @@ BROKEN="unterminated
       val restored = com.intellij.util.xmlb.XmlSerializer.deserialize(xml, classOf[DbtSettingsState])
       assertEquals(field.getText, restored.projects.get(root.directory.getPath).environmentFiles)
       assertEquals("", restored.projects.get(other.directory.getPath).environmentFiles)
+    } finally configurable.disposeUIResources()
+  }
+
+  def testSettingsResolveDraftContextWithTheSameRulesAsCommandPreparation(): Unit = {
+    val owner = setupRoot()
+    add(".env", "DBT_PROFILES_DIR=dotenv-profiles\nTOKEN=dotenv-secret\n")
+    add("run/dbt_project.yml", "name: command_project\nprofile: analytics\n")
+    add("run/.env", "DBT_PROFILES_DIR=wrong-directory\n")
+    add("run/dotenv-profiles/profiles.yml", "analytics: {target: dotenv-default}\n")
+    add("run/settings-profiles/profiles.yml", "analytics: {target: settings-default}\n")
+    add("run/explicit-profiles/profiles.yml", "analytics: {target: explicit-default}\n")
+    add("run/.venv/bin/dbt", "")
+    val other = workspace.roots.find(_.directory.getPath.endsWith("/run")).get
+    val settings = DbtProjectSettings.get(getProject)
+    val configurable = new DbtSettingsConfigurable(getProject)
+    val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
+    val fields = components(tabs)
+    def field(name: String) = fields.collectFirst { case c: javax.swing.JComponent if c.getName == "dbt." + name => c }.get
+    def browse(name: String) = field(name).asInstanceOf[TextFieldWithBrowseButton]
+    val roots = field("root").asInstanceOf[JComboBox[String]]
+    val summary = field("executionContext").asInstanceOf[JTextArea]
+    val environment = field("environmentVariables").asInstanceOf[JTable].getModel.asInstanceOf[javax.swing.table.DefaultTableModel]
+    val own = owner.directory.getPath
+    try {
+      roots.setSelectedItem(own)
+      assertFalse(configurable.isModified)
+      browse("projectRoot").setText("run")
+      field("artifacts").asInstanceOf[JTextField].setText("build-output")
+      val commandDirectory = owner.executionDirectory.resolve("run").toString
+      await("Draft resolves owning-root dotenv against the command directory")(summary.getText.contains("Target: dotenv-default (profile default)"))
+      assertTrue(summary.getText, summary.getText.contains(commandDirectory + "/.venv/bin/dbt"))
+      assertTrue(summary.getText.contains("Environment files: " + own + "/.env"))
+      environment.addRow(Array[AnyRef]("DBT_PROFILES_DIR", "settings-profiles"))
+      environment.addRow(Array[AnyRef]("TOKEN", "settings-secret"))
+      field("variables").asInstanceOf[JTextArea].setText("{\"token\":\"vars-secret\"}")
+      fields.collectFirst { case text: JTextField if Option(text.getToolTipText).exists(_.startsWith("Passed before every")) => text }.get
+        .setText("run dbt --token prefix-secret")
+      await("Settings environment overrides dotenv without publishing draft values")(summary.getText.contains("Target: settings-default (profile default)"))
+      val options = owner.runOptions.copy()
+      options.projectRoot = "run"
+      options.artifactDirectory = "build-output"
+      options.environmentVariables = new java.util.TreeMap[String, String]()
+      options.environmentVariables.put("DBT_PROFILES_DIR", "settings-profiles")
+      val selection = DbtRunSelection.all(workspace, own).get
+      val command = DbtCommand.create(workspace, selection, "Compile", fullRefresh = false, options = Some(options)).toOption.get
+      assertTrue(summary.getText.contains("Command directory: " + command.directory))
+      assertTrue(summary.getText.contains("Executable: " + command.prefix.head))
+      assertTrue(summary.getText.contains("Profiles file for commands: " + command.environment("DBT_PROFILES_DIR") + "/profiles.yml"))
+      assertTrue(summary.getText.contains("Artifact directory: " + command.artifactDirectory))
+      assertEquals("Default: settings-default", field("target").asInstanceOf[com.intellij.ui.components.JBTextField].getEmptyText.getText)
+      Vector("dotenv-secret", "settings-secret", "vars-secret", "prefix-secret").foreach(secret => assertFalse(summary.getText.contains(secret)))
+      assertEquals("", settings.options(own).projectRoot)
+      assertEquals("target", settings.options(own).artifactDirectory)
+      assertTrue(settings.options(own).environmentVariables.isEmpty)
+      val environmentTable = field("environmentVariables").asInstanceOf[JTable]
+      assertTrue(environmentTable.editCellAt(0, 1))
+      environmentTable.getEditorComponent.asInstanceOf[JTextField].setText("explicit-profiles")
+      await("Context follows the active cell without committing it")(summary.getText.contains("Target: explicit-default (profile default)"))
+      assertTrue(environmentTable.isEditing)
+      environmentTable.getCellEditor.cancelCellEditing()
+      await("Canceling a cell edit restores the previous context")(summary.getText.contains("Target: settings-default (profile default)"))
+      browse("profiles").setText("explicit-profiles")
+      await("Explicit profiles directory overrides environment defaults")(summary.getText.contains("Target: explicit-default (profile default)"))
+      field("target").asInstanceOf[JTextField].setText("ci")
+      await("Explicit target is distinguished from profile defaults")(summary.getText.contains("Target: ci (settings override)"))
+      roots.setSelectedItem(other.directory.getPath)
+      assertFalse(summary.getText.contains("settings-default"))
+      assertTrue(summary.getText.contains("Command directory: " + other.directory.getPath))
+      roots.setSelectedItem(own)
+      assertTrue(summary.getText.contains("Target: ci (settings override)"))
+      field("loadEnvironmentFiles").asInstanceOf[JCheckBox].doClick()
+      await("Disabled environment loading is explicit")(summary.getText.contains("Environment files: Disabled"))
+      assertTrue(summary.getText.contains("Target: ci (settings override)"))
     } finally configurable.disposeUIResources()
   }
 

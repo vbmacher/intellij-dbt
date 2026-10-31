@@ -414,15 +414,19 @@ private[ide] object DbtUi {
       c.gridx = 0;
       c.anchor = GridBagConstraints.WEST;
       c.insets = insets
-      val caption = new JLabel(label)
-      if (label.nonEmpty) {
-        val target = input(field)
-        caption.setLabelFor(target)
-        field.getAccessibleContext.setAccessibleName(label)
-        target.getAccessibleContext.setAccessibleName(label)
+      val hasLabels = rows.exists(_._1.nonEmpty)
+      if (hasLabels) {
+        val caption = new JLabel(label)
+        if (label.nonEmpty) {
+          caption.setBorder(JBUI.Borders.emptyRight(4))
+          val target = input(field)
+          caption.setLabelFor(target)
+          field.getAccessibleContext.setAccessibleName(label)
+          target.getAccessibleContext.setAccessibleName(label)
+        }
+        panel.add(caption, c)
       }
-      panel.add(caption, c)
-      c.gridx = 1;
+      c.gridx = if (hasLabels) 1 else 0;
       c.weightx = 1;
       c.fill = GridBagConstraints.HORIZONTAL
       panel.add(field, c)

@@ -130,9 +130,16 @@ private[dbt] object DbtEnvironment {
     case _ => None
   }.toMap
 
-  def values(r: DbtRoot): Map[String, String] = {
-    val files = r.envFiles.foldLeft(Map.empty[String, String])((values, file) => values ++ parse(file.getText))
-    files ++ r.runOptions.environmentVariables.asScala
+  def paths(options: DbtRunOptions): Vector[String] =
+    if (!options.loadEnvironmentFiles) Vector.empty
+    else if (options.environmentFiles.trim.nonEmpty) options.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
+    else Vector(".env")
+
+  def values(r: DbtRoot): Map[String, String] = values(r.runOptions, r.psiFile)
+
+  def values(options: DbtRunOptions, readFile: String => Option[com.intellij.psi.PsiFile]): Map[String, String] = {
+    val files = paths(options).flatMap(readFile).foldLeft(Map.empty[String, String])((values, file) => values ++ parse(file.getText))
+    files ++ options.environmentVariables.asScala
   }
 
   private def files(r: DbtRoot, namePattern: String): Vector[DbtSymbol] = r.envFiles.flatMap { file =>
@@ -197,34 +204,41 @@ private[project] final class DbtEnvironmentSource extends DbtDeclarationSource {
 private[dbt] final case class DbtProfileContext(directory: Path, defaultTarget: Option[String])
 
 private[dbt] object DbtExecutionContext {
-  def profiles(root: DbtRoot): DbtProfileContext = {
-    val environment = sys.env ++ DbtEnvironment.values(root)
-    val directory = Option(root.runOptions.profilesDirectory).filter(_.nonEmpty).map(Paths.get(_))
+  def profiles(root: DbtRoot): DbtProfileContext = profiles(root.executionDirectory, root.runOptions, root.config, root.psiFile)
+
+  /** Resolve a draft through the same rules as command preparation, without changing project settings. */
+  def profiles(executionDirectory: Path, options: DbtRunOptions, config: org.jetbrains.yaml.psi.YAMLMapping,
+    readFile: String => Option[com.intellij.psi.PsiFile]): DbtProfileContext = {
+    def yaml(path: Path): Option[org.jetbrains.yaml.psi.YAMLMapping] = readFile(path.toString).flatMap(DbtYaml.mapping)
+    val environment = sys.env ++ DbtEnvironment.values(options, readFile)
+    val directory = Option(options.profilesDirectory).filter(_.nonEmpty).map(Paths.get(_))
       .orElse(environment.get("DBT_PROFILES_DIR").filter(_.nonEmpty).map(Paths.get(_)))
-      .map(p => if (p.isAbsolute) p else root.executionDirectory.resolve(p))
-      .getOrElse(if (root.psiFile(root.executionDirectory.resolve("profiles.yml").toString).nonEmpty) root.executionDirectory
+      .map(p => if (p.isAbsolute) p else executionDirectory.resolve(p))
+      .getOrElse(if (readFile(executionDirectory.resolve("profiles.yml").toString).nonEmpty) executionDirectory
       else Paths.get(System.getProperty("user.home"), ".dbt"))
-    val config = root.yaml(root.executionDirectory.resolve("dbt_project.yml").toString).getOrElse(root.config)
-    val profile = DbtYaml.string(config, "profile")
-      .flatMap(name => root.yaml(directory.resolve("profiles.yml").toString).flatMap(DbtYaml.map(_, name)))
+    val executionConfig = yaml(executionDirectory.resolve("dbt_project.yml")).getOrElse(config)
+    val profile = DbtYaml.string(executionConfig, "profile")
+      .flatMap(name => yaml(directory.resolve("profiles.yml")).flatMap(DbtYaml.map(_, name)))
     DbtProfileContext(directory, profile.flatMap(DbtYaml.string(_, "target")).filterNot(_.contains("{{")))
   }
 
-  def executable(root: DbtRoot): String = {
-    val configured = root.runOptions.executable.trim
-    if (configured == "dbt") virtualEnvironmentExecutable(root).map(_.toString).getOrElse("dbt")
-    else if (configured.contains('/') || configured.contains('\\')) root.executionDirectory.resolve(configured).normalize().toString
+  def executable(root: DbtRoot): String = executable(root.executionDirectory, root.runOptions.executable)
+
+  def executable(directory: Path, value: String): String = {
+    val configured = value.trim
+    if (configured == "dbt") virtualEnvironmentExecutable(directory).map(_.toString).getOrElse("dbt")
+    else if (configured.contains('/') || configured.contains('\\')) directory.resolve(configured).normalize().toString
     else configured
   }
 
-  private def virtualEnvironmentExecutable(root: DbtRoot): Option[Path] =
+  private def virtualEnvironmentExecutable(directory: Path): Option[Path] =
     Vector(".venv/bin/dbt", "venv/bin/dbt", ".venv/Scripts/dbt.exe", "venv/Scripts/dbt.exe")
-      .map(root.executionDirectory.resolve(_)).find(Files.isRegularFile(_))
+      .map(directory.resolve(_)).find(Files.isRegularFile(_))
 
   /** Wrappers and tools share configured variables and the discovered local dbt/Python. */
   def environment(root: DbtRoot): Map[String, String] = {
     val configured = DbtEnvironment.values(root)
-    configured ++ virtualEnvironmentExecutable(root).map { executable =>
+    configured ++ virtualEnvironmentExecutable(root.executionDirectory).map { executable =>
       val inheritedPath = configured.getOrElse("PATH", Option(EnvironmentUtil.getValue("PATH")).getOrElse(""))
       Map("PATH" -> (executable.getParent.toString + java.io.File.pathSeparator + inheritedPath))
     }.getOrElse(Map.empty)

@@ -14,12 +14,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   private def base: Path = Paths.get(directory.getPath)
 
-  def psiFile(path: String): Option[PsiFile] = {
-    val requested = Paths.get(path).normalize()
-    val relative = if (requested.isAbsolute && requested.startsWith(base)) base.relativize(requested).toString else path
-    Option(directory.findFileByRelativePath(relative)).orElse(
-      if (requested.isAbsolute) Option(LocalFileSystem.getInstance.findFileByPath(path)) else None).flatMap(DbtYaml.psiFile(config.getProject, _))
-  }
+  def psiFile(path: String): Option[PsiFile] = DbtRoot.psiFile(directory, config.getProject, path)
 
   def yaml(path: String): Option[YAMLMapping] = psiFile(path).flatMap(DbtYaml.mapping)
 
@@ -63,9 +58,7 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
   def profilesFile: String = setting("profiles-file").getOrElse(DbtExecutionContext.profiles(this).directory.resolve("profiles.yml").toString)
 
   def envFiles: Vector[PsiFile] =
-    (if (!runOptions.loadEnvironmentFiles) Vector.empty
-    else if (runOptions.environmentFiles.trim.nonEmpty) runOptions.environmentFiles.split(";").iterator.map(_.trim).filter(_.nonEmpty).toVector
-    else Vector(".env")).flatMap(psiFile)
+    DbtEnvironment.paths(runOptions).flatMap(psiFile)
 
   def profile: Option[YAMLMapping] = DbtYaml.string(config, "profile").flatMap(p => yaml(profilesFile).flatMap(DbtYaml.map(_, p)))
 
@@ -172,6 +165,14 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 }
 
 private[dbt] object DbtRoot {
+  def psiFile(directory: VirtualFile, project: com.intellij.openapi.project.Project, path: String): Option[PsiFile] = {
+    val base = Paths.get(directory.getPath)
+    val requested = Paths.get(path).normalize()
+    val relative = if (requested.isAbsolute && requested.startsWith(base)) base.relativize(requested).toString else path
+    Option(directory.findFileByRelativePath(relative)).orElse(
+      if (requested.isAbsolute) Option(LocalFileSystem.getInstance.findFileByPath(path)) else None).flatMap(DbtYaml.psiFile(project, _))
+  }
+
   def configuredVersion(config: YAMLMapping, overrideVersion: String): String = {
     val requirements = DbtYaml.strings(config, "require-dbt-version")
     if (overrideVersion.nonEmpty) overrideVersion

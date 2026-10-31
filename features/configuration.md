@@ -17,6 +17,10 @@ contains several dbt projects, each keeps its own navigation and run settings.
   shows that root's saved values and does not change any other root's values.
 - **Shared settings:** lineage view and integration settings apply to the whole IDE
   project.
+- **Resolved context:** the current draft can be inspected through the same profile,
+  environment and executable resolution rules used for commands. Missing files and
+  unresolved defaults remain explicit. This view does not save settings or start a
+  process, and does not repeat environment, variable or wrapper argument values.
 - **Environment files:**
   - By default, commands load `.env` from the owning root.
   - A nonempty **Environment files** setting replaces the default list.

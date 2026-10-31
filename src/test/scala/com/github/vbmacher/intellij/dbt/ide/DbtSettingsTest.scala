@@ -72,7 +72,8 @@ final class DbtSettingsTest extends DbtTestCase {
   }
 
   def testNavigationSettingsApplyResetRootSwitchingAndPersistence(): Unit = {
-    project()
+    project("profile: analytics\n")
+    add("profiles.yml", "analytics: {target: dev, outputs: {dev: {type: postgres}}}\n")
     add("other/dbt_project.yml", "name: other\n")
     val own = root.directory.getPath
     val other = workspace.roots.find(_.name == "other").get.directory.getPath
@@ -130,6 +131,10 @@ final class DbtSettingsTest extends DbtTestCase {
           assertFalse("Advanced metadata stays collapsed until requested", visibleInForm(builtinTable, form))
           assertFalse("Environment overrides stay collapsed until requested", visibleInForm(field("environmentVariables"), form))
           capture(tabs, path)
+          toggleSection(form, "resolvedContext")
+          layout(tabs); layout(tabs)
+          capture(tabs, path.stripSuffix(".png") + "-context.png")
+          toggleSection(form, "resolvedContext")
           toggleSection(form, "environmentOptions")
           layout(tabs); layout(tabs)
           capture(tabs, path.stripSuffix(".png") + "-environment.png")
@@ -185,7 +190,7 @@ final class DbtSettingsTest extends DbtTestCase {
     val form = scroll.getViewport.getView.asInstanceOf[Container]
     val fields = components(tabs)
     val roots = fields.collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.root" => combo }.get
-    val variables = fields.collectFirst { case text: JTextArea => text }.get
+    val variables = fields.collectFirst { case text: JTextArea if text.getName == "dbt.variables" => text }.get
     try {
       assertTrue(SwingUtilities.isDescendingFrom(roots, tabs.getComponentAt(0)))
       assertFalse(SwingUtilities.isDescendingFrom(roots, form))
@@ -324,7 +329,7 @@ final class DbtSettingsTest extends DbtTestCase {
     val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
     val roots = named(tabs, "root").asInstanceOf[JComboBox[String]]
     try {
-      Vector(("executable", "", "Executable or external tool"), ("artifacts", "", "Artifact directory"),
+      Vector(("executable", "", "Executable or tool"), ("artifacts", "", "Artifact directory"),
         ("artifacts", "bad\u0000path", "valid local path"), ("variables", "[]", "Variables (JSON)")).foreach { case (name, value, message) =>
         configurable.reset()
         roots.setSelectedItem(own)
@@ -478,7 +483,7 @@ final class DbtSettingsTest extends DbtTestCase {
     val configurable = new DbtSettingsConfigurable(getProject)
     val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
     try {
-      Vector("Owning dbt root", "Executable or external tool", "Environment variables", "Variables (JSON)",
+      Vector("Owning dbt root", "Executable or tool", "Target", "Environment variables", "Variables (JSON)",
         "Local builtin definitions", "Information Schema v1 directory (optional)", "Preview row limit", "Upstream levels to show",
         "Server URL", "API key", "DAG folders", "Web URL").foreach { text =>
         val label = components(tabs).collectFirst { case label: JLabel if label.getText == text => label }.get
@@ -504,5 +509,102 @@ final class DbtSettingsTest extends DbtTestCase {
       assertEquals("bad\u0000path", folders.getModel.getElementAt(0))
       assertTrue(getProject.getService(classOf[DbtConsumersSettings]).getState.airflowPaths.isEmpty)
     } finally configurable.disposeUIResources()
+  }
+
+  def testUnresolvedContextAndReadableChoicesDoNotModifySettings(): Unit = {
+    project("profile: analytics\nrequire-dbt-version: '>=1.10.5,<1.11'\n")
+    add("profiles.yml", "analytics: {target: \"{{ env_var('TARGET') }}\"}\n")
+    val own = root.directory.getPath
+    configureSettings(_.profilesDirectory = own)
+    val configurable = new DbtSettingsConfigurable(getProject)
+    val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
+    val summary = named(tabs, "executionContext").asInstanceOf[JTextArea]
+    val model = named(tabs, "environmentVariables").asInstanceOf[JTable].getModel.asInstanceOf[javax.swing.table.DefaultTableModel]
+    try {
+      named(tabs, "root").asInstanceOf[JComboBox[String]].setSelectedItem(own)
+      assertFalse(summary.isEditable)
+      assertTrue(summary.getText, summary.getText.contains("Target: Not resolved locally"))
+      assertEquals("Default: 1.10.5", named(tabs, "dbtVersion").asInstanceOf[com.intellij.ui.components.JBTextField].getEmptyText.getText)
+      assertFalse(configurable.isModified)
+      val engine = named(tabs, "engine").asInstanceOf[JComboBox[String]]
+      assertEquals("dbt Core", engine.getRenderer.getListCellRendererComponent(new JList[String], "core", 0, false, false).asInstanceOf[JLabel].getText)
+      val direction = components(tabs).collectFirst { case label: JLabel if label.getText == "Layout direction" => label.getLabelFor.asInstanceOf[JComboBox[String]] }.get
+      assertEquals("Top to bottom", direction.getRenderer.getListCellRendererComponent(new JList[String], "TB", 0, false, false).asInstanceOf[JLabel].getText)
+      assertEquals("LR", direction.getSelectedItem)
+      assertEquals("LR", DbtProjectSettings.get(getProject).getState.direction)
+      assertFalse(configurable.isModified)
+      model.addRow(Array[AnyRef]("", "private-value"))
+      await("Incomplete names replace stale context with an explanation")(summary.getText.startsWith("Correct the incomplete"))
+      assertFalse(summary.getText.contains("private-value"))
+      assertEquals(1, model.getRowCount)
+      assertTrue(root.runOptions.environmentVariables.isEmpty)
+      model.removeRow(0)
+      await("Correcting the table restores context")(summary.getText.contains("Target: Not resolved locally"))
+      named(tabs, "projectRoot").asInstanceOf[TextFieldWithBrowseButton].setText("bad\u0000path")
+      await("Invalid paths do not leave stale resolved defaults")(summary.getText.startsWith("Correct invalid paths"))
+      assertEquals("Resolve after correcting the execution settings", named(tabs, "target").asInstanceOf[com.intellij.ui.components.JBTextField].getEmptyText.getText)
+      assertEquals("Resolve after correcting the execution settings", named(tabs, "target").getAccessibleContext.getAccessibleDescription)
+      assertEquals("", root.runOptions.projectRoot)
+      assertTrue(configurable.isModified)
+    } finally configurable.disposeUIResources()
+  }
+
+  def testBothTabsFitNarrowViewportsWithLongContentAndDisabledControls(): Unit = {
+    project()
+    val longFolder = "long_project_directory_" * 7
+    project(path = longFolder + "/")
+    val owner = workspace.roots.find(_.directory.getPath.endsWith(longFolder)).get.directory.getPath
+    val configurable = new DbtSettingsConfigurable(getProject)
+    val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
+    named(tabs, "root").asInstanceOf[JComboBox[String]].setSelectedItem(owner)
+    val form = generalScrollPane(tabs).getViewport.getView.asInstanceOf[Container]
+    val folders = components(tabs).collectFirst { case list: JList[_] => list.asInstanceOf[JList[String]] }.get
+    folders.getModel.asInstanceOf[DefaultListModel[String]].addElement(owner + "/dags")
+    val url = components(tabs).collectFirst { case label: JLabel if label.getText == "Server URL" => label.getLabelFor.asInstanceOf[JTextField] }.get
+    url.setText("https://" + ("long-server-name-" * 7) + "example.test")
+    Vector("resolvedContext", "commandOptions", "environmentOptions", "baselineOptions", "metadataOptions").foreach(toggleSection(form, _))
+    tabs.addNotify()
+    try {
+      for (width <- Vector(1200, 850, 640); tab <- 0 to 1) {
+        tabs.setSize(width, 680)
+        tabs.setSelectedIndex(tab)
+        // Wrapped native labels propagate their new height through the nested forms.
+        (0 until 4).foreach(_ => layout(tabs))
+        val scroll = if (tab == 0) generalScrollPane(tabs) else tabs.getComponentAt(1).asInstanceOf[JScrollPane]
+        assertEquals(s"Tab $tab tracks viewport width at $width", scroll.getViewport.getExtentSize.width, scroll.getViewport.getView.getWidth)
+        assertFalse(s"Tab $tab needs no page-level horizontal scrolling at $width", scroll.getHorizontalScrollBar.isVisible)
+        components(tabs.getComponentAt(tab)).collect {
+          case label: com.intellij.ui.components.JBLabel if label.isAllowAutoWrapping => label
+        }.foreach { label =>
+          assertTrue(s"Tab $tab at $width: help text height ${label.getHeight}, preferred ${label.getPreferredSize}, parent ${label.getParent.getSize}: " + label.getText,
+            label.getHeight >= label.getPreferredSize.height)
+        }
+        components(scroll.getViewport.getView).collect { case label: JLabel if label.getLabelFor != null => label }.foreach { label =>
+          val input = label.getLabelFor.asInstanceOf[JComponent]
+          val widget = input.getParent match { case viewport: JViewport => viewport; case _ => input }
+          val bounds = SwingUtilities.convertRectangle(widget.getParent, widget.getBounds, scroll.getViewport.getView)
+          assertTrue(label.getText + " left edge", bounds.x >= 0)
+          assertTrue(label.getText + " right edge", bounds.x + bounds.width <= scroll.getViewport.getView.getWidth)
+          assertTrue(label.getText + " remains usable", widget.getWidth > 0 && widget.getHeight > 0)
+        }
+        if (width == 640 && tab == 0) {
+          val roots = named(tabs, "root")
+          assertEquals(roots.getSize, roots.getVisibleRect.getSize)
+          assertFalse(named(tabs, "defer").isEnabled)
+          assertFalse(named(tabs, "favorState").isEnabled)
+          assertFalse(named(tabs, "infoSchemaDirectory").isEnabled)
+          assertFalse(named(tabs, "infoSchemaDirectory").asInstanceOf[TextFieldWithBrowseButton].getTextField.isEnabled)
+          assertFalse(named(tabs, "formatOnSave").isEnabled)
+          sys.env.get("DBT_SETTINGS_SCREENSHOT").foreach { path =>
+            capture(tabs, path.stripSuffix(".png") + "-narrow-context.png")
+            val schema = named(tabs, "infoSchemaDirectory")
+            schema.scrollRectToVisible(new java.awt.Rectangle(schema.getSize))
+            capture(tabs, path.stripSuffix(".png") + "-narrow-disabled.png")
+          }
+        }
+        if (width == 640 && tab == 1) sys.env.get("DBT_INTEGRATIONS_SCREENSHOT").foreach(path =>
+          capture(tabs, path.stripSuffix(".png") + "-narrow.png"))
+      }
+    } finally { tabs.removeNotify(); configurable.disposeUIResources() }
   }
 }
