@@ -14,7 +14,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.{DialogWrapper, ValidationInfo}
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.{VfsUtil, VirtualFile, VirtualFileManager}
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -117,7 +117,7 @@ private[ide] final case class DbtCreation(kind: String, name: String, source: Op
   origin: Option[(PsiFile, TextRange, String)] = None)
 
 private[ide] object DbtCreateResourceFix {
-  private def properties(name: String): String = s"version: 2\nmodels:\n  - name: $name\n    columns:\n      - name: id\n"
+  private[ide] def properties(name: String): String = s"version: 2\nmodels:\n  - name: $name\n    columns:\n      - name: id\n"
 
   def proposal(file: PsiFile, offset: Int): Option[DbtCreation] = {
     val w = DbtWorkspace.get(file.getProject)
@@ -161,39 +161,48 @@ private[ide] object DbtCreateResourceFix {
     }
   }
 
+  def validate(proposal: DbtCreation, relativePath: String, includeProperties: Boolean = false,
+    logicalName: Option[String] = None): Either[String, java.nio.file.Path] =
+    scala.util.Try(java.nio.file.Paths.get(relativePath).normalize()).toEither
+      .left.map(_ => "Choose a valid destination path.").flatMap { path =>
+        val name = logicalName.getOrElse(proposal.name)
+        val project = proposal.root.config.getProject
+        val workspace = DbtWorkspace.get(project)
+        val current = workspace.roots.find(_.directory == proposal.root.directory)
+        val normalized = path.toString.replace('\\', '/')
+        val valid = !path.isAbsolute && !path.startsWith("..") && current.exists(root =>
+          !root.excludedPath(normalized) && root.pathKinds.exists { case (kind, folder) =>
+            kind == "model" && root.pathContains(folder, normalized)
+          })
+        val propertiesPath = path.resolveSibling(name + ".yml").toString.replace('\\', '/')
+        val filename = Option(path.getFileName).map(_.toString).getOrElse("")
+        val wrongExtension = if (proposal.kind == "model") filename != name + ".sql"
+        else !Set("yml", "yaml")(filename.split("\\.").lastOption.getOrElse(""))
+        if (!DbtSyntax.isIdentifier(name) || proposal.kind != "model" && name != proposal.name) Left("Choose a valid dbt model name.")
+        else if (wrongExtension) Left("Use the model name followed by .sql, or a .yml/.yaml source file.")
+        else if (!valid) Left("Choose a file inside a configured model path, outside generated and ignored files.")
+        else if (current.exists(root => workspace.roots.exists(other => other.directory != root.directory &&
+          root.relative(other.directory).exists(root.pathContains(_, normalized)))))
+          Left("The destination belongs to another dbt project.")
+        else if (proposal.kind == "model" && current.exists(root => workspace.declarations(DbtSymbol.RefKinds, name, root).nonEmpty))
+          Left("A resource with that logical name already exists.")
+        else if (includeProperties && (proposal.kind != "model" || current.exists(_.excludedPath(propertiesPath))))
+          Left("Choose an unexcluded model properties destination.")
+        else if (includeProperties && proposal.root.directory.findFileByRelativePath(propertiesPath) != null)
+          Left("The properties destination already exists.")
+        else if (proposal.origin.exists { case (file, _, before) => !file.isValid || !file.isWritable || file.getText != before })
+          Left("The reference changed. Reopen the quick fix.")
+        else if (name != proposal.name && proposal.origin.isEmpty) Left("Reopen the quick fix to change the reference name.")
+        else if (proposal.file.exists(f => f.getText != proposal.before)) Left("Source properties changed. Reopen the quick fix.")
+        else if (proposal.file.isEmpty && proposal.root.directory.findFileByRelativePath(path.toString) != null) Left("The destination already exists.")
+        else Right(path)
+      }
+
   def create(proposal: DbtCreation, relativePath: String, includeProperties: Boolean = false,
-    logicalName: Option[String] = None): Either[String, Unit] = {
-    val path = java.nio.file.Paths.get(relativePath).normalize()
-    val name = logicalName.getOrElse(proposal.name)
-    val project = proposal.root.config.getProject
-    val workspace = DbtWorkspace.get(project)
-    val current = workspace.roots.find(_.directory == proposal.root.directory)
-    val normalized = path.toString.replace('\\', '/')
-    val valid = !path.isAbsolute && !path.startsWith("..") && current.exists(root =>
-      !root.excludedPath(normalized) && root.pathKinds.exists { case (kind, folder) =>
-        kind == "model" && root.pathContains(folder, normalized)
-      })
-    val propertiesPath = path.resolveSibling(name + ".yml").toString.replace('\\', '/')
-    val wrongExtension = if (proposal.kind == "model") path.getFileName.toString != name + ".sql"
-    else !Set("yml", "yaml")(path.getFileName.toString.split("\\.").last)
-    if (!DbtSyntax.isIdentifier(name) || proposal.kind != "model" && name != proposal.name) Left("Choose a valid dbt model name.")
-    else if (wrongExtension) Left("Use the model name followed by .sql, or a .yml/.yaml source file.")
-    else if (!valid) Left("Choose a file inside a configured model path, outside generated and ignored files.")
-    else if (current.exists(root => workspace.roots.exists(other => other.directory != root.directory &&
-      root.relative(other.directory).exists(root.pathContains(_, normalized)))))
-      Left("The destination belongs to another dbt project.")
-    else if (proposal.kind == "model" && current.exists(root => workspace.declarations(DbtSymbol.RefKinds, name, root).nonEmpty))
-      Left("A resource with that logical name already exists.")
-    else if (includeProperties && (proposal.kind != "model" || current.exists(_.excludedPath(propertiesPath))))
-      Left("Choose an unexcluded model properties destination.")
-    else if (includeProperties && proposal.root.directory.findFileByRelativePath(propertiesPath) != null)
-      Left("The properties destination already exists.")
-    else if (proposal.origin.exists { case (file, _, before) => !file.isValid || !file.isWritable || file.getText != before })
-      Left("The reference changed. Reopen the quick fix.")
-    else if (name != proposal.name && proposal.origin.isEmpty) Left("Reopen the quick fix to change the reference name.")
-    else if (proposal.file.exists(f => f.getText != proposal.before)) Left("Source properties changed. Reopen the quick fix.")
-    else if (proposal.file.isEmpty && proposal.root.directory.findFileByRelativePath(path.toString) != null) Left("The destination already exists.")
-    else {
+    logicalName: Option[String] = None): Either[String, Unit] =
+    validate(proposal, relativePath, includeProperties, logicalName).map { path =>
+      val name = logicalName.getOrElse(proposal.name)
+      val project = proposal.root.config.getProject
       WriteCommandAction.writeCommandAction(proposal.root.config.getProject).withName("Create dbt resource").run(new com.intellij.util.ThrowableRunnable[RuntimeException] {
         override def run(): Unit = proposal.file match {
           case Some(file) =>
@@ -212,9 +221,7 @@ private[ide] object DbtCreateResourceFix {
             }
         }
       })
-      Right(())
     }
-  }
 }
 
 final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
@@ -226,50 +233,58 @@ final class DbtCreateResourceFix(offset: Int) extends IntentionAction {
 
   override def isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean = DbtCreateResourceFix.proposal(file, offset).nonEmpty
 
-  override def invoke(project: Project, editor: Editor, file: PsiFile): Unit = DbtCreateResourceFix.proposal(file, offset).foreach { proposal =>
-    val dialog = new DialogWrapper(project) {
-      val path = new JBTextField(proposal.path, 55)
-      val name = new JBTextField(proposal.name, 30)
-      name.setEditable(proposal.kind == "model")
-      path.setEditable(proposal.file.isEmpty)
-      val properties = new JCheckBox("Add model properties beside SQL")
-      properties.setVisible(proposal.kind == "model")
-      val content = new JPanel(new BorderLayout)
-      val preview = new JBTextArea(proposal.after, 12, 70);
-      preview.setEditable(false)
-      content.add(new JBLabel(s"Project: ${proposal.root.name} · ${proposal.kind} ${proposal.source.map(_ + ".").getOrElse("")}${proposal.name}"), BorderLayout.NORTH)
-      val fields = new JPanel(new java.awt.GridLayout(3, 2))
-      fields.add(new JBLabel("Logical name:"));
-      fields.add(name)
-      fields.add(new JBLabel("Destination:"));
-      fields.add(path)
-      fields.add(properties);
-      fields.add(new JBLabel(""))
-      content.add(fields, BorderLayout.CENTER);
-      content.add(new com.intellij.ui.components.JBScrollPane(preview), BorderLayout.SOUTH)
+  override def invoke(project: Project, editor: Editor, file: PsiFile): Unit =
+    DbtCreateResourceFix.proposal(file, offset).foreach(proposal => new DbtCreateResourceDialog(project, proposal).show())
+}
 
-      def updatePreview(): Unit = preview.setText(proposal.after +
-        (if (properties.isSelected) s"\n--- ${name.getText}.yml ---\n" + DbtCreateResourceFix.properties(name.getText) else ""))
+private[ide] final class DbtCreateResourceDialog(project: Project, proposal: DbtCreation) extends DialogWrapper(project) {
+  val path = new JBTextField(proposal.path, 55)
+  val name = new JBTextField(proposal.name, 30)
+  name.setEditable(proposal.kind == "model")
+  path.setEditable(proposal.file.isEmpty)
+  val properties = new JCheckBox("Add model properties beside SQL")
+  properties.setVisible(proposal.kind == "model")
+  val content = new JPanel(new BorderLayout(0, 8))
+  val preview = new JBTextArea(proposal.after, 12, 70);
+  preview.setEditable(false)
+  preview.getAccessibleContext.setAccessibleName("Proposed resource contents")
+  val header = new JPanel(new BorderLayout(0, 8))
+  header.add(new JBLabel(s"Project: ${proposal.root.name} · ${proposal.kind} ${proposal.source.map(_ + ".").getOrElse("")}${proposal.name}"), BorderLayout.NORTH)
+  val fields = new JPanel(new java.awt.GridBagLayout)
+  DbtUi.labeledRows(fields, com.intellij.util.ui.JBUI.insets(4, 0), Vector(
+    "Logical name:" -> name, "Destination:" -> path, "" -> properties))
+  header.add(fields, BorderLayout.CENTER)
+  content.add(header, BorderLayout.NORTH)
+  content.add(new com.intellij.ui.components.JBScrollPane(preview), BorderLayout.CENTER)
 
-      name.getDocument.addDocumentListener(new com.intellij.ui.DocumentAdapter {
-        override def textChanged(event: javax.swing.event.DocumentEvent): Unit = {
-          path.setText(path.getText.substring(0, path.getText.lastIndexOf('/') + 1) + name.getText + ".sql")
-          updatePreview()
-        }
-      })
-      properties.addActionListener(_ => updatePreview())
-      setTitle("Create dbt resource");
-      setOKButtonText("Create");
-      init()
+  def updatePreview(): Unit = preview.setText(proposal.after +
+    (if (properties.isSelected) s"\n--- ${name.getText}.yml ---\n" + DbtCreateResourceFix.properties(name.getText) else ""))
 
-      override def createCenterPanel(): JComponent = content
-
-      override def doOKAction(): Unit = DbtCreateResourceFix.create(proposal, path.getText.trim, properties.isSelected, Some(name.getText.trim)) match {
-        case Right(_) => super.doOKAction()
-        case Left(error) => setErrorText(error)
-      }
+  name.getDocument.addDocumentListener(new com.intellij.ui.DocumentAdapter {
+    override def textChanged(event: javax.swing.event.DocumentEvent): Unit = {
+      path.setText(path.getText.substring(0, path.getText.lastIndexOf('/') + 1) + name.getText + ".sql")
+      updatePreview()
     }
-    dialog.show()
+  })
+  properties.addActionListener(_ => updatePreview())
+  setTitle("Create dbt resource");
+  setOKButtonText("Create");
+  init()
+  initValidation()
+
+  override def createCenterPanel(): JComponent = content
+
+  override def getPreferredFocusedComponent: JComponent = if (name.isEditable) name else path
+  override def getDimensionServiceKey: String = "dbt.create.resource"
+
+  override def doValidate(): ValidationInfo =
+    DbtCreateResourceFix.validate(proposal, path.getText.trim, properties.isSelected, Some(name.getText.trim))
+      .left.toOption.map(message => new ValidationInfo(message,
+        if (!DbtSyntax.isIdentifier(name.getText.trim)) name else path)).orNull
+
+  override def doOKAction(): Unit = DbtCreateResourceFix.create(proposal, path.getText.trim, properties.isSelected, Some(name.getText.trim)) match {
+    case Right(_) => super.doOKAction()
+    case Left(error) => setErrorText(error)
   }
 }
 

@@ -6,7 +6,6 @@ import com.github.vbmacher.intellij.dbt.syntax.{DbtSqlText, DbtSyntax}
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.{PsiDocumentManager, PsiFile}
 import java.awt.datatransfer.DataFlavor
@@ -121,7 +120,7 @@ abstract class DbtClipboardAction(copying: Boolean) extends DbtEditorAction {
         }
       ) { result =>
         if (document.getModificationStamp == stamp && !editor.isDisposed) result match {
-          case Left(message) => Messages.showWarningDialog(project, message, "dbt SQL Conversion")
+          case Left(message) => com.intellij.codeInsight.hint.HintManager.getInstance().showErrorHint(editor, message)
           case Right(text) if copying => DbtUi.copy(text)
           case Right(text) => WriteCommandAction.runWriteCommandAction(project, "Paste as dbt Refs", null, new Runnable {
             override def run(): Unit = {

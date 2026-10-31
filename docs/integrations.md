@@ -21,20 +21,24 @@ connection settings.
 ## Inspect Airflow context
 
 First [add local DAG folders](configuration.md#airflow-dag-discovery). Open
-**Tools → dbt Airflow Context** to see detected DAGs and jobs, schedules, selected
-dbt resources, exclusions, ingestion destinations and unresolved selections. Select
-an entry and click **Open DAG definition** to open its Python selection or
-destination entry; **Open Airflow task** opens a browser link when an Airflow URL is
-configured. **Configure…** opens the integration settings.
+**Tools → dbt Airflow Context** to open detected DAGs and jobs in the **Find** tool
+window. Results show the DAG, task, owning project and known schedule. Open a result
+to navigate to its Python selection or destination entry.
+
+The **Airflow details** preview shows the selected task's resources, exclusions,
+ingestion destinations, unresolved selections and exact source location.
+**Open Airflow task** is available there when the selected task has a configured
+browser link. **Configure…** opens the integration settings and refreshes discovery
+when you return. Use **Rerun** to refresh after editing DAG files.
 
 Detected pipelines also appear in [Related Symbol](navigation.md#cte-structure-and-hierarchy)
 navigation and in a resource's [Quick documentation](editing.md#quick-documentation).
 
 Discovery is automatic and reads Python files in the configured folders
 recursively. It never executes Python and does not contact Airflow or cloud
-storage. Changes to watched files, including unsaved edits, update the results.
+storage. Discovery includes changes to watched files, including unsaved edits, when results are refreshed.
 It skips `.git`, `.venv`, `venv`, `node_modules` and `__pycache__` directories and
-files larger than 1 MB; unreadable paths are reported in the dialog. With one dbt project
+files larger than 1 MB; unreadable paths are reported with the results. With one dbt project
 open, that project is used; with several, a DAG file is matched to the nearest dbt project containing it;
 files outside all dbt projects remain unresolved.
 
@@ -75,11 +79,12 @@ include profile or environment values, connection secrets or warehouse rows; rev
 project descriptions in the results before sending them to an external assistant.
 
 1. [Enable the local MCP server](configuration.md#local-mcp-server).
-2. Open **Tools → dbt Local MCP Server** and click **Start**.
-3. Click **Copy MCP client configuration** and paste it into your MCP client's
+2. Open **Tools → dbt Local MCP Server** to select **dbt Workspace → Local MCP Server**
+   in the **Services** tool window, then choose **Start**.
+3. Choose **Copy MCP client configuration** and paste it into your MCP client's
    server configuration. If the client asks for separate fields, click
    **Copy endpoint and authorization** to copy the URL and `Authorization` header.
-4. Click **Stop** when finished. Closing the project or disabling the option also
+4. Choose **Stop** when finished. Closing the project or disabling the option also
    stops the server.
 
 ```json
@@ -94,8 +99,14 @@ project descriptions in the results before sending them to an external assistant
 }
 ```
 
+The Services node shows whether the server is running. **Start** requires the
+server to be enabled in settings. **Stop** and the copy actions are available only
+while it runs. Copy actions confirm when the details reach the clipboard.
+**Configure…** opens the integration settings.
+
 Each start uses a new random port and token, so copy the details again after a
-restart. Keep the token private.
+restart. The status panel shows the URL; authorization is included only when you
+copy connection details. Keep the token private.
 
 ### MCP protocol reference
 

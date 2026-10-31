@@ -841,6 +841,7 @@ final class DbtConsumersConfigurable(project: Project, onError: () => Unit = () 
     service.setSecret(new String(secret.getPassword))
     service.clear();
     if (!agent.isSelected) project.getService(classOf[DbtAgent]).stop()
+    else DbtAgentServiceView.changed(project)
   }
 
   override def reset(): Unit = {

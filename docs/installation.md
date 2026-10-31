@@ -8,6 +8,7 @@ Enable these plugins in **Settings → Plugins**:
 | Plugin | Needed for |
 | --- | --- |
 | **YAML** (bundled) | Required; the plugin does not load without it. |
+| **Services View** (bundled) | Required for the local MCP server controls in Services. |
 | **TextMate Bundles** (bundled) | dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja [highlighting](editing.md#syntax-highlighting). No bundle import or SQL file association is needed. Navigation works without it. |
 | **Test Runner** (bundled) | Required; provides the dbt [test tree](workspace.md#tests). |
 | **Web Browser (JCEF)** (bundled, with the bundled JetBrains Runtime) | The [Lineage](workspace.md#lineage) graph. Without JCEF the graph cannot open; commands and navigation still work. |

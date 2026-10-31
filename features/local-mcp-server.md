@@ -8,6 +8,7 @@ Give an AI assistant on the same computer read-only access to the dbt project mo
 
 - **Inputs:** user opt-in, explicit service start and authenticated MCP requests over Streamable HTTP.
 - **Outputs:** project/resource lists, reference/selection resolution, documentation, and resource/column lineage.
+- **Controls:** the Services tool window owns Start, Stop and connection-copy actions. Start requires opt-in; Stop and copying require a running server. Copy actions confirm success. The status panel omits authorization; connection-copy actions include it.
 - The service binds to loopback with a fresh bearer token on each start. Stop, project close or disabling opt-in ends access.
 - It has no command-execution or warehouse-write tool. Responses omit profile/environment secret values and warehouse rows.
 - Resource lineage returns one dependency step per request. Partial results are marked when limits are reached.
@@ -22,12 +23,6 @@ After explicitly starting the service, an authenticated MCP client using version
 ```
 
 It can then call `get_documentation` for a project/resource identity returned by `list_projects` and `list_resources`. These requests do not run dbt.
-
-## Screenshot
-
-![Local MCP server dialog in its stopped state, without an exposed token.](screenshots/integrations-agent-stopped.png)
-
-Local MCP server dialog in its stopped state, without an exposed token.
 
 ## Interactions
 

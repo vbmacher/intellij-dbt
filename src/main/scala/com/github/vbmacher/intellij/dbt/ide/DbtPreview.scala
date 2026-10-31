@@ -61,7 +61,7 @@ private[ide] object DbtPreviewModelAction {
       DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getPath).toRight("Choose an available dbt model.")
         .flatMap(DbtCommand.create(w, _, "Preview", fullRefresh = false))
     } {
-      case Left(error) => Messages.showInfoMessage(project, error, "Preview dbt model")
+      case Left(error) => DbtNotifications.show(project, "Preview dbt model", error)
       case Right(command) => DbtRunConfiguration.launch(project, command)
     }
   }
@@ -119,7 +119,7 @@ private[ide] object DbtCteInspection {
           case Left(error) if offerModelPreview =>
             if (Messages.showYesNoDialog(project, error, title, "Preview model", "Cancel", Messages.getInformationIcon) == Messages.YES)
               DbtPreviewModelAction.launch(project, file)
-          case Left(error) => Messages.showInfoMessage(project, error, title)
+          case Left(error) => DbtNotifications.show(project, title, error)
           case Right(command) => DbtRunConfiguration.launch(project, command)
         }
       }

@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.notification.NotificationType
 import com.github.vbmacher.intellij.dbt.navigation.{DbtCte, DbtNavigation, DbtSqlAnalysis}
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
@@ -14,7 +15,6 @@ import com.intellij.openapi.editor.event.{DocumentEvent, DocumentListener}
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileTypes.{FileType, PlainTextFileType}
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.{Disposer, Key}
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.util.PsiModificationTracker
@@ -649,8 +649,7 @@ final class DbtInspectCtesAction extends AnAction("Inspect dbt CTEs") {
       w.model(file).toRight("Choose a dbt source model.").map(_.file.getVirtualFile.getPath)
     } {
       case Right(path) => DbtCteDebugger.compile(project, path)
-      case Left(reason) => Messages.showErrorDialog(project,
-        "Cannot inspect this model's CTEs.\n\n" + reason, "Inspect dbt CTEs")
+      case Left(reason) => DbtNotifications.show(project, "Inspect dbt CTEs", "Cannot inspect this model's CTEs.\n\n" + reason, NotificationType.ERROR)
     }
   }
 }

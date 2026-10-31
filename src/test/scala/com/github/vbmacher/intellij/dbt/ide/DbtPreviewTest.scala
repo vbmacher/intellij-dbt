@@ -74,6 +74,10 @@ final class DbtPreviewTest extends DbtTestCase {
       grid.exportTo(fresh)
       await("A new destination needs no replacement prompt") { java.nio.file.Files.exists(fresh) }
       assertEquals(2, prompts)
+      java.nio.file.Files.writeString(destination, "confirmed by native save dialog")
+      grid.exportTo(destination, overwriteConfirmed = true)
+      await("Native save confirmation is not repeated") { java.nio.file.Files.readString(destination).startsWith("\"id\"") }
+      assertEquals(2, prompts)
     } finally TestDialogManager.setTestDialog(previous)
   }
 

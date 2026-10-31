@@ -6,7 +6,7 @@ val testPackaged = taskKey[Unit]("Test the minimized plugin without the original
 val generatePackagedFixtures = taskKey[Unit]("Write Parquet fixtures using the test-only writer runtime")
 val pythonTestSdk = settingKey[File]("IntelliJ SDK containing the Python Community plugin")
 val pythonTestPlugins = settingKey[Seq[File]]("Installed Python test plugins and their dependencies")
-val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin,intellij.testRunner.plugin"
+val testPluginIds = "com.github.vbmacher.intellij-dbt,org.jetbrains.plugins.yaml,org.jetbrains.plugins.textmate,com.intellij.modules.json,intellij.libraries.misc.plugin,intellij.structureView.plugin,intellij.testRunner.plugin,intellij.execution.serviceView.plugin,intellij.navbar.plugin"
 val pythonNavigationTest = "com.github.vbmacher.intellij.dbt.navigation.python.DbtPythonNavigationTest"
 val packagedRuntimeTest = "com.github.vbmacher.intellij.dbt.metadata.DbtPackagedRuntimeTest"
 lazy val PythonTest = config("python") extend Test
@@ -42,6 +42,8 @@ lazy val root = (project in file("."))
       "intellij.libraries.misc.plugin".toPlugin,
       "intellij.structureView.plugin".toPlugin,
       "com.intellij.modules.jcef".toPlugin,
+      "intellij.execution.serviceView.plugin".toPlugin,
+      "intellij.navbar.plugin".toPlugin,
       "intellij.testRunner.plugin".toPlugin
     ),
     resolvers += "IntelliJ releases" at intellijRepository,
