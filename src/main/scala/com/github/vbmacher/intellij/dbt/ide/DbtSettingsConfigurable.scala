@@ -1,23 +1,30 @@
 package com.github.vbmacher.intellij.dbt.ide
 
-import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRunOptions, DbtVariableOverrides}
+import com.github.vbmacher.intellij.dbt.project.{DbtProjectSettings, DbtRoot, DbtRunOptions, DbtVariableOverrides}
+import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.intellij.openapi.fileChooser.{FileChooser, FileChooserDescriptorFactory}
 import com.intellij.openapi.options.{Configurable, ConfigurationException, ShowSettingsUtil}
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.intellij.openapi.ui.{ComponentValidator, TextFieldWithBrowseButton, ValidationInfo}
+import com.intellij.openapi.roots.ProjectRootManager
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.{TitledSeparator, ToolbarDecorator}
 import com.intellij.ui.components.{JBCheckBox, JBLabel, JBList, JBScrollPane, JBTextField}
 import com.intellij.util.ui.{JBUI, UIUtil}
-import java.awt.{BorderLayout, Dimension, GridBagConstraints, GridBagLayout, Insets, Rectangle}
-import java.nio.file.{InvalidPathException, Paths}
+import java.awt.{BorderLayout, Dimension, GridBagConstraints, GridBagLayout, Rectangle}
+import java.nio.file.{Files, InvalidPathException, Paths}
 import javax.swing._
 import javax.swing.table.DefaultTableModel
+import javax.swing.event.{DocumentEvent, DocumentListener}
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 final class DbtSettingsConfigurable(project: Project) extends Configurable with Configurable.NoMargin with Configurable.NoScroll {
   private val settings = DbtProjectSettings.get(project)
-  private val integrations = new DbtConsumersConfigurable(project)
   private val tabs = new JTabbedPane
+  private val integrations = new DbtConsumersConfigurable(project, () => tabs.setSelectedIndex(1))
+  private val validation = new DbtSettingsValidation
   private val root = new JComboBox[String]()
   private val executable = new TextFieldWithBrowseButton {
     override protected def getIconTooltip: String = "Choose a dbt executable, script, or custom tool"
@@ -44,26 +51,32 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     table.putClientProperty("terminateEditOnFocusLost", java.lang.Boolean.TRUE)
     val panel = ToolbarDecorator.createDecorator(table).disableUpDownActions()
       .setAddAction(_ => model.addRow(Array[AnyRef]("", "")))
-      .setRemoveAction(_ => table.getSelectedRows.reverse.foreach(model.removeRow)).createPanel()
+      .setRemoveAction(_ => {
+        if (!table.isEditing || table.getCellEditor.stopCellEditing()) table.getSelectedRows.reverse.foreach(model.removeRow)
+      }).createPanel()
     panel.setMinimumSize(JBUI.size(0, 85))
     panel.setPreferredSize(JBUI.size(300, 120))
+    panel.putClientProperty("dbt.input", table)
     panel
   }
 
-  private def fillMappings(model: DefaultTableModel, values: java.util.Map[String, String]): Unit = {
+  private def fillMappings(table: JTable, model: DefaultTableModel, rows: Vector[(String, String)]): Unit = {
+    if (table.isEditing) table.getCellEditor.cancelCellEditing()
     model.setRowCount(0)
-    values.asScala.toVector.sortBy(_._1).foreach { case (name, value) => model.addRow(Array[AnyRef](name, value)) }
+    rows.foreach { case (name, value) => model.addRow(Array[AnyRef](name, value)) }
   }
 
-  private def readMappings(table: JTable, model: DefaultTableModel, allowEmpty: Boolean): java.util.Map[String, String] = {
-    if (table.isEditing) table.getCellEditor.stopCellEditing()
-    val values = new java.util.TreeMap[String, String]()
-    (0 until model.getRowCount).foreach { row =>
-      val name = Option(model.getValueAt(row, 0)).fold("")(_.toString.trim)
-      val value = Option(model.getValueAt(row, 1)).fold("")(_.toString)
-      if (name.nonEmpty && (allowEmpty || value.trim.nonEmpty)) values.put(name, if (allowEmpty) value else value.trim)
+  private def readMappings(table: JTable, model: DefaultTableModel): Vector[(String, String)] = {
+    def value(row: Int, column: Int): String = {
+      val current = if (table.isEditing && row == table.getEditingRow && column == table.getEditingColumn) {
+        table.getEditorComponent match {
+          case text: javax.swing.text.JTextComponent => text.getText
+          case _ => table.getCellEditor.getCellEditorValue
+        }
+      } else model.getValueAt(row, column)
+      Option(current).fold("")(_.toString)
     }
-    values
+    (0 until model.getRowCount).map(row => value(row, 0) -> value(row, 1)).toVector
   }
 
   private val projectRoot = new TextFieldWithBrowseButton {
@@ -87,9 +100,62 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
   private val upstream = new JSpinner(new SpinnerNumberModel(5, 1, 20, 1))
   private val downstream = new JSpinner(new SpinnerNumberModel(5, 1, 20, 1))
   private val direction = new JComboBox[String](Array("LR", "TB", "RL", "BT"))
+  private val deferHelp = new JBLabel
+  private val favorHelp = new JBLabel
+  private val schemaHelp = new JBLabel
+  private val formatterHelp = new JBLabel
   private var selectedRoot: String = ""
-  private var drafts = Map.empty[String, DbtRunOptions]
-  private var baseline = ""
+  private case class Draft(options: DbtRunOptions, environment: Vector[(String, String)], builtins: Vector[(String, String)], preview: String) {
+    def values: Vector[Any] = Vector(options.values, environment, builtins, preview)
+  }
+  private def savedDraft(options: DbtRunOptions): Draft = Draft(options.copy(),
+    options.environmentVariables.asScala.toVector.sortBy(_._1), options.builtinSources.asScala.toVector.sortBy(_._1), options.previewLimit.toString)
+  private var drafts = Map.empty[String, Draft]
+  private var baseline = Vector.empty[Any]
+
+  private def previewLimit(text: String): Option[Int] = Try {
+    DbtUi.input(limit).asInstanceOf[JFormattedTextField].getFormatter.stringToValue(text)
+  }.toOption.collect { case number: java.lang.Number if number.doubleValue() == number.intValue() && number.intValue() >= 1 && number.intValue() <= 1000 => number.intValue() }
+
+  private def withHelp(field: JComponent, hint: JBLabel): JPanel = {
+    val result = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+    hint.setForeground(UIUtil.getContextHelpForeground)
+    result.add(field, BorderLayout.NORTH)
+    result.add(hint, BorderLayout.CENTER)
+    result.putClientProperty("dbt.input", field)
+    result
+  }
+
+  /** Look up the selected project's config without discovering or indexing the workspace. */
+  private def rootDirectory(owner: String): Option[com.intellij.openapi.vfs.VirtualFile] =
+    ProjectRootManager.getInstance(project).getContentRoots.iterator.flatMap { base =>
+      if (base.getPath == owner) Some(base)
+      else if (owner.startsWith(base.getPath + "/")) Option(base.findFileByRelativePath(owner.stripPrefix(base.getPath + "/")))
+      else None
+    }.nextOption().orElse(Option(LocalFileSystem.getInstance.findFileByPath(owner)))
+
+  private def version(owner: String, configured: String): String =
+    rootDirectory(owner).flatMap(dir => Option(dir.findChild("dbt_project.yml")))
+      .flatMap(DbtYaml.psiFile(project, _)).flatMap(DbtYaml.mapping)
+      .map(DbtRoot.configuredVersion(_, configured)).getOrElse(if (configured.nonEmpty) configured else "unknown")
+
+  private def updatePrerequisites(): Unit = {
+    val core = engine.getSelectedItem == "core"
+    val hasState = stateDirectory.getText.trim.nonEmpty
+    val favors = core && DbtRoot.supportsVersion(version(selectedRoot, dbtVersion.getText.trim), 4)
+    // An incompatible selection can still be cleared; it cannot be newly selected.
+    defer.setEnabled(core && hasState || defer.isSelected)
+    favorState.setEnabled(favors && hasState && defer.isSelected || favorState.isSelected)
+    infoSchema.setEnabled(!core)
+    formatOnSave.setEnabled(formatterExecutable.getText.trim.nonEmpty || formatOnSave.isSelected)
+    Vector((defer, deferHelp, "Requires dbt Core and a baseline directory containing manifest.json."),
+      (favorState, favorHelp, "Requires deferral and dbt Core 1.4 or later."),
+      (infoSchema, schemaHelp, "Used only when Engine is v2. The path is kept when Core is selected."),
+      (formatOnSave, formatterHelp, "Requires a formatter executable.")).foreach { case (field, hint, text) =>
+      hint.setText("<html>" + text + "</html>")
+      DbtUi.input(field).getAccessibleContext.setAccessibleDescription(text)
+    }
+  }
 
   override def getDisplayName: String = "dbt Workspace"
 
@@ -121,7 +187,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     environmentFiles.addBrowseFolderListener(project, FileChooserDescriptorFactory.singleFile()
       .withTitle("Select environment file").withShowHiddenFiles(true))
     environmentFiles.setToolTipText("Environment files separated by semicolons, relative to the owning dbt root or absolute. Later files override earlier files. Blank uses .env. Environment variables from IntelliJ settings override files.")
-    Vector("engine" -> engine, "dbtVersion" -> dbtVersion, "profilesFile" -> profilesFile, "adapter" -> adapter,
+    Vector("root" -> root, "executable" -> executable, "artifacts" -> artifacts, "stateDirectory" -> stateDirectory,
+      "defer" -> defer, "favorState" -> favorState, "formatterExecutable" -> formatterExecutable, "formatOnSave" -> formatOnSave,
+      "engine" -> engine, "dbtVersion" -> dbtVersion, "profilesFile" -> profilesFile, "adapter" -> adapter,
       "variables" -> variables, "environmentVariables" -> environmentVariables, "catalogPath" -> catalog,
       "stateManifestPath" -> stateManifest, "infoSchemaDirectory" -> infoSchema, "builtinSources" -> builtinSources,
       "loadEnvironmentFiles" -> loadEnvironmentFiles).foreach { case (name, field) => field.setName("dbt." + name) }
@@ -153,39 +221,97 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     executableArguments.setToolTipText("Passed before every dbt command. Example: uv + run dbt → uv run dbt test. Quote paths with spaces; shell expressions are not evaluated.")
     upstream.setToolTipText("How many dependency levels to show before the focused resource in Lineage. 1 shows its direct inputs; 2 also shows their inputs. Accepts 1–20.")
     downstream.setToolTipText("How many dependent levels to show after the focused resource in Lineage. 1 shows resources that use it directly; 2 also shows resources that use those. Accepts 1–20.")
-    val metadataForm = new JPanel(new GridBagLayout)
-    val showMetadata = new JBCheckBox("Show advanced metadata")
-    metadataForm.setVisible(false)
-    showMetadata.addActionListener(_ => metadataForm.setVisible(showMetadata.isSelected))
-    DbtUi.labeledRows(metadataForm, new Insets(4, 5, 4, 10), Vector(
-      "Profiles file for navigation (optional)" -> profilesFile,
-      "Local builtin definitions" -> mappings(builtinSources, builtinModel),
-      "Catalog file (optional)" -> catalog, "Manifest file (optional)" -> manifest,
-      "State manifest for navigation (optional)" -> stateManifest,
-      "Information Schema v1 directory (optional)" -> infoSchema))
-    val rows = Vector("Owning dbt root" -> root,
-      "" -> new TitledSeparator("Execution"),
-      "Executable or external tool" -> executable, "Arguments before dbt command" -> executableArguments,
-      "Active target (blank uses profile default)" -> target, "Profiles directory" -> profiles,
-      "Project root override" -> projectRoot, "Artifact directory" -> artifacts,
-      "" -> loadEnvironmentFiles, "Environment files" -> environmentFiles,
-      "Environment variables" -> mappings(environmentVariables, environmentModel), "Variables (JSON)" -> variablesPane,
-      "Preview row limit" -> limit, "" -> colors, "" -> notifications,
-      "Baseline state directory" -> stateDirectory, "" -> defer, "" -> favorState,
-      "" -> new TitledSeparator("Navigation"),
-      "Engine" -> engine, "dbt version (optional)" -> dbtVersion, "Adapter (optional)" -> adapter,
-      "" -> showMetadata, "" -> metadataForm,
-      "" -> new TitledSeparator("Formatting"),
-      "SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> formatOnSave,
-      "" -> new TitledSeparator("Lineage — shared across dbt roots"),
-      "Upstream levels to show" -> upstream, "Downstream levels to show" -> downstream, "Layout direction" -> direction)
-    rows.foreach { case (_, field) => field.setMinimumSize(new Dimension(0, field.getMinimumSize.height)) }
-    DbtUi.labeledRows(panel, new Insets(4, 5, 4, 10), rows)
+    def form(rows: Seq[(String, JComponent)]): JPanel = {
+      val result = new JPanel(new GridBagLayout)
+      rows.foreach { case (_, field) => field.setMinimumSize(new Dimension(0, field.getMinimumSize.height)) }
+      DbtUi.labeledRows(result, JBUI.insets(4, 5, 4, 10), rows)
+      result
+    }
+    def collapsed(name: String, title: String, rows: Seq[(String, JComponent)]): JPanel = {
+      val result = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+      result.setName("dbt." + name)
+      val content = form(rows)
+      val show = new JBCheckBox("Show " + title)
+      show.setMnemonic(title.head.toUpper)
+      content.setVisible(false)
+      show.addActionListener(_ => {
+        content.setVisible(show.isSelected)
+        result.revalidate()
+        result.repaint()
+      })
+      result.add(show, BorderLayout.NORTH)
+      result.add(content, BorderLayout.CENTER)
+      result.putClientProperty("dbt.disclosure", show)
+      result
+    }
+    val sections = Vector(
+      new TitledSeparator("Execution"),
+      form(Vector("Executable or external tool" -> executable,
+        "Active target (blank uses profile default)" -> target, "Profiles directory" -> profiles)),
+      collapsed("commandOptions", "command options", Vector(
+        "Arguments before dbt command" -> executableArguments,
+        "Project root override" -> projectRoot, "Artifact directory" -> artifacts,
+        "Preview row limit" -> limit, "" -> colors, "" -> notifications)),
+      collapsed("environmentOptions", "environment and variables", Vector(
+        "" -> loadEnvironmentFiles, "Environment files" -> environmentFiles,
+        "Environment variables" -> mappings(environmentVariables, environmentModel), "Variables (JSON)" -> variablesPane)),
+      collapsed("baselineOptions", "baseline state", Vector(
+        "Baseline state directory" -> stateDirectory, "" -> withHelp(defer, deferHelp), "" -> withHelp(favorState, favorHelp))),
+      new TitledSeparator("Navigation"),
+      form(Vector("Engine" -> engine, "dbt version (optional)" -> dbtVersion, "Adapter (optional)" -> adapter)),
+      collapsed("metadataOptions", "advanced metadata", Vector(
+        "Profiles file for navigation (optional)" -> profilesFile,
+        "Local builtin definitions" -> mappings(builtinSources, builtinModel),
+        "Catalog file (optional)" -> catalog, "Manifest file (optional)" -> manifest,
+        "State manifest for navigation (optional)" -> stateManifest,
+        "Information Schema v1 directory (optional)" -> withHelp(infoSchema, schemaHelp))),
+      new TitledSeparator("Formatting"),
+      form(Vector("SQL formatter" -> formatter, "Formatter executable (optional)" -> formatterExecutable, "" -> withHelp(formatOnSave, formatterHelp))),
+      new TitledSeparator("Lineage — shared across dbt roots"),
+      form(Vector("Upstream levels to show" -> upstream, "Downstream levels to show" -> downstream, "Layout direction" -> direction)))
+    val labels = sections.collect { case form: JPanel if !form.isInstanceOf[TitledSeparator] && form.getLayout.isInstanceOf[GridBagLayout] =>
+      form.getComponents.collect { case label: JLabel => label }
+    }.flatten
+    val labelWidth = labels.map(_.getPreferredSize.width).max
+    labels.foreach(label => label.setPreferredSize(new Dimension(labelWidth, label.getPreferredSize.height)))
+    sections.zipWithIndex.foreach { case (section, row) =>
+      val c = new GridBagConstraints
+      c.gridx = 0; c.gridy = row; c.weightx = 1
+      c.fill = GridBagConstraints.HORIZONTAL
+      c.anchor = GridBagConstraints.NORTHWEST
+      c.insets = JBUI.insets(if (row > 0 && section.isInstanceOf[TitledSeparator]) 12 else 4, 0, 4, 0)
+      panel.add(section, c)
+    }
+    val filler = new GridBagConstraints
+    filler.gridy = sections.size
+    filler.weighty = 1
+    panel.add(new JPanel, filler)
     root.addActionListener(_ => {
-      if (selectedRoot.nonEmpty) drafts += selectedRoot -> readOptions()
+      if (selectedRoot.nonEmpty) drafts += selectedRoot -> readDraft()
+      validation.clear()
       selectRoot()
     })
-    tabs.addTab("General", new JBScrollPane(panel))
+    engine.addActionListener(_ => updatePrerequisites())
+    defer.addActionListener(_ => updatePrerequisites())
+    favorState.addActionListener(_ => updatePrerequisites())
+    formatOnSave.addActionListener(_ => updatePrerequisites())
+    val prerequisitesChanged = new DocumentListener {
+      override def insertUpdate(event: DocumentEvent): Unit = updatePrerequisites()
+      override def removeUpdate(event: DocumentEvent): Unit = updatePrerequisites()
+      override def changedUpdate(event: DocumentEvent): Unit = updatePrerequisites()
+    }
+    Vector(dbtVersion.getDocument, stateDirectory.getTextField.getDocument, formatterExecutable.getTextField.getDocument)
+      .foreach(_.addDocumentListener(prerequisitesChanged))
+    val owner = new JPanel(new BorderLayout(0, JBUI.scale(4)))
+    owner.setBorder(JBUI.Borders.empty(11, 16, 4, 16))
+    owner.add(form(Vector("Owning dbt root" -> root)), BorderLayout.NORTH)
+    val scope = new JBLabel("Execution, Navigation and Formatting apply to this root. Lineage is shared across roots.")
+    scope.setForeground(UIUtil.getContextHelpForeground)
+    owner.add(scope, BorderLayout.SOUTH)
+    val general = new JPanel(new BorderLayout)
+    general.add(owner, BorderLayout.NORTH)
+    general.add(new JBScrollPane(panel), BorderLayout.CENTER)
+    tabs.addTab("General", general)
     tabs.addTab("Integrations", new JBScrollPane(integrations.createComponent()))
     reset()
     tabs
@@ -193,10 +319,11 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
 
   private def selectRoot(): Unit = {
     selectedRoot = Option(root.getSelectedItem).fold("")(_.toString)
-    fill(drafts.getOrElse(selectedRoot, new DbtRunOptions))
+    fill(drafts.getOrElse(selectedRoot, savedDraft(new DbtRunOptions)))
   }
 
-  private def fill(o: DbtRunOptions): Unit = {
+  private def fill(draft: Draft): Unit = {
+    val o = draft.options
     executable.setText(o.executable)
     executableArguments.setText(o.executableArguments)
     environmentFiles.setText(o.environmentFiles)
@@ -207,11 +334,11 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     profilesFile.setText(o.profilesFile)
     adapter.setText(o.adapter)
     variables.setText(o.variables)
-    fillMappings(environmentModel, o.environmentVariables)
+    fillMappings(environmentVariables, environmentModel, draft.environment)
     catalog.setText(o.catalogPath)
     stateManifest.setText(o.stateManifestPath)
     infoSchema.setText(o.infoSchemaDirectory)
-    fillMappings(builtinModel, o.builtinSources)
+    fillMappings(builtinSources, builtinModel, draft.builtins)
     projectRoot.setText(o.projectRoot)
     profiles.setText(o.profilesDirectory)
     artifacts.setText(o.artifactDirectory)
@@ -224,12 +351,14 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     formatterExecutable.setText(o.formatterExecutable)
     formatOnSave.setSelected(o.formatOnSave)
     limit.setValue(Int.box(o.previewLimit.max(1).min(1000)))
+    DbtUi.input(limit).asInstanceOf[JFormattedTextField].setText(draft.preview)
     colors.setSelected(o.colors)
     notifications.setSelected(o.notifications)
+    updatePrerequisites()
   }
 
-  private def readOptions(): DbtRunOptions = {
-    val o = drafts.getOrElse(selectedRoot, new DbtRunOptions).copy()
+  private def readDraft(): Draft = {
+    val o = drafts.getOrElse(selectedRoot, savedDraft(new DbtRunOptions)).options.copy()
     o.executable = executable.getText.trim
     o.executableArguments = executableArguments.getText.trim
     o.environmentFiles = environmentFiles.getText.trim
@@ -239,11 +368,9 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     o.profilesFile = profilesFile.getText.trim
     o.adapter = adapter.getText.trim
     o.variables = variables.getText.trim
-    o.environmentVariables = readMappings(environmentVariables, environmentModel, allowEmpty = true)
     o.catalogPath = catalog.getText.trim
     o.stateManifestPath = stateManifest.getText.trim
     o.infoSchemaDirectory = infoSchema.getText.trim
-    o.builtinSources = readMappings(builtinSources, builtinModel, allowEmpty = false)
     o.projectRoot = projectRoot.getText.trim
     o.profilesDirectory = profiles.getText.trim
     o.artifactDirectory = artifacts.getText.trim
@@ -255,22 +382,22 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     o.formatter = formatter.getSelectedItem.toString
     o.formatterExecutable = formatterExecutable.getText.trim
     o.formatOnSave = formatOnSave.isSelected
-    o.previewLimit = limit.getValue.asInstanceOf[Number].intValue()
+    val preview = DbtUi.input(limit).asInstanceOf[JFormattedTextField].getText
+    o.previewLimit = previewLimit(preview).getOrElse(limit.getValue.asInstanceOf[Number].intValue())
     o.colors = colors.isSelected
     o.notifications = notifications.isSelected
-    o
+    Draft(o, readMappings(environmentVariables, environmentModel), readMappings(builtinSources, builtinModel), preview)
   }
 
-  private def snapshot(): String = {
-    val options = drafts.updated(selectedRoot, readOptions()).toVector.sortBy(_._1).map { case (p, o) =>
-      (p +: o.values).mkString("\u0000")
-    }
-    (options ++ Vector(upstream.getValue, downstream.getValue, direction.getSelectedItem).map(_.toString)).mkString("\u0001")
-  }
+  private def snapshot(): Vector[Any] =
+    Vector(drafts.updated(selectedRoot, readDraft()).toVector.sortBy(_._1).map { case (path, draft) => (path, draft.values) },
+      DbtUi.input(upstream).asInstanceOf[JFormattedTextField].getText,
+      DbtUi.input(downstream).asInstanceOf[JFormattedTextField].getText, direction.getSelectedItem)
 
   override def reset(): Unit = {
     selectedRoot = ""
-    drafts = settings.getState.projects.asScala.toMap.view.mapValues(_.copy()).toMap
+    validation.clear()
+    drafts = settings.getState.projects.asScala.toMap.view.mapValues(savedDraft).toMap
     // Root paths are recorded by normal workspace discovery, so opening Settings never scans the project on the EDT.
     root.removeAllItems()
     val paths = (drafts.keys.toVector ++ Option(project.getBasePath)).distinct.sorted
@@ -298,24 +425,134 @@ final class DbtSettingsConfigurable(project: Project) extends Configurable with 
     manifest.dispose()
     formatterExecutable.dispose()
     integrations.disposeUIResources()
+    validation.dispose()
+  }
+
+  private def reject(owner: String, field: JComponent, message: String, row: Int = -1, column: Int = 0): Nothing = {
+    if (owner != selectedRoot) root.setSelectedItem(owner)
+    tabs.setSelectedIndex(0)
+    Iterator.iterate(field: java.awt.Component)(_.getParent).takeWhile(_ != null).foreach {
+      case component: JComponent => component.getClientProperty("dbt.disclosure") match {
+        case show: JCheckBox if !show.isSelected => show.doClick()
+        case _ => ()
+      }
+      case _ => ()
+    }
+    field match {
+      case table: JTable if row >= 0 => table.changeSelection(row, column, false, false)
+      case _ => ()
+    }
+    validation.reject(field, s"$owner — $message")
+  }
+
+  private def checkedMappings(owner: String, rows: Vector[(String, String)], table: JTable, allowEmpty: Boolean): java.util.Map[String, String] = {
+    val values = new java.util.TreeMap[String, String]()
+    val title = table.getAccessibleContext.getAccessibleName
+    rows.zipWithIndex.foreach { case ((rawName, rawValue), row) =>
+      val name = rawName.trim
+      def invalid(column: Int, problem: String): Nothing = reject(owner, table, s"$title, row ${row + 1}: $problem", row, column)
+      if (name.isEmpty) invalid(0, "Enter a name, or remove this row.")
+      if (allowEmpty && !name.matches("[A-Za-z_][A-Za-z_0-9]*"))
+        invalid(0, "Names must start with a letter or underscore and contain only letters, digits or underscores.")
+      if (values.containsKey(name)) invalid(0, "This name is already used in an earlier row. Rename or remove the duplicate.")
+      if (!allowEmpty && rawValue.trim.isEmpty) invalid(1, "Choose a local source file, or remove this row.")
+      if (!allowEmpty) try Paths.get(rawValue.trim)
+      catch { case _: InvalidPathException => invalid(1, "Use a valid local source file path.") }
+      values.put(name, if (allowEmpty) rawValue else rawValue.trim)
+    }
+    values
+  }
+
+  private def checkedOptions(owner: String, draft: Draft): DbtRunOptions = {
+    val options = draft.options.copy()
+    if (options.executable.isEmpty) reject(owner, executable, "Executable or external tool: enter a command or choose an executable.")
+    if (options.artifactDirectory.isEmpty) reject(owner, artifacts, "Artifact directory: enter an output directory, such as target.")
+    val paths = Vector((projectRoot, "Project root override", options.projectRoot),
+      (profiles, "Profiles directory", options.profilesDirectory), (artifacts, "Artifact directory", options.artifactDirectory),
+      (manifest, "Manifest file", options.manifestPath), (stateDirectory, "Baseline state directory", options.stateDirectory),
+      (profilesFile, "Profiles file for navigation", options.profilesFile), (catalog, "Catalog file", options.catalogPath),
+      (stateManifest, "State manifest for navigation", options.stateManifestPath)) ++
+      (if (options.engine == "v2") Vector((infoSchema, "Information Schema v1 directory", options.infoSchemaDirectory)) else Vector.empty)
+    paths.foreach { case (field, label, path) =>
+      try Paths.get(path)
+      catch { case _: InvalidPathException => reject(owner, field, s"$label: enter a valid local path.") }
+    }
+    options.previewLimit = previewLimit(draft.preview)
+      .getOrElse(reject(owner, limit, "Preview row limit: enter a whole number from 1 to 1000."))
+    DbtVariableOverrides.parse(options.variables).left.foreach(message => reject(owner, variables, "Variables (JSON): " + message))
+    options.environmentVariables = checkedMappings(owner, draft.environment, environmentVariables, allowEmpty = true)
+    options.builtinSources = checkedMappings(owner, draft.builtins, builtinSources, allowEmpty = false)
+    if (options.defer && options.engine != "core") reject(owner, defer, "Deferral requires Engine set to core. Clear deferral or choose core.")
+    if (options.favorState && (!options.defer || options.engine != "core" || !DbtRoot.supportsVersion(version(owner, options.dbtVersion), 4)))
+      reject(owner, favorState, "Favor baseline relations requires deferral and dbt Core 1.4 or later. Clear the option or restore its prerequisites.")
+    if (options.formatOnSave && options.formatterExecutable.isEmpty)
+      reject(owner, formatterExecutable, "Formatter executable: enter a command, or clear Format dbt SQL on save.")
+    if (options.defer) {
+      if (options.stateDirectory.isEmpty) reject(owner, stateDirectory, "Baseline state directory: choose a directory containing manifest.json before enabling deferral.")
+      try {
+        val execution = Paths.get(owner).resolve(options.projectRoot).normalize()
+        val state = execution.resolve(options.stateDirectory).normalize()
+        DbtState.separate(state, execution.resolve(options.artifactDirectory)).left.foreach(message => reject(owner, stateDirectory, message))
+        val manifestPath = state.resolve("manifest.json")
+        val localManifest = rootDirectory(owner).filter(_ => manifestPath.startsWith(Paths.get(owner))).flatMap(dir =>
+          Option(dir.findFileByRelativePath(Paths.get(owner).relativize(manifestPath).toString)))
+        if (!Files.isRegularFile(manifestPath) && !localManifest.exists(!_.isDirectory))
+          reject(owner, stateDirectory, "Baseline state directory: choose a directory containing manifest.json.")
+      } catch { case _: InvalidPathException => reject(owner, stateDirectory, "Baseline state directory: use a valid local directory path.") }
+    }
+    options
   }
 
   override def apply(): Unit = {
-    if (executable.getText.trim.isEmpty || artifacts.getText.trim.isEmpty) throw new ConfigurationException("Executable and artifact directory must not be blank.")
-    drafts += selectedRoot -> readOptions()
-    drafts.values.foreach { options =>
-      DbtVariableOverrides.parse(options.variables).left.foreach(message => throw new ConfigurationException(message))
-      if (options.environmentVariables.keySet().asScala.exists(!_.matches("[A-Za-z_][A-Za-z_0-9]*")))
-        throw new ConfigurationException("Environment variable names must start with a letter or underscore and contain only letters, digits or underscores.")
+    validation.clear()
+    Vector(upstream, downstream).foreach { spinner =>
+      try spinner.commitEdit()
+      catch { case _: java.text.ParseException => reject(selectedRoot, spinner, spinner.getAccessibleContext.getAccessibleName + ": enter a number within the allowed range.") }
     }
+    drafts += selectedRoot -> readDraft()
+    val checked = drafts.toVector.sortBy(_._1).map { case (owner, draft) => owner -> checkedOptions(owner, draft) }.toMap
     if (integrations.isModified) integrations.apply()
-    settings.getState.projects = new java.util.TreeMap[String, DbtRunOptions](drafts.asJava)
+    settings.getState.projects = new java.util.TreeMap[String, DbtRunOptions](checked.asJava)
     settings.getState.upstreamDepth = upstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.downstreamDepth = downstream.getValue.asInstanceOf[Number].intValue()
     settings.getState.direction = direction.getSelectedItem.toString
     settings.changed()
     baseline = snapshot()
   }
+}
+
+/** Native field errors share the settings UI lifetime, including their focus and accessible descriptions. */
+private final class DbtSettingsValidation {
+  private val lifetime = Disposer.newDisposable("dbt Settings validation")
+  private var disposed = false
+  private var descriptions = Map.empty[JComponent, String]
+
+  def clear(): Unit = {
+    descriptions.foreach { case (field, description) =>
+      ComponentValidator.getInstance(field).ifPresent(_.updateInfo(null))
+      field.getAccessibleContext.setAccessibleDescription(description)
+    }
+    descriptions = Map.empty
+  }
+
+  def reject(field: JComponent, message: String): Nothing = {
+    val input = DbtUi.input(field)
+    descriptions += input -> input.getAccessibleContext.getAccessibleDescription
+    ComponentValidator.getInstance(input).orElseGet(() => new ComponentValidator(lifetime).installOn(input))
+      .updateInfo(new ValidationInfo(com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(message), input))
+    input.getAccessibleContext.setAccessibleDescription(message)
+    SwingUtilities.invokeLater(() => if (!disposed && input.isShowing) {
+      val location = input match {
+        case table: JTable if table.getSelectedRow >= 0 => table.getCellRect(table.getSelectedRow, table.getSelectedColumn.max(0), true)
+        case _ => new Rectangle(input.getSize)
+      }
+      input.scrollRectToVisible(location)
+      input.requestFocusInWindow()
+    })
+    throw new ConfigurationException(message)
+  }
+
+  def dispose(): Unit = if (!disposed) { clear(); disposed = true; Disposer.dispose(lifetime) }
 }
 
 object DbtSettingsConfigurable {
@@ -329,7 +566,8 @@ object DbtSettingsConfigurable {
 }
 
 /** The Integrations tab: Metabase, the local MCP server and local Airflow DAG discovery. */
-final class DbtConsumersConfigurable(project: Project) extends Configurable {
+final class DbtConsumersConfigurable(project: Project, onError: () => Unit = () => ()) extends Configurable {
+  private val validation = new DbtSettingsValidation
   private val url = new JBTextField()
   private val secret = new JPasswordField()
   private val agent = new JBCheckBox("Enable local read-only MCP server")
@@ -348,6 +586,8 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     val result = new JPanel(new BorderLayout(0, JBUI.scale(4)))
     result.add(field, BorderLayout.NORTH)
     result.add(help(text), BorderLayout.CENTER)
+    result.putClientProperty("dbt.input", field)
+    DbtUi.input(field).getAccessibleContext.setAccessibleDescription(text)
     result
   }
 
@@ -401,6 +641,7 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     .setRemoveAction(_ => {
       airflowFolders.getSelectedIndices.reverse.foreach(airflowPaths.remove)
     }).createPanel()
+  folderPanel.putClientProperty("dbt.input", airflowFolders)
   private val airflow = section("Airflow — local DAG discovery", Vector(
     "DAG folders" -> fieldWithHelp(folderPanel, "Scan local folders and Airflow checkouts recursively. Remove all folders to stop discovery."),
     "Web URL" -> fieldWithHelp(airflowUrl, "Optional. Used only to open detected DAGs and tasks in your browser.")))
@@ -425,14 +666,20 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     new String(secret.getPassword) != service.apiKey || folderValues != settings.airflowPaths.asScala.toVector || airflowUrl.getText.trim != settings.airflowUrl
 
   override def apply(): Unit = {
+    validation.clear()
+    def invalid(field: JComponent, message: String): Nothing = { onError(); validation.reject(field, message) }
     val value = url.getText.trim
-    if (value.nonEmpty && DbtAirflow.safeUrl(value).isEmpty) throw new ConfigurationException("Use an http(s) Metabase URL without embedded credentials.")
+    if (value.nonEmpty && DbtAirflow.safeUrl(value).isEmpty) invalid(url, "Metabase Server URL: use an HTTP or HTTPS URL without embedded credentials.")
     val airflowLink = airflowUrl.getText.trim
     if (airflowLink.nonEmpty && DbtAirflow.safeUrl(airflowLink).isEmpty)
-      throw new ConfigurationException("Use an http(s) Airflow URL without embedded credentials.")
-    try folderValues.foreach(Paths.get(_))
-    catch {
-      case _: InvalidPathException => throw new ConfigurationException("Use valid local Airflow directory paths.")
+      invalid(airflowUrl, "Airflow Web URL: use an HTTP or HTTPS URL without embedded credentials.")
+    folderValues.zipWithIndex.foreach { case (path, row) =>
+      try Paths.get(path)
+      catch {
+        case _: InvalidPathException =>
+          airflowFolders.setSelectedIndex(row)
+          invalid(airflowFolders, s"DAG folders, row ${row + 1}: use a valid local directory path.")
+      }
     }
     settings.airflowPaths = new java.util.ArrayList[String](folderValues.asJava)
     settings.airflowUrl = airflowLink
@@ -445,6 +692,7 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
   }
 
   override def reset(): Unit = {
+    validation.clear()
     url.setText(settings.metabaseUrl);
     agent.setSelected(settings.agentEnabled);
     secret.setText(service.apiKey)
@@ -453,5 +701,5 @@ final class DbtConsumersConfigurable(project: Project) extends Configurable {
     airflowUrl.setText(settings.airflowUrl)
   }
 
-  override def disposeUIResources(): Unit = secret.setText("")
+  override def disposeUIResources(): Unit = { secret.setText(""); validation.dispose() }
 }

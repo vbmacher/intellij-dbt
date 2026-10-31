@@ -199,7 +199,10 @@ web view's system-font stack. Do not introduce a decorative font into either.
 ## Layout
 
 Native forms use aligned labels and horizontally growing fields, with titled
-separators and scrollable sections. General settings provide top, left, bottom
+separators and scrollable sections. General settings keep the owning-root selector
+above the scrolling form. Basic execution, navigation, formatting and lineage
+sections remain expanded; checkboxes reveal optional command, environment, baseline
+and metadata groups. General settings provide top, left, bottom
 and right insets of (11, 16, 16, 16) logical units. Integration sections use
 host-scaled spacing. These observed values are local layout choices, not a
 universal spacing grid to impose on every native surface.
@@ -249,6 +252,10 @@ Familiar, restrained, and immediately understandable. Use the existing IntelliJ
 fields, lists, tables, tabs, titled separators and toolbars. Native focus, selected,
 disabled and validation treatments come from the host. Context help uses the
 host's subdued help-text color. Keep labels aligned and fields free to grow.
+Form labels identify the editable input inside browse fields, scroll panes and
+other form wrappers. Validation reveals the relevant context and uses native field
+markers with accessible error descriptions. Prerequisite hints accompany dependent
+controls; incompatible existing selections remain available to clear.
 
 ### Web buttons and fields
 

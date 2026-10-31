@@ -106,10 +106,10 @@ BROKEN="unterminated
     assertEquals("configured", command(root).environment("ATHENA_WORK_GROUP"))
     val configurable = new DbtSettingsConfigurable(getProject)
     val tabs = configurable.createComponent().asInstanceOf[JTabbedPane]
-    val form = tabs.getComponentAt(0).asInstanceOf[JScrollPane].getViewport.getView.asInstanceOf[Container]
+    val form = components(tabs.getComponentAt(0)).collectFirst { case scroll: JScrollPane => scroll }.get.getViewport.getView.asInstanceOf[Container]
     try {
-      val roots = form.getComponents.collectFirst { case combo: JComboBox[_] => combo.asInstanceOf[JComboBox[String]] }.get
-      val field = form.getComponents.collectFirst { case field: TextFieldWithBrowseButton if field.getName == "dbt.environmentFiles" => field }.get
+      val roots = components(tabs).collectFirst { case combo: JComboBox[_] if combo.getName == "dbt.root" => combo.asInstanceOf[JComboBox[String]] }.get
+      val field = components(form).collectFirst { case field: TextFieldWithBrowseButton if field.getName == "dbt.environmentFiles" => field }.get
       roots.setSelectedItem(root.directory.getPath)
       assertEquals("configured.env", field.getText)
       field.setText("custom env; " + last.getVirtualFile.getPath)

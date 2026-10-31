@@ -31,7 +31,11 @@ contains several dbt projects, each keeps its own navigation and run settings.
   object prevents **Apply** and command preparation. Configured names open read-only
   lists without their values; edits belong in IntelliJ settings.
 - **Apply and Reset:** **Apply** checks values, such as allowed number ranges, before
-  saving changes from both tabs. **Reset** puts the saved values back into both tabs.
+  saving changes from both tabs and all owning roots. Invalid entries retain their
+  draft values, including incomplete and duplicate table rows, and identify their
+  owning root and field. Environment names must be valid and unique; builtin mappings
+  require a unique name and source file. Unsupported active options prevent saving.
+  **Reset** puts the saved values back into both tabs.
 - **No side effects:** changing settings does not run dbt, refresh Metabase data or
   start the local MCP server.
 - **Credentials:** the Metabase API key is stored in IDE Password Safe, never in
@@ -56,7 +60,8 @@ keeps its own values.
 
 ![dbt Workspace settings with per-root navigation fields.](../docs/screenshots/configuration.png)
 
-The General tab for one owning root, showing variables, environment overrides and navigation settings.
+The General tab for one owning root. See [Configuration](../docs/configuration.md)
+for the settings groups and their controls.
 
 ## Interactions
 

@@ -389,7 +389,24 @@ private[ide] object DbtUi {
     }.show()
   }
 
-  /** Grid rows of a label and a horizontally growing field. */
+  /** The editable input inside a labeled browse field, scroll pane or settings wrapper. */
+  def input(field: JComponent): JComponent = field.getClientProperty("dbt.input") match {
+    case target: JComponent => input(target)
+    case _ => field match {
+      case browse: com.intellij.openapi.ui.TextFieldWithBrowseButton => browse.getTextField
+      case scroll: JScrollPane => scroll.getViewport.getView match {
+        case view: JComponent => input(view)
+        case _ => field
+      }
+      case spinner: JSpinner => spinner.getEditor match {
+        case editor: JSpinner.DefaultEditor => editor.getTextField
+        case _ => field
+      }
+      case _ => field
+    }
+  }
+
+  /** Grid rows with labels associated with their editable inputs. */
   def labeledRows(panel: JPanel, insets: Insets, rows: Seq[(String, JComponent)]): Unit = rows.zipWithIndex.foreach {
     case ((label, field), row) =>
       val c = new GridBagConstraints
@@ -397,7 +414,14 @@ private[ide] object DbtUi {
       c.gridx = 0;
       c.anchor = GridBagConstraints.WEST;
       c.insets = insets
-      panel.add(new JLabel(label), c)
+      val caption = new JLabel(label)
+      if (label.nonEmpty) {
+        val target = input(field)
+        caption.setLabelFor(target)
+        field.getAccessibleContext.setAccessibleName(label)
+        target.getAccessibleContext.setAccessibleName(label)
+      }
+      panel.add(caption, c)
       c.gridx = 1;
       c.weightx = 1;
       c.fill = GridBagConstraints.HORIZONTAL

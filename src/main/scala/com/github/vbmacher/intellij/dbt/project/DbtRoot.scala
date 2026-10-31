@@ -88,18 +88,11 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 
   val engine: String = setting("engine").getOrElse("core")
 
-  val version: String = setting("dbt-version").getOrElse {
-    val requirements = DbtYaml.strings(config, "require-dbt-version")
-    if (requirements.isEmpty) "1.10" else DbtRoot.requiredVersion(requirements).getOrElse("unknown")
-  }
+  val version: String = DbtRoot.configuredVersion(config, setting("dbt-version").getOrElse(""))
 
   /** Whether the configured engine supports a dbt Core 1.x feature; dbt v2 supports all of them. */
   def supports(minor: Int, patch: Int = 0): Boolean = engine == "v2" || engine == "core" &&
-    (version.split("\\.").take(2).flatMap(_.toIntOption).toVector match {
-      case Vector(major, _) if major >= 2 => true
-      case Vector(1, m) => m > minor || m == minor && version.split("\\.").lift(2).flatMap(_.toIntOption).forall(_ >= patch)
-      case _ => false
-    })
+    DbtRoot.supportsVersion(version, minor, patch)
 
   /** Whether the configured engine supports a resource kind. */
   def supportsKind(kind: String): Boolean = kind match {
@@ -179,6 +172,19 @@ private[dbt] final case class DbtRoot(directory: VirtualFile, config: YAMLMappin
 }
 
 private[dbt] object DbtRoot {
+  def configuredVersion(config: YAMLMapping, overrideVersion: String): String = {
+    val requirements = DbtYaml.strings(config, "require-dbt-version")
+    if (overrideVersion.nonEmpty) overrideVersion
+    else if (requirements.isEmpty) "1.10" else requiredVersion(requirements).getOrElse("unknown")
+  }
+
+  def supportsVersion(version: String, minor: Int, patch: Int = 0): Boolean =
+    version.split("\\.").take(2).flatMap(_.toIntOption).toVector match {
+      case Vector(major, _) if major >= 2 => true
+      case Vector(1, m) => m > minor || m == minor && version.split("\\.").lift(2).flatMap(_.toIntOption).forall(_ >= patch)
+      case _ => false
+    }
+
   private val VersionConstraint = """(>=|<=|>|<|=)?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?""".r
 
   /** Lowest stable version satisfying every bound; unsupported or inconsistent ranges have no hint. */

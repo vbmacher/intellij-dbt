@@ -11,11 +11,21 @@ The page has two tabs: **General** for navigation, execution, formatting and lin
 and **Integrations** for Metabase, Airflow and the local MCP server. **Apply** saves
 both tabs. On **General**, choose **Owning dbt root** first: navigation, execution,
 environment, formatter and baseline settings apply to that dbt project only.
-The page groups **Execution**, **Navigation**, **Formatting** and **Lineage**.
-Select **Show advanced metadata** under Navigation for explicit metadata paths and
-local builtin definitions. Lineage settings apply across dbt roots.
+The root selector stays visible while you scroll. **Execution** shows the executable,
+target and profiles directory. Select **Show command options** for wrapper arguments,
+directory overrides, preview limits and output preferences; **Show environment and variables**
+for environment files and variable overrides; or **Show baseline state** for comparison
+and deferral settings. Under **Navigation**, select **Show advanced metadata** for explicit
+metadata paths and local builtin definitions. **Formatting** and **Lineage** follow
+Navigation. Lineage settings apply across dbt roots.
+Clearing a **Show…** checkbox hides its group without changing its values.
 
-![General settings grouped by capability, with advanced metadata hidden.](screenshots/configuration.png)
+**Apply** checks all dbt roots before saving. If an entry is invalid, Settings selects
+its root and tab, opens the relevant group and marks the field or table row. Your
+entries stay in place so you can correct them. No settings are saved until validation
+succeeds. **Reset** restores the saved values.
+
+![General settings with basic setup visible and optional groups collapsed.](screenshots/configuration.png)
 
 ### Navigation settings
 
@@ -114,6 +124,9 @@ reference documentation. Select a row and click **Remove** to delete a mapping.
 SQL mappings name files containing macros; Python mappings name files containing
 functions and need [Python support](installation.md#requirements). Missing
 definitions fall back to documentation.
+
+Each row needs a builtin name and a local source file. Names must be unique;
+correct or remove incomplete and duplicate rows before clicking **Apply**.
 
 ### Local metadata
 
@@ -232,6 +245,10 @@ To set an override directly, click **Add** in **Environment variables**, enter a
 select the row and click **Remove** to stop overriding it. Values are saved with
 the IntelliJ project settings.
 
+Each row needs a unique variable name starting with a letter or underscore and
+containing only letters, digits or underscores. **Apply** rejects incomplete names
+and duplicates instead of dropping rows. Empty values are allowed.
+
 Commands inherit the IDE's environment. Files override inherited values in their
 listed order; the last assignment wins. Values in **Environment variables** override files.
 Each command reads the current file contents. Missing files and invalid assignments
@@ -257,6 +274,16 @@ symbolic links. Baselines larger than 50 MB or 50,000 resources cannot be compar
 
 Both options are off by default and unavailable for **Engine** set to `v2`. Set the
 [engine and version](#engine-and-version) to match your executable.
+Deferral becomes available when you choose Core and enter a baseline directory.
+**Apply** checks that the directory contains `manifest.json` and is separate from
+the artifact directory. **Favor baseline relations** also requires deferral and a
+configured Core version of at least 1.4, including version requirements from
+`dbt_project.yml` when the version field is blank.
+
+When a prerequisite changes, an existing selection remains available to clear.
+Restore its prerequisites or clear it before clicking **Apply**. Disabled path fields
+keep their entered values; for example, an Information Schema path is retained
+while **Engine** is set to `core`.
 
 ### SQL formatter
 
@@ -265,6 +292,10 @@ Both options are off by default and unavailable for **Engine** set to `v2`. Set 
 | **SQL formatter** | `sqlfmt` (default) or `sqlfluff`. SQLFluff is required for SQL inspection. |
 | **Formatter executable (optional)** | Blank disables formatting and SQL inspection. Enter a command name or choose an executable. Relative paths resolve from the execution root. |
 | **Format dbt SQL on save** | Off by default. Formats supported dbt SQL files in the background when saved. |
+
+**Format dbt SQL on save** becomes available after you enter a formatter executable.
+If you clear the executable while formatting on save is selected, **Apply** asks you
+to restore the executable or clear the option.
 
 The formatter runs in the execution directory with the project's environment, so
 the project's SQLFluff configuration and templater must work there. Runs longer
