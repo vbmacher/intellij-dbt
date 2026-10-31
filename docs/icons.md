@@ -64,6 +64,9 @@ paths are shown in parentheses. Availability follows the
 | IDE green test icon | Test passed | Same places, when the latest compatible result passed. |
 | IDE red test icon | Test failed or errored | Same places, when a test on that line failed or errored; takes precedence over other results on the line. |
 | IDE yellow test icon | Test warned or skipped | Same places, when a result warned or was skipped and no test on that line failed. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/breakpoint-pending-dark.svg"><img src="icons/breakpoint-pending.svg" alt="pending breakpoint" width="20" height="20"></picture> | Pending CTE breakpoint | Model or macro SQL gutter: a source breakpoint whose compilation mapping is not yet available. See [Source breakpoints](workspace.md#source-breakpoints-and-compiled-sql). |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/breakpoint-verified-dark.svg"><img src="icons/breakpoint-verified.svg" alt="resolved breakpoint" width="20" height="20"></picture> | Resolved CTE breakpoint | Model or macro SQL gutter: the selected Debug model's current compilation maps this line to an inspectable CTE. |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="icons/breakpoint-unresolved-dark.svg"><img src="icons/breakpoint-unresolved.svg" alt="unresolved breakpoint" width="20" height="20"></picture> | Unresolved CTE breakpoint | Model or macro SQL gutter: the selected Debug model's compilation did not map this line to an inspectable CTE. Hover for the reason. |
 
 The test tree uses the IDE's standard test status icons.
 

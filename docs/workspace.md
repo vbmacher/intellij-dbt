@@ -283,38 +283,91 @@ compiled SQL read-only, and
 ## Inspect CTE queries
 
 In a local SQL model, click the Run gutter icon and choose **Debug dbt CTEs**, or
-choose **dbt → Inspect dbt CTEs** from the context menu, to open a **Debug** session.
-Opening it runs no query. It uses the project's
-[execution settings](configuration.md#execution-settings), including the active
-target; Run configuration overrides do not apply. **Frames** lists the model's
-top-level CTEs; select a frame to see its cached result in **Rows**.
+choose **dbt → Inspect dbt CTEs** from the context menu. Debug compiles that model
+using its owning project's [execution settings](configuration.md#execution-settings)
+and active target. Run configuration overrides do not apply. Compilation can run
+queries used by macros to discover warehouse metadata; it does not materialize
+the model. Inspection queries start only when you use **Step Over** or **Resume**.
 
-If inspection cannot open, a dialog explains why and confirms that no query ran.
-SQL parsing failures include the parser's reason and location when available.
-A model without top-level CTEs has no steps to inspect.
-Only CTEs written in the model source are available as steps. If a macro generates
-the query, use [Open Compiled dbt SQL](#compiled-sql) to view it; generated CTEs
-cannot be stepped through here.
+Source-mapped inspection requires the Python dbt Core 1.8+ CLI. Its process must
+preserve `PYTHONPATH`, including when launched through a wrapper. Native/Fusion
+CLIs cannot supply these mappings. Compilation failures, unsupported runtimes and
+SQL parsing failures appear in the Debug console. A compiled model without
+supported top-level CTEs has no inspection steps.
+
+### Source breakpoints and compiled SQL
+
+Set breakpoints in the gutter of a SQL model or macro definition, then start Debug
+from the model you want to inspect. Breakpoints stay pending until compilation.
+A resolved breakpoint binds to the generated CTEs that contain SQL produced by
+that source line. **Resume** pauses after a matching CTE's result is available,
+highlighting the source line. Disabled and muted breakpoints do not stop Resume.
+
+For example, this model delegates its query to a macro:
+
+```sql
+{{ config(materialized='view') }}
+
+{{ wms_stage_packaging_input(
+    source('wms_raw', 'all_cma_pairwise_final_output_all_demo_combinations')
+) }}
+```
+
+A breakpoint on `wms_stage_packaging_input(` binds to the CTEs produced by that
+call. A breakpoint on a SQL-producing line inside the macro can select a narrower
+set of CTEs. Nested macro calls and repeated loop expansions retain separate
+generated steps. A breakpoint shared by several steps can stop on the same
+source line more than once.
+
+![A macro-call source breakpoint with the first generated CTE result in Debug.](screenshots/cte-source-breakpoint.png)
+
+**Step Into** opens the current CTE in read-only compiled SQL without running a
+query. **Step Over** advances one generated CTE at a time in either view.
+**Step Out** returns to the current CTE's mapped source location.
+
+![Step Into shows the generated SQL while preserving the CTE result.](screenshots/cte-compiled-step.png)
+
+These captures show the native IntelliJ editor and Debug Rows panels without the
+surrounding IDE frame, using a local dbt Core/DuckDB project. The macro generates
+two CTEs that return a single `id` value.
+
+Lines that produce no inspectable CTE remain unresolved; hover over the breakpoint
+for the reason. String transformations can remove an inner macro location while
+leaving its enclosing output expression mapped. SQL without a reliable source
+location opens at its compiled location, and its frame says **source mapping
+unavailable**. The debugger never chooses a source line by guessing from similar
+SQL text.
+
+### Controls and results
+
+**Frames** lists the compiled model's top-level CTEs in SQL order. CTEs nested
+inside another CTE are not separate steps. Select a frame to see its cached result
+in **Rows**.
 
 | Control | Action |
 | --- | --- |
-| **Step Over** | Query the next CTE. The first step queries the first CTE. |
-| **Resume** | Query successive CTEs until a CTE breakpoint, a failure or the end. |
-| Editor breakpoint | Set on a top-level CTE's definition line; **Resume** pauses after that CTE's result is available. |
+| **Step Over** | Query the next CTE with the CTEs it depends on. The first step queries the first CTE. After source changes, the first step recompiles only; step again to query. |
+| **Resume** | Query successive CTEs until a mapped source breakpoint, failure or the end. |
+| **Step Into** | Show the selected CTE in compiled SQL without querying. |
+| **Step Out** | Show its mapped source location without querying. If no source mapping exists, keep the compiled location. |
 | **Cached Step Back** | Show the previous cached result without querying. |
 | **Count all CTE rows** | Count all rows of the selected CTE in a separate query. |
-| **Restart CTE inspection** | Clear progress and cached results. |
-| **Stop** | Cancel the active query and end the session. |
-| **Step Into** | Open another inspection, without querying, when the selected CTE references exactly one local model. |
+| **Restart CTE inspection** | Clear progress and cached results. The next step queries the first CTE, or recompiles first if source or settings changed. |
+| **Stop** | Cancel this inspection's compilation or query and end the session. |
 
-**Step Out** and **Run to Cursor** do nothing in a CTE inspection.
-To set a breakpoint, click the editor gutter on the line containing a top-level
-CTE's name. Breakpoints apply to CTE inspection; they do not pause a normal
-**Run** command or execution inside warehouse SQL or Jinja.
+**Run to Cursor** is unavailable. Inspection breakpoints do not pause a normal
+**Run** command, an executing warehouse query, or Jinja evaluation. Each step runs
+a separate bounded query and recalculates its dependencies, so random values and
+timestamps can differ between steps. Only one dbt process runs per IDE project.
 
-Each step is a separate query that recalculates its dependencies, so random values
-and timestamps can differ between steps. Editing source or changing execution
-settings cancels the active query and discards cached results. Recursive CTEs, CTE
-column lists and template setup that cannot be preserved are rejected before any
-query runs. To browse CTEs without querying, use the
+Editing the model, a contributing macro or another resource of its execution
+project, or changing execution settings, cancels the current command and discards
+cached results and source mappings. An explicit step recompiles before any more
+inspection queries can run. Failed or canceled compilations provide no steps.
+
+Recursive CTEs, explicit CTE column lists, unsupported SQL dialects and queries that
+modify data or schema are rejected before an inspection query runs. Compilation
+can still have executed macro queries. Error details retain the submitted and
+adapter SQL when available; **Go to CTE error** navigates to the corresponding
+compiled SQL location. To browse source CTEs without compiling or querying, use the
 [CTE structure view](navigation.md#cte-structure-and-hierarchy).

@@ -29,10 +29,17 @@ import javax.swing.JPanel
 import org.jdom.Element
 import scala.jdk.CollectionConverters._
 
+private[ide] object DbtCteController {
+  private final case class Active(name: String, command: DbtCommand, context: DbtCteContext, count: Boolean)
+}
+
 /** Query-driven state shared by native debugger controls; it never represents a paused warehouse query. */
 private[ide] final class DbtCteController(project: Project, val path: String,
-  initial: Vector[DbtCte], changed: () => Unit, output: (String, Key[_]) => Unit,
-  breakpoint: DbtCte => Boolean) extends Disposable {
+                                          initial: Vector[DbtCte], changed: () => Unit, output: (String, Key[_]) => Unit,
+                                          breakpoint: DbtCte => Boolean, val compileSource: Boolean = false) extends Disposable {
+
+  import DbtCteController.Active
+
   private val session = new DbtCteSession
   private val runner = project.getService(classOf[DbtRunner])
   var frames: Vector[DbtCte] = initial
@@ -44,13 +51,14 @@ private[ide] final class DbtCteController(project: Project, val path: String,
   private var pending = Option.empty[Long]
   private var disposed = false
   private var observed = Option.empty[DbtCteContext]
-
-  private final case class Active(name: String, command: DbtCommand, context: DbtCteContext, count: Boolean)
+  var compilation: Option[DbtCteCompilation] = None
+  private var compiling = Option.empty[DbtCteCompileJob]
+  private var compileGeneration = 0L
 
   private var active = Option.empty[Active]
   private var continuing = false
 
-  def running: Boolean = pending.nonEmpty || active.nonEmpty
+  def running: Boolean = pending.nonEmpty || active.nonEmpty || compiling.nonEmpty
 
   def stopped: Boolean = disposed || session.stopped
 
@@ -87,7 +95,8 @@ private[ide] final class DbtCteController(project: Project, val path: String,
 
   def restart(): Unit = {
     cancelPreparation();
-    if (active.nonEmpty) runner.stop()
+    if (active.nonEmpty || compiling.nonEmpty) runner.stop()
+    compiling = None
     active = None;
     continuing = false;
     session.restart();
@@ -102,7 +111,8 @@ private[ide] final class DbtCteController(project: Project, val path: String,
     cancelPreparation();
     continuing = false;
     session.stop()
-    if (active.nonEmpty) runner.stop()
+    if (active.nonEmpty || compiling.nonEmpty) runner.stop()
+    compiling = None
     active = None;
     result = None;
     evidence = None;
@@ -112,26 +122,94 @@ private[ide] final class DbtCteController(project: Project, val path: String,
 
   runner.listen(this, onRunnerEvent)
 
-  private[ide] def onRunnerEvent(event: DbtRunnerEvent): Unit = active.filter(a => !event.running && event.command.exists(_ eq a.command)).foreach { finished =>
-    active = None
-    if (!disposed && !session.stopped && currentContext().contains(finished.context)) {
-      evidence = event.previewEvidence;
-      result = event.result;
-      message = event.message
-      event.result.foreach(r => if (!finished.count) session.record(finished.name, r))
-      if (continuing && !finished.count && event.result.nonEmpty && !frames.lift(selected).exists(breakpoint) &&
-        session.position + 1 < frames.size) run(count = false)
+  def compile(): Unit = if (compileSource && !running && !runner.isRunning && !stopped) {
+    DbtUi.saveAndCommit(project)
+    val token = generation + 1
+    generation = token
+    pending = Some(token)
+    observed = currentContext()
+    message = "Compiling the model and mapping source breakpoints. Compilation may run macro queries…"
+    changed()
+    DbtUi.readLater(this, smartIn = Some(project), committedIn = Some(project)) {
+      val w = DbtWorkspace.get(project)
+      w.model(path).toRight("The model source is unavailable.").flatMap(DbtCteCompileJob.prepare(w, _))
+    } { prepared =>
+      if (disposed || generation != token || !pending.contains(token) || stopped) prepared.foreach(_.dispose())
       else {
+        pending = None
+        prepared match {
+          case Left(error) => message = error; changed()
+          case Right(job) if !observed.contains(job.context) || !currentContext().contains(job.context) =>
+            job.dispose(); message = "Source or execution settings changed. Restart to compile again."; changed()
+          case Right(job) =>
+            Disposer.register(this, job)
+            compiling = Some(job)
+            compileGeneration = token
+            if (!runner.start(job.command, output)) {
+              compiling = None;
+              job.dispose();
+              message = "Another dbt command is running.";
+              changed()
+            }
+        }
+      }
+    }
+  }
+
+  private[ide] def onRunnerEvent(event: DbtRunnerEvent): Unit = {
+    compiling.filter(job => !event.running && event.command.exists(_ eq job.command)).foreach { job =>
+      compiling = None
+      val token = compileGeneration
+      if (stopped || token != generation || !currentContext().contains(job.context)) {
+        job.dispose();
+        changed()
+      } else if (!event.exitCode.contains(0)) {
+        job.dispose();
+        message = event.message + ". No inspection query was launched. Restart to compile again.";
+        changed()
+      } else {
+        pending = Some(token)
+        DbtUi.readLater(this)(job.load()) { loaded =>
+          job.dispose()
+          if (!disposed && generation == token && pending.contains(token) && !stopped) {
+            pending = None
+            if (!currentContext().contains(job.context)) {
+              message = "Source or execution settings changed; compilation discarded. Restart to compile again."
+            } else loaded match {
+              case Left(error) => message = error
+              case Right(value) =>
+                compilation = Some(value);
+                frames = value.frames;
+                selected = 0;
+                session.restart()
+                message = "Compiled. Step Over queries the next CTE. Step Into shows compiled SQL."
+            }
+            changed()
+          }
+        }
+      }
+    }
+    active.filter(a => !event.running && event.command.exists(_ eq a.command)).foreach { finished =>
+      active = None
+      if (!disposed && !session.stopped && currentContext().contains(finished.context)) {
+        evidence = event.previewEvidence;
+        result = event.result;
+        message = event.message
+        event.result.foreach(r => if (!finished.count) session.record(finished.name, r))
+        if (continuing && !finished.count && event.result.nonEmpty && !frames.lift(selected).exists(breakpoint) &&
+          session.position + 1 < frames.size) run(count = false)
+        else {
+          continuing = false;
+          changed()
+        }
+      } else {
+        session.invalidate();
         continuing = false;
+        result = None;
+        evidence = None
+        message = "Source or execution settings changed; query results discarded.";
         changed()
       }
-    } else {
-      session.invalidate();
-      continuing = false;
-      result = None;
-      evidence = None
-      message = "Source or execution settings changed; query results discarded.";
-      changed()
     }
   }
 
@@ -168,7 +246,11 @@ private[ide] final class DbtCteController(project: Project, val path: String,
       session.invalidate();
       session.position = -1;
       selected = 0
-      if (active.nonEmpty) runner.stop()
+      if (active.nonEmpty || compiling.nonEmpty) runner.stop()
+      if (compileSource) {
+        discardCompilation();
+        frames = Vector.empty
+      }
       active = None;
       observed = currentContext();
       result = None;
@@ -191,7 +273,8 @@ private[ide] final class DbtCteController(project: Project, val path: String,
   }
 
   private def run(count: Boolean, rerunSelected: Boolean = false, limitOverride: Option[Int] = None): Unit =
-    if (!disposed && !runner.isRunning && pending.isEmpty && !session.stopped) WriteIntentReadAction.run(() => {
+    if (compileSource && compilation.isEmpty) compile()
+    else if (!disposed && !runner.isRunning && pending.isEmpty && !session.stopped) WriteIntentReadAction.run(() => {
       invalidateIfChanged()
       DbtUi.saveAndCommit(project)
       val expected = currentContext()
@@ -207,12 +290,17 @@ private[ide] final class DbtCteController(project: Project, val path: String,
         for {
           model <- w.model(path).toRight("The model source is unavailable.")
           snapshot <- DbtCteInspection.context(w, model).toRight("The owning project is unavailable.")
-          analysis <- DbtSqlAnalysis.get(w, model.file).toRight("This SQL cannot be inspected.")
+          _ <- Either.cond(!compileSource || compilation.exists(_.context == snapshot), (), "Source changed. Restart to compile again.")
+          analysis <- compilation.map(c => Right(c.analysis)).getOrElse(DbtSqlAnalysis.result(w, model.file))
           available = DbtCteInspection.frames(analysis)
           index = if (count || rerunSelected) selectedName.map(name => available.indexWhere(_.name == name)).getOrElse(0) else nextIndex
           cte <- available.lift(index).toRight("End of CTE list. Restart to query again.")
-          query <- DbtCteInspection.plan(snapshot.source, analysis, cte, count)
-          command <- DbtCteInspection.command(w, model, query.sql, query.spans)
+          query <- DbtCteInspection.plan(compilation.map(_.sql).getOrElse(snapshot.source), analysis, cte, count)
+          base <- DbtCteInspection.command(w, model, query.sql, query.spans)
+          command = compilation.fold(base)(compiled => base.copy(
+            request = base.request.copy(scope = DbtCommandScope.Inline(DbtCteCompilation.inline(query.sql))),
+            previewSource = base.previewSource.map(_.copy(path = compiled.file.getPath, text = compiled.sql,
+              fileUrl = compiled.file.getUrl, navigationFile = Some(compiled.file)))))
         } yield DbtCtePrepared(snapshot, available, index,
           limitOverride.fold(command)(limit => command.copy(request = command.request.copy(limit = DbtCommandRequest.limit(limit)))))
       } { prepared =>
@@ -251,10 +339,21 @@ private[ide] final class DbtCteController(project: Project, val path: String,
   override def dispose(): Unit = {
     disposed = true;
     stop()
+    discardCompilation()
+  }
+
+  private def discardCompilation(): Unit = {
+    compilation.foreach(c => com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).closeFile(c.file))
+    compilation = None
   }
 }
 
 private[ide] object DbtCteDebugger {
+  def compile(project: Project, path: String): XSessionStartedResult =
+    XDebuggerManager.getInstance(project).newSessionBuilder(new XDebugProcessStarter {
+      override def start(session: XDebugSession): XDebugProcess = new DbtCteDebugProcess(session, path, Vector.empty, compileSource = true)
+    }).sessionName("dbt CTE queries · " + java.nio.file.Paths.get(path).getFileName).showTab(true).startSession()
+
   def open(project: Project, path: String, frames: Vector[DbtCte]): XSessionStartedResult =
     XDebuggerManager.getInstance(project).newSessionBuilder(new XDebugProcessStarter {
       override def start(session: XDebugSession): XDebugProcess = new DbtCteDebugProcess(session, path, frames)
@@ -274,13 +373,14 @@ final class DbtCteBreakpointType extends XLineBreakpointType[DbtCteBreakpointPro
 
   override def canPutAt(file: VirtualFile, line: Int, project: Project): Boolean = file.getExtension == "sql" && DbtUi.read {
     val w = DbtWorkspace.get(project)
-    DbtYaml.psiFile(project, file).exists(f => w.model(f).nonEmpty && DbtSqlAnalysis.get(w, f).exists(a =>
-      Option(FileDocumentManager.getInstance.getDocument(file)).exists(d =>
-        DbtCteInspection.frames(a).exists(c => d.getLineNumber(c.range.getStartOffset) == line))))
+    DbtYaml.psiFile(project, file).exists(f => w.root(f).exists(r => r.resource(f) && !r.excluded(file)) &&
+      Option(FileDocumentManager.getInstance.getDocument(file)).exists(d => line >= 0 && line < d.getLineCount &&
+        d.getText(new com.intellij.openapi.util.TextRange(d.getLineStartOffset(line), d.getLineEndOffset(line))).trim.nonEmpty))
   }
 }
 
-private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String, initial: Vector[DbtCte]) extends XDebugProcess(session) {
+private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String, initial: Vector[DbtCte],
+                                            compileSource: Boolean = false) extends XDebugProcess(session) {
   private val project = session.getProject
   private val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).getConsole
   private val file = DbtUi.read(DbtWorkspace.get(project).files.find(_.getVirtualFile.getPath == path).map(_.getVirtualFile))
@@ -290,7 +390,10 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
     p.complete(130)
   })
   val controller: DbtCteController = new DbtCteController(project, path, initial, () => paused(),
-    process.output, hasBreakpoint)
+    process.output, hasBreakpoint, compileSource)
+  private var generatedView = false
+  private var mappedCompilation = Option.empty[DbtCteCompilation]
+  private var mappedFiles = Map.empty[String, VirtualFile]
   private val grid = new DbtResultGrid(project, limit => {
     session.sessionResumed();
     controller.rerun(limit)
@@ -332,6 +435,7 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
       }
     }, console)
     paused()
+    if (compileSource) controller.compile()
   }
 
   private def showResult(): Unit = {
@@ -342,6 +446,7 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
 
   private def paused(): Unit = if (initialized && !process.isProcessTerminated) {
     showResult()
+    if (compileSource) refreshBreakpoints()
     console.print(controller.message + "\n", ConsoleViewContentType.SYSTEM_OUTPUT)
     if (!controller.stopped) session.positionReached(new XSuspendContext {
       private val stack = new XExecutionStack("CTE query steps (independent queries)") {
@@ -357,7 +462,33 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
     })
   }
 
-  private def hasBreakpoint(cte: DbtCte): Boolean = !session.areBreakpointsMuted && file.exists { source =>
+  private def breakpoints: Vector[XLineBreakpoint[DbtCteBreakpointProperties]] =
+    XDebuggerManager.getInstance(project).getBreakpointManager.getBreakpoints(classOf[DbtCteBreakpointType]).asScala.toVector
+
+  private def sourceFile(path: String): Option[VirtualFile] = mappedFiles.get(path)
+
+  private def matches(breakpoint: XLineBreakpoint[DbtCteBreakpointProperties], origin: DbtCteOrigin): Boolean =
+    breakpoint.getLine == origin.line && sourceFile(origin.path).exists(_.getUrl == breakpoint.getFileUrl)
+
+  private def refreshBreakpoints(): Unit = {
+    if (!controller.compilation.exists(c => mappedCompilation.exists(_ eq c))) {
+      mappedCompilation = controller.compilation
+      mappedFiles = DbtUi.read(DbtWorkspace.get(project).files.map(f => f.getVirtualFile.getPath -> f.getVirtualFile).toMap)
+    }
+    breakpoints.foreach { breakpoint =>
+      val mapped = controller.compilation.exists(c => c.frames.exists(f => c.origins(f).exists(matches(breakpoint, _))))
+      if (mapped) session.setBreakpointVerified(breakpoint)
+      else session.updateBreakpointPresentation(breakpoint,
+        if (controller.compilation.isEmpty) com.intellij.icons.AllIcons.Debugger.Db_set_breakpoint
+        else com.intellij.icons.AllIcons.Debugger.Db_invalid_breakpoint,
+        if (controller.compilation.isEmpty) "Pending compilation; source mappings are unavailable."
+        else "This source line did not map to an inspectable CTE in the selected model.")
+    }
+  }
+
+  private def hasBreakpoint(cte: DbtCte): Boolean = if (compileSource) {
+    !session.areBreakpointsMuted && controller.compilation.exists(c => c.origins(cte).exists(o => breakpoints.exists(b => b.isEnabled && matches(b, o))))
+  } else !session.areBreakpointsMuted && file.exists { source =>
     Option(FileDocumentManager.getInstance.getDocument(source)).exists { document =>
       XDebuggerManager.getInstance(project).getBreakpointManager.getBreakpoints(classOf[DbtCteBreakpointType]).asScala
         .exists(b => b.isEnabled && b.getFileUrl == source.getUrl && b.getLine == document.getLineNumber(cte.range.getStartOffset))
@@ -366,7 +497,8 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
 
   override def getBreakpointHandlers: Array[XBreakpointHandler[_]] = Array(
     new XBreakpointHandler[XLineBreakpoint[DbtCteBreakpointProperties]](classOf[DbtCteBreakpointType]) {
-      override def registerBreakpoint(breakpoint: XLineBreakpoint[DbtCteBreakpointProperties]): Unit = session.setBreakpointVerified(breakpoint)
+      override def registerBreakpoint(breakpoint: XLineBreakpoint[DbtCteBreakpointProperties]): Unit =
+        if (compileSource) refreshBreakpoints() else session.setBreakpointVerified(breakpoint)
 
       override def unregisterBreakpoint(breakpoint: XLineBreakpoint[DbtCteBreakpointProperties], temporary: Boolean): Unit = ()
     })
@@ -379,7 +511,11 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
     if (project.getService(classOf[DbtRunner]).isRunning) paused() else controller.resume()
   }
 
-  override def startStepInto(context: XSuspendContext): Unit = controller.referencedModel() match {
+  override def startStepInto(context: XSuspendContext): Unit = if (compileSource) {
+    generatedView = true
+    controller.compilation.foreach(c => com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).openFile(c.file, true))
+    paused()
+  } else controller.referencedModel() match {
     case Some((next, frames)) => DbtCteDebugger.open(project, next, frames); paused()
     case None => console.print("Select a CTE referencing exactly one local model.\n", ConsoleViewContentType.SYSTEM_OUTPUT); paused()
   }
@@ -389,7 +525,10 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
     paused()
   }
 
-  override def startStepOut(context: XSuspendContext): Unit = unsupported("Step Out")
+  override def startStepOut(context: XSuspendContext): Unit = if (compileSource) {
+    generatedView = false;
+    paused()
+  } else unsupported("Step Out")
 
   override def runToPosition(position: XSourcePosition, context: XSuspendContext): Unit = unsupported("Run to Cursor")
 
@@ -418,15 +557,30 @@ private[ide] final class DbtCteDebugProcess(session: XDebugSession, path: String
   }
 
   private final class CteFrame(val index: Int) extends XStackFrame {
-    override def getSourcePosition: XSourcePosition = (for {
+    override def getSourcePosition: XSourcePosition = if (compileSource) {
+      (for {
+        compilation <- controller.compilation
+        cte <- controller.frames.lift(index)
+      } yield {
+        val origins = compilation.origins(cte)
+        val hit = if (session.areBreakpointsMuted) None else origins.find(o => breakpoints.exists(b => b.isEnabled && matches(b, o)))
+        val source = hit.orElse(origins.headOption).flatMap(o => sourceFile(o.path).map(_ -> o.line))
+        if (generatedView || source.isEmpty) XDebuggerUtil.getInstance.createPositionByOffset(compilation.file, cte.range.getStartOffset)
+        else XDebuggerUtil.getInstance.createPosition(source.get._1, source.get._2)
+      }).orNull
+    } else (for {
       source <- file
       cte <- controller.frames.lift(index)
     } yield XDebuggerUtil.getInstance.createPositionByOffset(source, cte.range.getStartOffset)).orNull
 
-    override def getEqualityObject: AnyRef = path + ":" + index
+    override def getEqualityObject: AnyRef = controller.compilation
+      .map(c => (path, c.file, index, generatedView): AnyRef).getOrElse(path + ":" + index)
 
-    override def customizePresentation(container: ColoredTextContainer): Unit =
-      container.append(controller.frames.lift(index).map(_.name).getOrElse("CTE") + " (query step)", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+    override def customizePresentation(container: ColoredTextContainer): Unit = {
+      val unmapped = compileSource && controller.frames.lift(index).exists(c => controller.compilation.exists(_.origins(c).isEmpty))
+      container.append(controller.frames.lift(index).map(_.name).getOrElse("CTE") +
+        (if (unmapped) " (compiled SQL; source mapping unavailable)" else " (query step)"), SimpleTextAttributes.REGULAR_ATTRIBUTES)
+    }
 
     override def computeChildren(node: XCompositeNode): Unit = {
       val children = new XValueChildrenList
@@ -489,21 +643,14 @@ final class DbtInspectCtesAction extends AnAction("Inspect dbt CTEs") {
   override def update(event: AnActionEvent): Unit = event.getPresentation.setEnabledAndVisible(DbtEditorAction.sql(event))
 
   override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.fileContext(event).foreach { case (project, file) =>
+    DbtUi.saveAndCommit(project)
     DbtUi.readLater(project, smartIn = Some(project), committedIn = Some(project)) {
       val w = DbtWorkspace.get(project)
-      for {
-        model <- w.model(file).toRight("Choose a dbt source model.")
-        analysis <- DbtSqlAnalysis.result(w, file)
-        frames = DbtCteInspection.frames(analysis)
-        _ <- Either.cond(frames.nonEmpty, (), "This model has no top-level CTEs to inspect.")
-      } yield model.file.getVirtualFile.getPath -> frames
+      w.model(file).toRight("Choose a dbt source model.").map(_.file.getVirtualFile.getPath)
     } {
-      case Right((path, frames)) => DbtCteDebugger.open(project, path, frames)
+      case Right(path) => DbtCteDebugger.compile(project, path)
       case Left(reason) => Messages.showErrorDialog(project,
-        "Cannot inspect this model's CTEs.\n\n" + reason +
-          "\n\nCTE inspection requires top-level CTEs written in the model source. " +
-          "CTEs generated by macros cannot be stepped here. Use Open Compiled dbt SQL to view the generated query." +
-          "\n\nNo query was run.", "Inspect dbt CTEs")
+        "Cannot inspect this model's CTEs.\n\n" + reason, "Inspect dbt CTEs")
     }
   }
 }

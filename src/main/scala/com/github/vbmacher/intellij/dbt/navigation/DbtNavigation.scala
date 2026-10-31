@@ -27,6 +27,9 @@ private[dbt] trait DbtReferenceProvider {
   /** None means this provider does not handle the file; Left explains why its SQL analysis failed. */
   def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int] = None): Option[Either[String, DbtSqlAnalysis]] = None
 
+  /** CTE query steps in already compiled SQL, without source resource resolution. */
+  def compiledCtes(sql: String): Option[Either[String, DbtSqlAnalysis]] = None
+
   def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] = None
 
   def projectedColumns(sql: String): Option[(Vector[String], Boolean)] = None
@@ -149,6 +152,9 @@ private[dbt] final case class DbtSqlAnalysis(columns: Vector[DbtSqlColumn], scop
 }
 
 private[dbt] object DbtSqlAnalysis {
+  def compiled(sql: String): Either[String, DbtSqlAnalysis] =
+    DbtReferenceProvider.first(_.compiledCtes(sql)).getOrElse(Left("No compiled SQL analysis provider is available."))
+
   def suppressionLayout(file: PsiFile): DbtSqlSuppressionLayout =
     DbtReferenceProvider.first(_.sqlSuppressionLayout(file)).getOrElse(DbtSqlSuppressionLayout(Vector.empty, Vector.empty))
 

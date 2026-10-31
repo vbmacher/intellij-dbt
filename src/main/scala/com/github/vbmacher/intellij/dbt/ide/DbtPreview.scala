@@ -204,7 +204,7 @@ private[ide] final case class DbtPreviewSpan(queryStart: Int, sourceStart: Int, 
 private[ide] final case class DbtCteQuery(sql: String, spans: Vector[DbtPreviewSpan])
 
 private[ide] final case class DbtPreviewSource(path: String, text: String, query: String,
-  spans: Vector[DbtPreviewSpan], nodeId: String, fileUrl: String)
+  spans: Vector[DbtPreviewSpan], nodeId: String, fileUrl: String, navigationFile: Option[com.intellij.openapi.vfs.VirtualFile] = None)
 
 private[ide] final case class DbtPreviewLocation(source: DbtPreviewSource, offset: Int, line: Int, column: Int)
 
@@ -270,7 +270,7 @@ private[ide] object DbtPreviewEvidence {
     val explanation = if (canceled) "Preview canceled; no SQL execution or error location is certified."
     else if (!failed) "Adapter SQL is available only when the current invocation identifies its preview statement."
     else location.fold("Error location unavailable: an exact unchanged authored span and a supported unambiguous adapter location were not both available. See raw output.")(
-      at => s"Error maps to authored CTE source at line ${at.line}, column ${at.column}. Navigation is disabled if the source changes.")
+      at => s"Error maps to ${if (at.source.navigationFile.nonEmpty) "compiled CTE SQL" else "authored CTE source"} at line ${at.line}, column ${at.column}. Navigation is disabled if the source changes.")
     DbtPreviewEvidence(submitted, adapter, output, invocation, location, explanation)
   }
 
@@ -288,7 +288,8 @@ private[ide] object DbtPreviewEvidence {
     val start = if (query.nonEmpty) adapter.indexOf(query) else -1
     val lines = adapter.split("\n", -1).toVector
     for {
-      _ <- Option.when(start >= 0 && adapter.indexOf(query, start + 1) < 0 && DbtSyntax.blocks(query).isEmpty)(())
+      _ <- Option.when(start >= 0 && adapter.indexOf(query, start + 1) < 0 &&
+        (source.navigationFile.nonEmpty || DbtSyntax.blocks(query).isEmpty))(())
       row <- lines.lift(line - 1) if line > 0 && column > 0 && column <= row.length
       // Adapters disagree on Unicode column units. Refuse non-ASCII prefixes rather than rounding.
       _ <- Option.when(row.take(column).forall(_ <= 127))(())
@@ -314,7 +315,7 @@ private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPane
   })
   private val navigate: JButton = DbtUi.button("Go to CTE error")(WriteIntentReadAction.run(() =>
     evidence.flatMap(_.location).foreach { at =>
-      val file = Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl))
+      val file = at.source.navigationFile.filter(_.isValid).orElse(Option(VirtualFileManager.getInstance.findFileByUrl(at.source.fileUrl)))
       val current = file.flatMap(f => Option(FileDocumentManager.getInstance.getDocument(f)))
       if (current.exists(_.getText == at.source.text)) file.foreach { f =>
         val descriptor = new OpenFileDescriptor(project, f, at.offset)

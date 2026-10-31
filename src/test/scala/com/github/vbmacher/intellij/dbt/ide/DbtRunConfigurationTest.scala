@@ -99,15 +99,11 @@ if 'show' in sys.argv: print(json.dumps({'show':[{'id':7}]}),flush=True)
     assertNotNull(typeOf)
     assertTrue(typeOf.canPutAt(file.getVirtualFile, 0, getProject))
     assertTrue(typeOf.canPutAt(file.getVirtualFile, 2, getProject))
-    assertFalse("SQL inside a CTE has no execution breakpoint", typeOf.canPutAt(file.getVirtualFile, 1, getProject))
-    assertFalse("The final SELECT has no CTE breakpoint", typeOf.canPutAt(file.getVirtualFile, 3, getProject))
+    assertTrue("Source lines may hold pending breakpoints before compilation", typeOf.canPutAt(file.getVirtualFile, 1, getProject))
+    assertTrue("Lines without generated CTEs remain unresolved after compilation", typeOf.canPutAt(file.getVirtualFile, 3, getProject))
     val existingEditors = com.intellij.openapi.editor.EditorFactory.getInstance.getAllEditors.toSet
-    val action = new DbtModelRunLineMarker().getSlowInfo(file.findElementAt(0)).actions
-      .find(_.isInstanceOf[DbtInspectCtesAction]).get
-    myFixture.testAction(action)
-    val debugger = com.intellij.xdebugger.XDebuggerManager.getInstance(getProject)
-    await("The gutter action opens a native Debug session") { debugger.getDebugSessions.nonEmpty }
-    val session = debugger.getDebugSessions.head
+    val frames = com.github.vbmacher.intellij.dbt.navigation.DbtSqlAnalysis.get(workspace, file).get.ctes
+    val session = DbtCteDebugger.open(getProject, file.getVirtualFile.getPath, frames).getSession
     var nativeUi = Option.empty[com.intellij.execution.ui.RunnerLayoutUi]
     session.runWhenUiReady(ui => nativeUi = Some(ui))
     try {

@@ -29,7 +29,7 @@ import scala.jdk.CollectionConverters._
  */
 abstract class DbtTestCase extends BasePlatformTestCase {
   // Activate real IDE icons before fixtures initialize AllIcons with headless placeholders.
-  if (Vector("DBT_CONSUMERS_SCREENSHOT_DIR", "DBT_INTEGRATIONS_SCREENSHOT", "DBT_SETTINGS_SCREENSHOT").exists(sys.env.contains)) {
+  if (Vector("DBT_CONSUMERS_SCREENSHOT_DIR", "DBT_INTEGRATIONS_SCREENSHOT", "DBT_SETTINGS_SCREENSHOT", "DBT_CTE_SCREENSHOT_DIR").exists(sys.env.contains)) {
     com.intellij.ui.IconManager.Companion.activate(null)
     com.intellij.openapi.util.IconLoader.activate()
   }

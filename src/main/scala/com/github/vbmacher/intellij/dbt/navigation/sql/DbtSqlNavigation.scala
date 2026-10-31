@@ -31,6 +31,8 @@ private[sql] final class DbtSqlNavigation extends DbtReferenceProvider {
   override def sqlAnalysis(file: PsiFile, workspace: DbtWorkspace, completionOffset: Option[Int]): Option[Either[String, DbtSqlAnalysis]] =
     Option(file.getVirtualFile).filter(_.getExtension == "sql").map(_ => DbtSqlAnalyzer.analyze(file, workspace, completionOffset))
 
+  override def compiledCtes(sql: String): Option[Either[String, DbtSqlAnalysis]] = Some(DbtSqlNavigation.compiledCtes(sql))
+
   override def sqlSuppressionLayout(file: PsiFile): Option[DbtSqlSuppressionLayout] =
     Option(file.getVirtualFile).filter(_.getExtension == "sql").map(_ => DbtSqlNavigation.suppressionLayout(file))
 
@@ -100,8 +102,53 @@ private[sql] object DbtSqlNavigation {
 
   def parse(sql: String): Option[Statement] = parseResult(sql).toOption
 
+  def compiledCtes(sql: String): Either[String, DbtSqlAnalysis] = {
+    if (sql.length > 1000000) return Left("Compiled SQL exceeds 1,000,000 characters.")
+    parseResult(sql).flatMap {
+      case select: Select if projectedColumns(sql).nonEmpty =>
+        val items = all(select.getWithItemsList)
+        val names = items.map(_.getUnquotedAliasName)
+        if (items.exists(_.isRecursive)) Left("Recursive CTE inspection is unsupported.")
+        else if (items.exists(i => !i.getParenthesedStatement.isInstanceOf[ParenthesedSelect])) Left("Data-modifying CTEs cannot be inspected.")
+        else if (items.exists(i => all(i.getWithItemList).nonEmpty)) Left("Explicit CTE column lists cannot be inspected.")
+        else {
+          val frames = items.zipWithIndex.map { case (item, index) =>
+            val body = item.getParenthesedStatement.asInstanceOf[ParenthesedSelect]
+            val bodyTokens = nodeTokens(body)
+            val innerTokens = nodeTokens(body.getSelect)
+            val before = offset(sql, bodyTokens.head)
+            val name = tokens(sql).filter(t => offset(sql, t) < before)
+              .filter(t => t.image.equalsIgnoreCase(item.getAliasName)).last
+            val referenced = new TablesNamesFinder[Void]().getTables(body.getSelect: Statement).asScala.toVector
+            val range = new TextRange(offset(sql, name), offset(sql, bodyTokens.last, end = true))
+            val inner = new TextRange(offset(sql, innerTokens.head), offset(sql, innerTokens.last, end = true))
+            DbtCte(item.getUnquotedAliasName, range, inner,
+              names.take(index).filter(n => referenced.exists(r => r.equalsIgnoreCase(n) ||
+                r.equalsIgnoreCase("\"" + n.replace("\"", "\"\"") + "\""))), inner.substring(sql))
+          }
+          if (frames.isEmpty) Left("The compiled model has no top-level CTEs to inspect.")
+          else Right(DbtSqlAnalysis(Vector.empty, Vector.empty, frames, Vector.empty, Vector.empty))
+        }
+      case _ => Left("Compiled CTE inspection requires one supported SELECT query.")
+    }
+  }
+
   def parseResult(sql: String): Either[String, Statement] =
-    try Right(CCJSqlParserUtil.parse(sql, p => p.withTimeOut(1000))) catch {
+    try Right(CCJSqlParserUtil.parse(sql, p => {
+      // JSqlParser 5.4 lexes three newlines as a statement separator. A model
+      // is one statement; skip only those lexer tokens, retaining all offsets.
+      val manager = new CCJSqlParserTokenManager(new SimpleCharStream(new StringProvider(sql))) {
+        override def getNextToken(): Token = {
+          var token = super.getNextToken()
+          while (token.kind == CCJSqlParserConstants.ST_SEMICOLON && token.image.forall(_.isWhitespace))
+            token = super.getNextToken()
+          token
+        }
+      }
+      manager.configuration = p.token_source.configuration
+      p.token_source = manager
+      p.withTimeOut(1000)
+    })) catch {
       case error: JSQLParserException =>
         val causes = Iterator.iterate(error: Throwable)(_.getCause).takeWhile(_ != null).toVector
         if (causes.exists(_.isInstanceOf[java.util.concurrent.TimeoutException]))
