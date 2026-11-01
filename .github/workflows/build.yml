@@ -18,15 +18,13 @@ jobs:
         with:
           distribution: temurin
           java-version: 25
-          cache: sbt
-
-      - uses: sbt/setup-sbt@v1
+      - uses: gradle/actions/setup-gradle@v4
 
       - name: Check bundled offline schemas
         run: python3 tools/bundle_yaml_schemas.py --check
 
       - name: Test and package
-        run: sbt --batch test testPackaged packageArtifactZip
+        run: ./gradlew --no-daemon test testPackaged buildPlugin verifyPlugin
 
   lineage-browser:
     runs-on: ubuntu-latest
@@ -52,7 +50,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 25
-          cache: sbt
-      - uses: sbt/setup-sbt@v1
+      - uses: gradle/actions/setup-gradle@v4
       - name: Test with the Python Community plugin matching the SDK
-        run: sbt --batch 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' updateIntellij testPython
+        run: ./gradlew --no-daemon testPython

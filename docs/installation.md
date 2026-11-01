@@ -34,38 +34,46 @@ project dependencies.
 
 Build the ZIP using the development commands below, or use a supplied plugin ZIP.
 Open the gear menu in **Settings → Plugins**, choose **Install Plugin from Disk**,
-and select `target/intellij-dbt-[version].zip`. Restart the IDE if prompted.
+and select `build/distributions/intellij-dbt-[version].zip`. Restart the IDE if prompted.
 
 ## Prepare a development environment
 
-Use JDK 25 and sbt. Clone the repository and open it as an sbt project:
+Use JDK 25. Clone the repository and open it as a Gradle project. The repository
+includes the Gradle wrapper; a separate Gradle installation is unnecessary.
 
 ```bash
 git clone https://github.com/vbmacher/intellij-dbt.git
 cd intellij-dbt
-sbt compile
+./gradlew compileKotlin
 ```
 
 The first build downloads the IntelliJ SDK. Common commands are:
 
 ```bash
-sbt test
-sbt testPackaged
-sbt packageArtifactZip
-sbt runPluginVerifier
-sbt runIDE
+./gradlew test
+./gradlew testPackaged
+./gradlew buildPlugin
+./gradlew verifyPlugin
+./gradlew runIde
 ```
 
-`packageArtifactZip` creates the installable ZIP in `target/`. Plugin Verifier writes
-its report to `target/verifier/reports`. To check another installed IDE:
+On Windows, use `gradlew.bat`. `buildPlugin` creates the installable ZIP in
+`build/distributions/`. Plugin Verifier writes its reports to
+`build/reports/pluginVerifier/`. To check another installed IDE:
 
 ```bash
-sbt 'set pluginVerifierOptions := pluginVerifierOptions.value.copy(overrideIDEs = Seq("/path/to/idea"))' runPluginVerifier
+./gradlew verifyPlugin -PverificationIde=/path/to/idea
+```
+
+To build or run against an existing IntelliJ installation:
+
+```bash
+./gradlew runIde -PintellijPlatformLocalPath=/path/to/idea
 ```
 
 ### JCEF in the development IDE
 
-The SDK archive used by `sbt runIDE` can omit the native JCEF bundle. If Lineage
+The development IDE needs its matching native JCEF bundle. If Lineage
 cannot open and the IDE log reports
 `Startup JCEF test is failed (because CefApp wasn't initialized)`:
 
@@ -83,13 +91,7 @@ See JetBrains' [JCEF requirements](https://plugins.jetbrains.com/docs/intellij/e
 To download the Python Community plugin matching the development SDK and run the Python integration suite:
 
 ```bash
-sbt 'set intellijPlugins += "PythonCore:262.9437.185".toPlugin(excludedIds = Set("intellij.python.ast", "intellij.python.parser", "intellij.python.syntax.core"))' updateIntellij testPython
-```
-
-To use another SDK with Python Community Edition already available:
-
-```bash
-sbt 'set pythonTestSdk := file("/path/to/sdk")' testPython
+./gradlew testPython
 ```
 
 To run the browser suite with its pinned Playwright version and Chromium:
@@ -115,6 +117,8 @@ Python 3 is needed for this maintenance command; ordinary plugin builds use the 
 
 ## Publish a build
 
-Set the Marketplace token in `IJ_PLUGIN_REPO_TOKEN` or `~/.ij-plugin-repo-token`,
-then run `sbt publishPlugin`. To sign a build, set `signPluginOptions` with a
-certificate and private key. See [publishing and signing](https://github.com/JetBrains/sbt-idea-plugin#publishing-and-verification).
+Set the Marketplace token in `IJ_PLUGIN_REPO_TOKEN`, then run `./gradlew publishPlugin`.
+To sign a build, set `CERTIFICATE_CHAIN`, `PRIVATE_KEY` and `PRIVATE_KEY_PASSWORD`,
+then run `./gradlew signPlugin`. See JetBrains' instructions for
+[publishing](https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html#publishing)
+and [signing](https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html#signing).
