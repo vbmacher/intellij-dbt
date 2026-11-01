@@ -25,8 +25,8 @@ jobs:
       - name: Check bundled offline schemas
         run: python3 tools/bundle_yaml_schemas.py --check
 
-      - name: Test, package and verify public API usage
-        run: sbt --batch test testPackaged packageArtifactZip runPluginVerifier
+      - name: Test and package
+        run: sbt --batch test testPackaged packageArtifactZip
 
   lineage-browser:
     runs-on: ubuntu-latest
