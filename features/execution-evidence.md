@@ -17,12 +17,6 @@ Show recorded execution and freshness status alongside resource dependencies.
 
 A failed orders test gives the related model a failing-test count. A separate source-freshness run can put a warning on `raw.orders`. These are separate observations; neither proves that the fact model built successfully.
 
-## Screenshot
-
-![Source-freshness warning badge produced from simulated command artifacts.](screenshots/root-freshness-warn.png)
-
-Source-freshness warning badge produced from simulated command artifacts.
-
 ## Interactions
 
 Connects [test results](test-execution.md) and [workspace commands](workspace.md) to [resource lineage](resource-lineage.md).

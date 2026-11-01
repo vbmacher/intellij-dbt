@@ -25,8 +25,6 @@ Template tags, the string and SQL keywords receive their respective syntax color
 
 ![SQL keywords, Jinja delimiters and quoted resource name use distinct colors.](screenshots/syntax-highlighting.png)
 
-SQL keywords, Jinja delimiters and quoted resource name use distinct colors.
-
 ## Interactions
 
 [Navigation](navigation.md) and [warnings](static-analysis.md) operate on names independently of syntax colors.

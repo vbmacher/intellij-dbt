@@ -13,7 +13,8 @@ Edit authored properties in YAML and generate reviewed column changes.
 - Code Generate and applicable Alt+Enter intentions use the same generation rules.
   No property form is required to edit descriptions, tags, tests or types.
 - Custom fields and tests are preserved. Description inheritance fills only empty
-  descriptions proven to come unchanged from one upstream column.
+  descriptions proven to come unchanged from one complete, unambiguous upstream
+  column. The upstream description must be nonempty and contain no `{{` expressions.
 - Parameterized tests, anchors, commented sequences and shared inherited
   model-version columns require direct YAML edits when generation cannot preserve them.
 - Read-only resources and source/settings changes since proposal preparation must

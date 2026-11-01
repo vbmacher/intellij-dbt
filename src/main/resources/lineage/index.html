@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;"><style>
-:root{--bg:#202124;--panel:#2b2d30;--fg:#dfe1e5;--muted:#a6a9b0;--line:#50535a;--accent:#68a7ee}*{box-sizing:border-box}body{display:flex;flex-direction:column;height:100vh;margin:0;background:var(--bg);color:var(--fg);font:13px system-ui;overflow:hidden}button,input,select{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:5px 9px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button:hover{border-color:var(--accent)}#toolbar{height:42px;display:flex;align-items:center;gap:7px;padding:5px 10px;border-bottom:1px solid var(--line)}#search{width:190px;min-width:80px;flex-shrink:1}#toolbar-actions{display:flex;gap:7px;margin-left:auto;flex-shrink:0}.tool-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:5px;border:0;background:transparent;flex-shrink:0}.tool-button:hover,.tool-button[aria-pressed=true]{background:var(--line)}.tool-button img{width:16px;height:16px;pointer-events:none}#status{color:var(--muted);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#main{display:flex;flex:1;min-height:0}#graph-pane{position:relative;flex:1;min-width:80px;overflow:hidden}#cy,#cards{position:absolute;inset:0}#cards{pointer-events:none;overflow:hidden}.card{position:absolute;width:206px;height:80px;border-left:4px solid #6b9be6;border-radius:6px;padding:9px 12px;background:var(--panel);box-shadow:0 2px 6px #0004;transform-origin:center;overflow:hidden;user-select:none}.card.focus{outline:2px solid var(--accent)}.card.selected{box-shadow:0 0 0 2px #ae8bfa}.card.dim{opacity:.18}.card b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:4px 0}.card small{color:var(--muted)}.card[data-kind=source_table]{border-color:#53b8ac}.card[data-kind=seed]{border-color:#c6a55f}.card[data-kind=snapshot]{border-color:#b88adb}.card[data-kind=exposure]{border-color:#dd8d76}.card.boundary{height:44px;text-align:center;border:1px dashed var(--line);box-shadow:none;background:var(--bg)}#empty{position:absolute;top:40%;left:10%;right:10%;text-align:center;color:var(--muted);pointer-events:none}table{border-collapse:collapse;width:100%}td,th{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{color:var(--muted)}pre{white-space:pre;overflow:auto;font:12px ui-monospace,monospace;line-height:1.5;padding:10px;background:var(--bg)}.pill{display:inline-block;padding:2px 6px;margin:3px;border:1px solid var(--line);border-radius:10px;font-size:11px}.airflow-badge{border-color:var(--accent);white-space:normal;text-align:left}.airflow-task{border-top:1px solid var(--line);padding:9px 0;overflow-wrap:anywhere}.airflow-task button{margin:4px 6px 4px 0}.muted{color:var(--muted)}h3{font-size:13px}
+:root{--bg:#202124;--panel:#2b2d30;--fg:#dfe1e5;--muted:#a6a9b0;--line:#50535a;--accent:#68a7ee}*{box-sizing:border-box}body{display:flex;flex-direction:column;height:100vh;margin:0;background:var(--bg);color:var(--fg);font:13px system-ui;overflow:hidden}button,input,select{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:5px 9px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button:hover{border-color:var(--accent)}#toolbar{height:42px;display:flex;align-items:center;gap:7px;padding:5px 10px;border-bottom:1px solid var(--line)}#search{width:190px;min-width:80px;flex-shrink:1}#toolbar-actions{display:flex;gap:7px;margin-left:auto;flex-shrink:0}.tool-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:5px;border:0;background:transparent;flex-shrink:0}.tool-button:hover,.tool-button[aria-pressed=true]{background:var(--line)}.tool-button img{width:16px;height:16px;pointer-events:none}#status{color:var(--muted);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#main{display:flex;flex:1;min-height:0}#graph-pane{position:relative;flex:1;min-width:80px;overflow:hidden}#cy,#cards{position:absolute;inset:0}#cards{pointer-events:none;overflow:hidden}.card{position:absolute;width:206px;height:80px;border-left:4px solid #6b9be6;border-radius:4px;padding:9px 12px;background:var(--panel);box-shadow:0 2px 6px #0004;transform-origin:center;overflow:hidden;user-select:none}.card.focus{outline:2px solid var(--accent)}.card.dim{opacity:.18}.card b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:4px 0}.card small{color:var(--muted)}.card[data-kind=source_table]{border-color:#53b8ac}.card[data-kind=seed]{border-color:#c6a55f}.card[data-kind=snapshot]{border-color:#b88adb}.card[data-kind=exposure]{border-color:#dd8d76}.card.boundary{height:44px;text-align:center;border:1px dashed var(--line);box-shadow:none;background:var(--bg)}#empty{position:absolute;top:40%;left:10%;right:10%;text-align:center;color:var(--muted);pointer-events:none}table{border-collapse:collapse;width:100%}td,th{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{color:var(--muted)}pre{white-space:pre;overflow:auto;font:12px ui-monospace,monospace;line-height:1.5;padding:10px;background:var(--bg)}.pill{display:inline-block;padding:2px 6px;margin:3px;border:1px solid var(--line);border-radius:10px;font-size:11px}.airflow-badge{border-color:var(--accent);white-space:normal;text-align:left}.airflow-task{border-top:1px solid var(--line);padding:9px 0;overflow-wrap:anywhere}.airflow-task button{margin:4px 6px 4px 0}.muted{color:var(--muted)}h3{font-size:13px}
 #button-tooltip{display:none;position:fixed;z-index:10;max-width:360px;padding:9px 12px;white-space:pre-wrap;pointer-events:none;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:5px;box-shadow:0 3px 12px #0005}
 .column-origin{font-size:11px;text-align:left;white-space:normal;margin-top:5px}.card.has-execution{height:104px}.execution-badge{pointer-events:auto;padding:1px 4px;font-size:10px;margin-top:4px;max-width:178px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-color:var(--muted)}.execution-badge[data-status=failed],.execution-badge[data-status=error]{border-color:#df7272}.execution-badge[data-status=warning]{border-color:#c6a55f}.execution-badge[data-status=passed]{border-color:#53b8ac}.execution-badge[data-status=running]{border-color:var(--accent)}
 #graph-controls{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}#filter-form,#view-options,#export-options{display:flex;align-items:center;gap:6px;flex-wrap:wrap}#filter-form{flex:1 1 520px}#filter-form button{white-space:nowrap}#view-options{margin-left:auto}#selector,#exclude{width:130px;min-width:70px;flex:1}#filter-status,#export-status{color:var(--muted)}#filter-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#toolbar-actions{flex-wrap:wrap}.control-label{white-space:nowrap}
@@ -14,6 +14,7 @@
 #docs{flex:0 1 var(--docs-width,360px);max-width:60%;min-width:0;overflow:auto;padding:12px 16px;background:var(--panel);overflow-wrap:anywhere}#docs[hidden],#docs-divider[hidden]{display:none}#docs header{display:flex;align-items:center;gap:8px;margin-bottom:12px}#docs header h2{font-size:14px;margin:0;flex:1}#docs a{color:var(--link)}#docs .definition{margin:8px 0 12px}#docs .content{margin:12px 0}#docs td{padding:6px}#docs-divider{flex:0 0 6px;background:var(--line);cursor:col-resize;touch-action:none}#docs-divider:hover,#docs-divider:focus{background:var(--accent);outline:none}
 #export-menu{position:relative}#export-menu summary{cursor:pointer;border:1px solid var(--line);border-radius:4px;padding:4px 9px}#export-menu summary:focus-visible{outline:2px solid var(--accent)}#export-options{position:absolute;top:100%;right:0;z-index:5;min-width:170px;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:4px;box-shadow:0 3px 12px #0005;flex-direction:column;align-items:stretch}#export-options button{text-align:left}#export-options label{white-space:nowrap}
 #lineage-help{padding:4px 10px;border-bottom:1px solid var(--line);flex-shrink:0}#lineage-help summary{cursor:pointer;color:var(--link)}#lineage-help summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}#lineage-help p{margin:6px 0;max-width:75ch}#search-status{overflow-wrap:anywhere}
+input::placeholder{color:var(--muted);opacity:1}.control-group{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%}.control-group select{min-width:0}
 .card b.clipped-name{position:relative}.clipped-name span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.clipped-name .name-end{display:flex;justify-content:flex-end;text-overflow:clip}.card.selected b.clipped-name:before{position:absolute;left:0;top:0}.card.selected .name-start{padding-left:14px}
 </style></head><body><div id="toolbar" role="toolbar" aria-label="Lineage actions">
 <input id="search" aria-label="Search resources" placeholder="Search resources">
@@ -32,7 +33,7 @@
 </div><div id="graph-controls">
 <form id="filter-form"><label for="selector">Selection</label><input id="selector" placeholder="tag:finance+"><label for="exclude">Exclude</label><input id="exclude" placeholder="tag:deprecated"><button id="apply-filter" type="submit" aria-label="Apply filter" title="Apply filter">Apply</button><button id="clear-filter" type="button" aria-label="Clear filter" title="Clear filter">Clear</button><button id="use-config" type="button" aria-label="Use in Run Configuration" title="Create a dbt run configuration from Selection and Exclude">Run configuration…</button></form>
 <div id="view-options"><label for="group-by">Group by</label><select id="group-by" title="Tag groups use the first tag alphabetically; resources appear once"><option value="">None</option><option value="schema">Schema</option><option value="folder">Folder</option><option value="tag">Tag (first alphabetically)</option></select><label><input id="show-minimap" type="checkbox" checked>Minimap</label></div>
-<label for="resource-picker">Inspect</label><select id="resource-picker" aria-label="Inspect resource"><option value="">Choose resource</option></select>
+<div class="control-group"><label for="resource-picker">Inspect</label><select id="resource-picker" aria-label="Inspect resource"><option value="">Choose resource</option></select></div>
 </div><div id="lineage-status" role="status"><span id="status">Loading dbt resources…</span> <span id="filter-status"></span> <span id="export-status"></span> <span id="search-status"></span></div><div id="selection-context" role="status">Focus follows the editor. Select a resource to inspect it; double-click to focus its graph.</div><details id="lineage-help"><summary>Lineage help</summary>
 <p>Click a resource or press Enter to read its documentation. Double-click or press Shift+Enter to focus its graph and open its definition. Focus follows the editor unless pinned.</p>
 <p><b>Search resources</b> highlights names and packages. <b>Selection</b> filters the graph; <b>Exclude</b> removes matches. For example, <code>tag:finance+</code> includes finance-tagged resources and their downstream consumers. These controls never run dbt.</p>
@@ -43,7 +44,7 @@
 <script>
 'use strict';
 const $=id=>document.getElementById(id),send=(type,id='',value='')=>window.dbtSend&&window.dbtSend(JSON.stringify({type,id,value}));
-let cy=null,current=null,selected='',selectedTimer=null,cards=new Map();
+let cy=null,current=null,selected='',selectedTimer=null,cards=new Map(),restoringFocus=false;
 let documentationId='',documentationColumn='';
 let grouping='',collapsed=new Set(),filter=null,groupMembers=new Map(),minimapBounds=null,minimapFrame=null;
 function meaningful(value){return value!==undefined&&value!==null&&!/^(null|none|undefined)$/i.test(String(value))&&!/[{][{%]|[%}][}]/.test(String(value))?String(value):''}
@@ -59,7 +60,15 @@ function selectionContext(){
  $('selection-context').textContent=(focus?'Focus: '+focus.name+' · ':'')+(resource?'Selected: '+resource.name:'Workspace · '+(current?.nodes.length||0)+' resources');
 }
 function select(id,open=true){selected=id;selectionContext();if(open)openDocumentation(id);dim(id)}
+function documentationMaximumWidth(){return Math.max(0,Math.min($('main').clientWidth*.6,$('main').clientWidth-$('groups').offsetWidth-$('docs-divider').offsetWidth-parseFloat(getComputedStyle($('graph-pane')).minWidth)))}
 function resizeGraph(){
+ if(!$('docs').hidden){
+  const maximum=Math.round(documentationMaximumWidth()),divider=$('docs-divider');
+  divider.setAttribute('aria-valuemin',String(Math.min(220,maximum)));
+  divider.setAttribute('aria-valuemax',String(maximum));
+  divider.setAttribute('aria-valuenow',String(Math.round($('docs').getBoundingClientRect().width)));
+  divider.setAttribute('aria-valuetext',Math.round($('docs').getBoundingClientRect().width)+' pixels');
+ }
  if(!cy)return;
  cy.resize();
  const node=cy.getElementById(selected||current?.focus);
@@ -72,7 +81,12 @@ function openDocumentation(id,column=''){
  $('docs-content').textContent='Loading documentation…';$('docs').scrollTop=0;resizeGraph();
  send(column?'column':'select',id,column);
 }
-function closeDocumentation(){documentationId='';documentationColumn='';$('docs').hidden=true;$('docs-divider').hidden=true;$('docs-content').replaceChildren();resizeGraph()}
+function closeDocumentation(){
+ const restore=$('docs').contains(document.activeElement)||document.activeElement===$('docs-divider');
+ const card=cards.get(documentationId);
+ documentationId='';documentationColumn='';$('docs').hidden=true;$('docs-divider').hidden=true;$('docs-content').replaceChildren();resizeGraph();
+ if(restore){restoringFocus=true;(card||($('resource-picker').disabled?$('search'):$('resource-picker'))).focus({preventScroll:true});restoringFocus=false}
+}
 window.dbtShowDocumentation=p=>{
  if(p.id!==documentationId||p.column!==documentationColumn)return;
  const scroll=$('docs').scrollTop;$('docs-content').innerHTML=p.html;$('docs').scrollTop=scroll;
@@ -85,14 +99,15 @@ $('docs-content').onclick=e=>{
 };
 $('resource-docs').onclick=()=>openDocumentation(documentationId);
 $('close-docs').onclick=closeDocumentation;
+$('docs').onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeDocumentation()}};
 function resizeDocumentation(width){
- const maximum=$('main').clientWidth*.6,next=Math.min(maximum,Math.max(220,width));
+ const maximum=documentationMaximumWidth(),next=Math.min(maximum,Math.max(220,width));
  document.documentElement.style.setProperty('--docs-width',next+'px');
  $('docs-divider').setAttribute('aria-valuenow',String(Math.round(next)));resizeGraph();
 }
 $('docs-divider').onpointerdown=e=>{e.preventDefault();$('docs-divider').setPointerCapture(e.pointerId)};
 $('docs-divider').onpointermove=e=>{if($('docs-divider').hasPointerCapture(e.pointerId))resizeDocumentation($('main').getBoundingClientRect().right-e.clientX)};
-$('docs-divider').onkeydown=e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();resizeDocumentation($('docs').getBoundingClientRect().width+(e.key==='ArrowLeft'?20:-20))}};
+$('docs-divider').onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeDocumentation()}else if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();resizeDocumentation($('docs').getBoundingClientRect().width+(e.key==='ArrowLeft'?20:-20))}};
 
 // Automatic framing keeps labels readable. Fit graph remains an explicit overview.
 function readableView(elements=cy.elements(),anchorId=selected||current?.focus){
@@ -162,14 +177,16 @@ async function exportGraph(format){
  }catch(e){status.textContent='Image export failed: '+e.message}
 }
 window.dbtUpdate=function(p){
- const focusedCard=[...cards].find(([,card])=>card.contains(document.activeElement)),focusedBadge=document.activeElement?.classList.contains('execution-badge');let restoringFocus=false;
+ const focusedCard=[...cards].find(([,card])=>card.contains(document.activeElement)),focusedBadge=document.activeElement?.classList.contains('execution-badge');
  const old=current,same=!!old&&old.focus===p.focus,zoom=cy&&cy.zoom(),pan=cy&&cy.pan(),oldPositions=new Map();if(cy)cy.nodes().forEach(n=>oldPositions.set(n.id(),n.position()));current=p;
  if(p.icons)for(const[id,src]of Object.entries(p.icons)){const image=element('img');image.src=src;image.alt='';if($(id)?.classList.contains('tool-button'))$(id).replaceChildren(image)}
  if(p.theme)for(const[k,v]of Object.entries(p.theme))document.documentElement.style.setProperty('--'+k,v);
  $('status').textContent=p.status||'';$('regenerate').disabled=!!p.running||!p.canGenerateDocs;$('empty').textContent=p.empty||'';
  const {nodes,edges}=graphElements(p);
+ for(const id of ['zoom-in','zoom-out','fit','reset-zoom','show-docs','export-png','export-svg','copy-image','show-minimap'])$(id).disabled=!nodes.length;
+ $('group-by').disabled=!p.nodes.length;
  const picker=$('resource-picker');picker.replaceChildren(element('option','Choose resource'));picker.firstChild.value='';
- for(const n of nodes.filter(n=>!n.data.boundary&&!n.data.group&&!n.data.collapsed).sort((a,b)=>a.data.name.localeCompare(b.data.name))){const option=element('option',n.data.name+' · '+n.data.kind+' · '+n.data.package);option.value=n.data.id;picker.append(option)}picker.value=selected;
+ for(const n of nodes.filter(n=>!n.data.boundary&&!n.data.group&&!n.data.collapsed).sort((a,b)=>a.data.name.localeCompare(b.data.name))){const option=element('option',n.data.name+' · '+n.data.kind+' · '+n.data.package);option.value=n.data.id;picker.append(option)}picker.value=selected;picker.disabled=picker.options.length===1;
  if(!cy){cy=cytoscape({container:$('cy'),elements:[],style:styleEdges(),minZoom:.01,maxZoom:2.5,boxSelectionEnabled:false});
  cy.on('render pan zoom position',positions);
  cy.on('tap','node',e=>{const n=e.target;if(n.data('boundary'))send('expand',n.data('boundary'));else if(n.data('group')||n.data('collapsed'))toggleGroup(n.id());else{clearTimeout(selectedTimer);selectedTimer=setTimeout(()=>select(n.id()),180)}});
@@ -200,7 +217,7 @@ window.dbtUpdate=function(p){
  if(filter&&!p.relayout)send('filter',$('selector').value,$('exclude').value);
  $('pin-focus').setAttribute('aria-pressed',String(!!p.pinned));$('pin-focus').setAttribute('aria-label',p.pinned?'Unpin focus':'Pin focus');$('pin-focus').dataset.tooltip=p.pinned?'Unpin focus':'Pin focus';$('pin-focus').disabled=!p.focus;
  positions();
- if(focusedCard){const card=cards.get(focusedCard[0]),target=focusedBadge?card?.querySelector('.execution-badge'):card;restoringFocus=true;(target||card||$('resource-picker')).focus({preventScroll:true});restoringFocus=false}
+ if(focusedCard){const card=cards.get(focusedCard[0]),target=focusedBadge?card?.querySelector('.execution-badge'):card;restoringFocus=true;(target||card||(picker.disabled?$('search'):picker)).focus({preventScroll:true});restoringFocus=false}
 };
 for(const button of document.querySelectorAll('button')){
  button.dataset.tooltip=button.title||button.getAttribute('aria-label')||button.textContent.trim();button.removeAttribute('title');
@@ -217,7 +234,7 @@ $('pin-focus').onclick=()=>{const pinned=$('pin-focus').getAttribute('aria-press
 $('show-minimap').onchange=e=>{$('minimap').style.display=e.target.checked?'block':'none';drawMinimap()};
 $('minimap').onpointerdown=e=>{$('minimap').setPointerCapture(e.pointerId);minimapNavigate(e)};$('minimap').onpointermove=e=>{if(e.buttons===1)minimapNavigate(e)};
 $('minimap').onkeydown=e=>{const shifts={ArrowLeft:[60,0],ArrowRight:[-60,0],ArrowUp:[0,60],ArrowDown:[0,-60]};if(shifts[e.key]){e.preventDefault();const p=cy.pan(),d=shifts[e.key];cy.pan({x:p.x+d[0],y:p.y+d[1]})}};
-for(const [id,format]of [['export-png','png'],['export-svg','svg'],['copy-image','clipboard']])$(id).onclick=()=>{$('export-menu').open=false;exportGraph(format)};
+for(const [id,format]of [['export-png','png'],['export-svg','svg'],['copy-image','clipboard']])$(id).onclick=()=>{const restore=$('export-options').contains(document.activeElement);$('export-menu').open=false;if(restore)$('export-menu').querySelector('summary').focus();exportGraph(format)};
 document.addEventListener('pointerdown',e=>{if(!$('export-menu').contains(e.target))$('export-menu').open=false});
 $('fit').onclick=()=>cy&&cy.fit(undefined,35);$('reset-zoom').onclick=()=>{if(!cy)return;cy.zoom(1);const anchor=cy.getElementById(selected||current?.focus),first=cy.nodes().filter(n=>!n.data('group')).first();if(anchor.length||first.length)cy.center(anchor.length?anchor:first);positions()};$('zoom-in').onclick=()=>cy&&cy.zoom(cy.zoom()*1.2);$('zoom-out').onclick=()=>cy&&cy.zoom(cy.zoom()/1.2);
 function searchResources(move=true){
@@ -232,6 +249,7 @@ function searchResources(move=true){
 }
 $('clear-search').onclick=()=>{$('search').value='';searchResources(false)};$('search').oninput=()=>searchResources();
 $('export-menu').onkeydown=e=>{if(e.key==='Escape'){$('export-menu').open=false;$('export-menu').querySelector('summary').focus()}};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('button-tooltip').style.display='none';document.querySelector('[aria-describedby="button-tooltip"]')?.removeAttribute('aria-describedby')}});
 $('regenerate').onclick=()=>send('regenerate');$('show-docs').onclick=()=>{if(selected||current?.focus)openDocumentation(selected||current.focus)};
-window.dbtRunnerState=(running,message)=>{$('regenerate').disabled=running||!current?.canGenerateDocs;$('status').textContent=message};window.addEventListener('resize',()=>{if(cy){cy.resize();if(selected)cy.center(cy.getElementById(selected));positions()}});send('ready');
+window.dbtRunnerState=(running,message)=>{$('regenerate').disabled=running||!current?.canGenerateDocs;$('status').textContent=message};window.addEventListener('resize',resizeGraph);send('ready');
 </script></body></html>

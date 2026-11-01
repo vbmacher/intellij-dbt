@@ -55,8 +55,8 @@ definitions of builtins instead, see
 
 ## Edit and generate YAML properties
 
-**dbt → Edit dbt Properties YAML** (editor context menu) opens the resource's
-authored YAML, where descriptions, tags, data tests, types and custom fields stay editable.
+In the editor context menu, choose **dbt → Edit dbt Properties YAML** to open the
+resource's YAML descriptions, tags, data tests, types and custom fields.
 
 **Code → Generate → dbt Columns** adds missing known column declarations.
 **Inherit dbt Descriptions** fills empty descriptions, only for proven single-column
@@ -80,7 +80,7 @@ why. Run the action again to use the current context.
 | Warning | When |
 | --- | --- |
 | Unresolved reference | A literal `ref()` or `source()` argument has no target; unknown sources and unknown tables have separate messages. Names built at runtime are not checked. |
-| SQL column | A column problem that local files can resolve. |
+| SQL column | A column name has no match in its query or CTE, and all input column lists are known. |
 | Model contract | For `contract.enforced: true`, a known output column is missing from YAML, or its known string, integer or decimal type is incompatible. |
 | Macro argument | An unknown keyword argument, when the macro has a single definition whose body does not use `kwargs`. Argument counts and value types are not checked. |
 | YAML structure | Invalid structure in project, dependency, selector and resource-property YAML, following the [engine and version](configuration.md#engine-and-version). Jinja values and custom adapter configuration are accepted. |
@@ -182,11 +182,10 @@ selection or inserts at the caret. Two- or three-part table names become `ref` o
 `source` calls only when they uniquely match physical metadata; package names and
 explicit versions are kept and other text is unchanged. Marked Jinja comments from
 the copy action are restored. Pasting supports Undo.
-Both actions have no default shortcut; assign one in **Settings → Keymap** if needed.
 
 Both actions need [Generate Docs](workspace.md#commands) output for the current
-project and target, and warn when the metadata may belong to another project or
-target. Reassign the shortcuts in **Settings → Keymap**.
+project and target. They warn when the metadata may belong to another project or
+target. To assign shortcuts, use **Settings → Keymap**; neither action has a default.
 
 ## Syntax highlighting
 

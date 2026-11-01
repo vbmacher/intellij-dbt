@@ -69,6 +69,26 @@ final class DbtDialogWorkflowTest extends DbtTestCase {
     }
   }
 
+  def testPreviewActionsRemainVisibleInNarrowResults(): Unit = {
+    val grid = new DbtResultGrid(getProject, _ => ())
+    grid.showResult(DbtQueryResult.parse("""{"show":[{"id":7,"name":"Orders"}]}""",
+      "analytics-development", 1, 25, "select * from orders").toOption.get)
+    capture(grid, "preview-results")
+    def layout(c: Container): Unit = { c.doLayout(); c.getComponents.collect { case child: Container => child }.foreach(layout) }
+    for (width <- Vector(480, 640, 1000)) {
+      grid.setSize(width, 480)
+      layout(grid); layout(grid)
+      components(grid).collect { case button: JButton => button }.foreach { button =>
+        val bounds = javax.swing.SwingUtilities.convertRectangle(button.getParent, button.getBounds, grid)
+        assertTrue(button.getText + " stays inside the result panel", bounds.x >= 0 && bounds.x + bounds.width <= width)
+        assertEquals(button.getText + " at " + width + ": " + button.getBounds + " in " + button.getParent.getBounds +
+          "; toolbar preferred " + button.getParent.getPreferredSize, button.getSize, button.getVisibleRect.getSize)
+      }
+      val table = components(grid).collectFirst { case t: javax.swing.JTable => t }.get
+      assertTrue("The toolbar leaves space for query results", table.getParent.getHeight > 100)
+    }
+  }
+
   def testMcpServicesActionsFollowOptInLifecycleAndCopyCurrentConfiguration(): Unit = {
     project()
     val service = getProject.getService(classOf[DbtAgent])

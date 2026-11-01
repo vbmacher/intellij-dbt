@@ -17,10 +17,10 @@ its SQL. Each inspection step runs an independent, bounded query.
   It uses the real dbt rendering context and can execute introspective macro
   queries. It does not materialize the model. CTE previews require explicit
   stepping after compilation.
-- **Provenance:** a generated SQL span carries its producing source line and
-  enclosing output expressions, including distinct macro/loop expansion instances.
-  Mapping must never be inferred from similar SQL text. If a transformation loses
-  an inner mapping, retain only the enclosing output provenance that is known.
+- **Source mapping:** generated CTEs retain their known model and macro locations,
+  including separate loop expansions and repeated macro calls. Similar SQL text
+  never establishes a source mapping. If a transformation loses an inner location,
+  only its known enclosing source expression remains available.
 - **Breakpoints:** resolve against the selected model's compilation. A matching
   breakpoint stops after the CTE result arrives. One source breakpoint can match
   several generated CTEs; each remains a separate step. Unmapped lines stay
@@ -28,12 +28,12 @@ its SQL. Each inspection step runs an independent, bounded query.
 - **Locations:** retain separate source and compiled positions. Compiled view
   switching runs no query. With no reliable source mapping, use the compiled
   position and label the frame accordingly.
-- **Snapshot:** generated SQL, mappings, results and execution settings belong to
-  one compilation. Resource, model, macro or execution-context changes cancel the
-  active command and discard that snapshot. Recompilation requires an explicit
-  action; a further explicit step starts a preview.
-- **Failures:** canceled/failed compilation, a mismatched report identity or invalid
-  source locations cannot install a snapshot. Missing tracing support, unsupported
+- **Compilation state:** generated SQL, mappings, results and execution settings
+  belong to one compilation. Resource, model, macro or execution-context changes
+  cancel the active command and discard those results and mappings. Recompilation
+  requires an explicit action; a further explicit step starts a preview.
+- **Failures:** canceled, failed or stale compilation and invalid source mappings
+  provide no inspection steps. Missing source-mapping support, unsupported
   SQL and models without top-level CTEs give a reason in Debug. Query failures stop
   Resume and preserve available evidence; error navigation targets compiled SQL.
 
@@ -58,8 +58,8 @@ corresponding read-only compiled SQL without querying again.
 
 ![Compiled SQL location after Step Into.](../docs/screenshots/cte-compiled-step.png)
 
-See [Workspace](../docs/workspace.md#source-breakpoints-and-compiled-sql) for the
-capture context, controls and mapping boundaries.
+See [Workspace](../docs/workspace.md#source-breakpoints-and-compiled-sql) for
+controls and mapping boundaries.
 
 ## Interactions
 

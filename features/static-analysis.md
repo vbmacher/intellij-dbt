@@ -25,8 +25,6 @@ When orders has a complete known column list without `unknown_column`, the colum
 
 ![Editor warning for a column absent from the known relation.](screenshots/authoring-static-column-warning.png)
 
-Editor warning for a column absent from the known relation.
-
 ## Interactions
 
 [Resource creation](resource-creation.md) handles supported missing literal resources. [SQLFluff inspection](sql-inspection.md) reports external lint results independently.

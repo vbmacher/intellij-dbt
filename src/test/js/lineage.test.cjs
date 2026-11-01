@@ -27,6 +27,59 @@ const exportedSvg=async()=>Buffer.from((await lastExport('svg')).split(',')[1],'
 const hasEvent=(type,id)=>page.evaluate(([type,id])=>events.some(e=>e.type===type&&e.id===id),[type,id]);
 async function nodePosition(id){return page.evaluate(id=>{const p=cy.getElementById(id).renderedPosition(),r=document.getElementById('cy').getBoundingClientRect();return{x:r.x+p.x,y:r.y+p.y}},id)}
 test('bundled graph loads and cards show resource identity',async()=>{assert.deepEqual(errors,[]);assert.equal(await page.locator('.card:not(.boundary)').count(),4);assert.match(await page.locator('#cards').innerText(),/orders/)});
+test('documentation closes by keyboard and returns focus to its resource',async()=>{
+ const view=await createLineagePage();
+ try{
+  const card=view.getByRole('button',{name:'orders · model · mart · analytics · graph focus',exact:true});
+  for(const close of ['Escape','Enter']){
+   await card.focus();await view.keyboard.press('Enter');
+   await view.evaluate(()=>{cy.zoom(.4);cy.center(cy.getElementById('model'))});
+   await view.locator('#close-docs').focus();await view.keyboard.press(close);
+   assert.equal(await view.locator('#docs').isVisible(),false);
+   assert.equal(await card.evaluate(e=>e===document.activeElement),true);
+   assert.equal(await view.evaluate(()=>cy.zoom()),.4);
+  }
+  await view.keyboard.press('Enter');await view.locator('#docs-divider').focus();
+  for(const name of ['aria-valuemin','aria-valuemax','aria-valuenow'])assert.ok(Number(await view.locator('#docs-divider').getAttribute(name))>0);
+  await view.keyboard.press('Escape');assert.equal(await card.evaluate(e=>e===document.activeElement),true);
+  await view.setViewportSize({width:480,height:700});
+  await view.locator('#group-by').selectOption('schema');
+  await view.locator('.card[aria-label^="orders"]').focus();await view.keyboard.press('Enter');
+  const divider=view.locator('#docs-divider'),value=Number(await divider.getAttribute('aria-valuenow'));
+  assert.ok(value>=Number(await divider.getAttribute('aria-valuemin'))&&value<=Number(await divider.getAttribute('aria-valuemax')));
+ }finally{await view.close()}
+});
+test('export returns keyboard focus and Escape dismisses tooltips',async()=>{
+ const view=await createLineagePage();
+ try{
+  await view.locator('#export-menu summary').click();
+  await view.locator('#export-svg').focus();await view.keyboard.press('Enter');
+  assert.equal(await view.locator('#export-menu summary').evaluate(e=>e===document.activeElement),true);
+  assert.equal(await view.locator('#export-menu').evaluate(e=>e.open),false);
+  await view.locator('#zoom-in').focus();assert.equal(await view.getByRole('tooltip').isVisible(),true);
+  await view.keyboard.press('Escape');assert.equal(await view.getByRole('tooltip').isVisible(),false);
+  assert.equal(await view.locator('#zoom-in').evaluate(e=>e===document.activeElement),true);
+ }finally{await view.close()}
+});
+test('empty graphs disable unavailable actions and recover when resources load',async()=>{
+ const view=await createLineagePage();
+ try{
+  await view.locator('.card[aria-label^="orders"]').focus();
+  await view.evaluate(()=>dbtUpdate({nodes:[],edges:[],boundary:[],empty:'No dbt resources found.'}));
+  assert.equal(await view.locator('#search').evaluate(e=>e===document.activeElement),true);
+  assert.equal(await view.locator('#empty').innerText(),'No dbt resources found.');
+  for(const id of ['fit','zoom-in','zoom-out','show-docs','export-svg','resource-picker'])assert.equal(await view.locator('#'+id).isDisabled(),true);
+  assert.equal(await view.locator('#clear-filter').isEnabled(),true);
+  await view.evaluate(p=>dbtUpdate(p),fixture);
+  for(const id of ['fit','zoom-in','zoom-out','show-docs','export-svg','resource-picker'])assert.equal(await view.locator('#'+id).isEnabled(),true);
+  await view.locator('#selector').fill('missing');
+  await view.evaluate(()=>dbtShowFilter({expression:'missing',exclude:'',ids:[],diagnostics:[]}));
+  assert.equal(await view.locator('#fit').isDisabled(),true);
+  assert.equal(await view.locator('#group-by').isEnabled(),true);
+  await view.locator('#clear-filter').click();
+  assert.equal(await view.locator('#fit').isEnabled(),true);
+ }finally{await view.close()}
+});
 test('resource hover does not show documentation or a node tooltip',async()=>{
  const before=await page.evaluate(()=>events.filter(e=>e.type==='select').length),p=await nodePosition('source');
  await page.mouse.move(p.x,p.y);await page.waitForTimeout(230);

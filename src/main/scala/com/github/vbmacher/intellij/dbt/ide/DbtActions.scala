@@ -25,7 +25,7 @@ import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
 import com.intellij.util.concurrency.AppExecutorUtil
-import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.{JBUI, WrapLayout}
 import java.awt.{BorderLayout, FlowLayout, GridBagConstraints, Insets}
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Paths
@@ -358,7 +358,7 @@ private[ide] object DbtUi {
   }
 
   def buttons(items: JComponent*): JPanel = {
-    val p = new JPanel(new FlowLayout(FlowLayout.LEFT));
+    val p = new JPanel(new WrapLayout(FlowLayout.LEFT));
     items.foreach(p.add);
     p
   }

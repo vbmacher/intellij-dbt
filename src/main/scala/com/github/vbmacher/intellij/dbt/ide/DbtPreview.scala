@@ -13,7 +13,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiFile
 import com.intellij.ui.components.JBLabel
-import java.awt.FlowLayout
+import java.awt.BorderLayout
 import javax.swing.{JButton, JPanel}
 import scala.util.Try
 
@@ -335,7 +335,7 @@ private[ide] object DbtPreviewEvidence {
 }
 
 /** Shared by the Runner and CTE inspector; failed queries have no result grid to hold these controls. */
-private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new FlowLayout(FlowLayout.LEFT)) {
+private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new BorderLayout) {
   private var evidence = Option.empty[DbtPreviewEvidence]
   private val label = new JBLabel
   label.putClientProperty("html.disable", java.lang.Boolean.TRUE)
@@ -354,17 +354,18 @@ private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPane
       else {
         navigate.setEnabled(false);
         label.setText("Source changed; rerun the preview before navigating to its error.")
+        label.setToolTipText(label.getText)
       }
     }))
-  add(details);
-  add(navigate);
-  add(label)
+  add(DbtUi.buttons(details, navigate), BorderLayout.NORTH)
+  add(label, BorderLayout.CENTER)
 
   def showEvidence(value: Option[DbtPreviewEvidence]): Unit = {
     evidence = value
     details.setEnabled(value.nonEmpty);
     navigate.setEnabled(value.exists(_.location.nonEmpty))
     label.setText(value.map(_.explanation).getOrElse(""))
+    label.setToolTipText(label.getText)
   }
 
   showEvidence(None)

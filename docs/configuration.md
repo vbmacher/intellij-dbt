@@ -7,18 +7,26 @@ IntelliJ project. Most navigation needs no settings.
 
 ## Settings → dbt Workspace
 
-The page has two tabs: **General** for navigation, execution, formatting and lineage,
+The page has two tabs: **General** for execution, navigation, formatting and lineage,
 and **Integrations** for Metabase, Airflow and the local MCP server. **Apply** saves
-both tabs. On **General**, choose **Owning dbt root** first: navigation, execution,
-environment, formatter and baseline settings apply to that dbt project only.
-The root selector stays visible while you scroll. **Execution** shows the executable,
-target and profiles directory. Select **Show command options** for wrapper arguments,
-directory overrides, preview limits and output preferences; **Show environment and variables**
-for environment files and variable overrides; or **Show baseline state** for comparison
-and deferral settings. Under **Navigation**, select **Show advanced metadata** for explicit
-metadata paths and local builtin definitions. **Formatting** and **Lineage** follow
-Navigation. Lineage settings apply across dbt roots.
-Clearing a **Show…** checkbox hides its group without changing its values.
+both tabs.
+
+On **General**, choose **Owning dbt root** first. Execution, navigation, environment,
+formatter and baseline settings apply to that dbt project. Lineage settings apply
+across all dbt roots. The root selector stays visible while you scroll.
+
+**Execution** shows the executable, target and profiles directory. Expand an
+optional group when you need it:
+
+| Group | Contains |
+| --- | --- |
+| **Show resolved execution context** | The command directory, executable, target and resolved paths. |
+| **Show command options** | Wrapper arguments, directory overrides, preview limits and output preferences. |
+| **Show environment and variables** | Environment files, environment overrides and dbt variables. |
+| **Show baseline state** | Baseline comparison and deferral options. |
+| **Show advanced metadata** (under **Navigation**) | Explicit metadata paths and local builtin definitions. |
+
+Clearing a **Show…** checkbox hides the group and keeps its values.
 
 **Apply** checks all dbt roots before saving. If an entry is invalid, Settings selects
 its root and tab, opens the relevant group and marks the field or table row. Your
@@ -60,8 +68,6 @@ Paths below are absolute or relative to the owning dbt root, except **Manifest f
 | **dbt version (optional)** | Blank uses `require-dbt-version` from `dbt_project.yml`, or Core 1.10. |
 | **Adapter (optional)** | Blank uses the selected profile output type. See [Profiles and adapters](#profiles-and-adapters). |
 | **Profiles file for navigation (optional)** | Blank uses `profiles.yml` in the resolved profiles directory. Commands use **Profiles directory**. |
-| **Variables (JSON)** | JSON object of dbt variable overrides. Blank uses project defaults. See [Variable overrides](#variable-overrides). |
-| **Environment variables** | Name/value overrides for dbt commands and formatters. Empty values are allowed. See [Environment files](#environment-files). |
 | **Local builtin definitions** | Maps builtin names to local SQL or Python source files. See [Local builtin definitions](#local-builtin-definitions). |
 | **Catalog file (optional)** | Blank uses `catalog.json` in **Artifact directory**. |
 | **State manifest for navigation (optional)** | Manifest used for state-related navigation. Commands use **Baseline state directory**. |
@@ -130,10 +136,9 @@ Go to Declaration for an overridden variable or environment name opens a read-on
 list of names labeled **IntelliJ settings**. Values are edited only in this settings
 page and are not included in that list.
 
-Select the active target through **Target**.
-Use the [Runner and native Run configuration controls](workspace.md#run-configurations)
-for selection, exclusion and named selectors. Standard `selectors.yml` definitions
-support [selector navigation](navigation.md#selectors).
+Use [dbt Run configurations](workspace.md#run-configurations) for selection,
+exclusion and named selectors. See [selector navigation](navigation.md#selectors)
+for references inside `selectors.yml`.
 
 ### Local builtin definitions
 
@@ -202,6 +207,8 @@ and [table definitions](https://docs.getdbt.com/reference/info-schema?version=2)
 | **Arguments before dbt command** | Empty. Arguments placed before the dbt command; quote arguments containing spaces. |
 | **Load environment files** | Enabled. Clear to skip environment files. |
 | **Environment files** | Blank uses `.env` when **Load environment files** is enabled. See [Environment files](#environment-files). |
+| **Environment variables** | Name/value overrides for dbt commands and formatters. Empty values are allowed. See [Environment files](#environment-files). |
+| **Variables (JSON)** | JSON object of dbt variable overrides. Blank uses project defaults. See [Variable overrides](#variable-overrides). |
 | **Project root override** | Blank uses the owning directory containing `dbt_project.yml`. Commands run in this directory. |
 | **Profiles directory** | Blank uses `DBT_PROFILES_DIR`, a project-local `profiles.yml`, then `~/.dbt`. Choose the directory containing `profiles.yml`. |
 | **Artifact directory** | `target`. Commands write artifacts here. |

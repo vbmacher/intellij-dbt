@@ -12,18 +12,16 @@ Open these actions from the **Tools** menu:
 
 ## Find downstream consumers
 
-Declared dbt exposures and cached Metabase questions and dashboards appear in the
-**Exposures** tab beside **Lineage** in the **dbt** tool window. See
-[Exposures](workspace.md#exposures) for its controls, column filter, refresh behavior
-and examples, and [Metabase connection](configuration.md#metabase-connection) for
-connection settings.
+See [Exposures](workspace.md#exposures) to browse declared dbt exposures and cached
+Metabase questions and dashboards. Connection settings are in
+[Metabase connection](configuration.md#metabase-connection).
 
 ## Inspect Airflow context
 
-First [add local DAG folders](configuration.md#airflow-dag-discovery). Open
-**Tools → dbt Airflow Context** to open detected DAGs and jobs in the **Find** tool
-window. Results show the DAG, task, owning project and known schedule. Open a result
-to navigate to its Python selection or destination entry.
+After [adding local DAG folders](configuration.md#airflow-dag-discovery), choose
+**Tools → dbt Airflow Context**. The **Find** tool window lists detected DAGs and
+tasks with their owning project and known schedule. Open a result to navigate to
+its Python selection or destination entry.
 
 The **Airflow details** preview shows the selected task's resources, exclusions,
 ingestion destinations, unresolved selections and exact source location.
@@ -34,13 +32,14 @@ when you return. Use **Rerun** to refresh after editing DAG files.
 Detected pipelines also appear in [Related Symbol](navigation.md#cte-structure-and-hierarchy)
 navigation and in a resource's [Quick documentation](editing.md#quick-documentation).
 
-Discovery is automatic and reads Python files in the configured folders
-recursively. It never executes Python and does not contact Airflow or cloud
-storage. Discovery includes changes to watched files, including unsaved edits, when results are refreshed.
-It skips `.git`, `.venv`, `venv`, `node_modules` and `__pycache__` directories and
-files larger than 1 MB; unreadable paths are reported with the results. With one dbt project
-open, that project is used; with several, a DAG file is matched to the nearest dbt project containing it;
-files outside all dbt projects remain unresolved.
+Discovery reads Python files in the configured folders and their subfolders,
+including unsaved edits when you refresh. It never executes Python or contacts
+Airflow or cloud storage. It skips `.git`, `.venv`, `venv`, `node_modules` and
+`__pycache__` directories and files larger than 1 MB. Results report unreadable paths.
+
+With one dbt project open, discovery uses that project. With several, it uses the
+nearest dbt project containing the DAG file; files outside all dbt projects remain
+unresolved.
 
 What is recognized:
 
@@ -60,13 +59,12 @@ What is recognized:
   project and its packages. Ingestion pipelines upstream of a dbt selection appear
   with that job.
 
-Runtime schedules and execution status cannot be determined.
+Discovery cannot resolve schedules computed at runtime or report whether a task ran.
 
 ## Connect an AI assistant with the local MCP server
 
-The local MCP (Model Context Protocol) server lets an AI assistant ask the IDE what
-it already knows about the project, without running dbt or exposing credentials.
-Use it when you ask an assistant to:
+The local MCP (Model Context Protocol) server gives an AI assistant access to the
+project's resource names, documentation and dependencies. Use it to:
 
 - write or check model and column descriptions (`get_documentation`);
 - explain where a column comes from or what uses it (`get_column_lineage`, `get_lineage`);
@@ -74,9 +72,10 @@ Use it when you ask an assistant to:
 - check which resources a selection such as `+orders` matches (`resolve_selection`).
 
 The assistant must run on the same computer and support MCP over HTTP with custom
-headers, and the project must be open in the IDE. The server cannot run dbt, query the warehouse or change files. Responses never
-include profile or environment values, connection secrets or warehouse rows; review
-project descriptions in the results before sending them to an external assistant.
+headers. Keep the project open in the IDE. The server cannot run dbt, query the
+warehouse or change files. It omits profile and environment settings, connection
+secrets and warehouse rows. Responses include project descriptions and source
+paths; review them before sending them to an external assistant.
 
 1. [Enable the local MCP server](configuration.md#local-mcp-server).
 2. Open **Tools → dbt Local MCP Server** to select **dbt Workspace → Local MCP Server**
@@ -93,7 +92,9 @@ project descriptions in the results before sending them to an external assistant
     "dbt-workspace": {
       "type": "http",
       "url": "http://127.0.0.1:<port>/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
     }
   }
 }
@@ -104,9 +105,9 @@ server to be enabled in settings. **Stop** and the copy actions are available on
 while it runs. Copy actions confirm when the details reach the clipboard.
 **Configure…** opens the integration settings.
 
-Each start uses a new random port and token, so copy the details again after a
-restart. The status panel shows the URL; authorization is included only when you
-copy connection details. Keep the token private.
+Each start uses a new random port and token. Copy the configuration again after a
+restart. The status panel shows the URL; copy actions include the authorization
+token. Keep the token private.
 
 ### MCP protocol reference
 
@@ -120,8 +121,8 @@ This section is for configuring MCP clients by hand or writing your own client.
   `Authorization: Bearer <token>`. Only Streamable HTTP is supported; there is no
   stdio transport, so a client that can only start local commands needs an HTTP
   bridge.
-- **Responses:** a single `application/json` body, never an SSE stream. The server
-  keeps no sessions and processes one request at a time.
+- **Responses:** a single `application/json` body, without an event stream. The
+  server keeps no sessions and processes one request at a time.
 - **Capabilities:** tools only (no resources, prompts or logging). The server
   identifies itself as `dbt-workspace` version `1.0`.
 
@@ -228,12 +229,40 @@ Version `2026-07-28`, sent with the headers `MCP-Protocol-Version: 2026-07-28`,
 `Mcp-Method: tools/call` and `Mcp-Name: get_documentation`:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"get_documentation","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report"}}}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    },
+    "name": "get_documentation",
+    "arguments": {
+      "project": "/work/analytics",
+      "resource_id": "model.analytics.report"
+    }
+  }
+}
 ```
 
 Version `2025-06-18`, sent after `initialize` with the header
 `MCP-Protocol-Version: 2025-06-18`:
 
 ```json
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_column_lineage","arguments":{"project":"/work/analytics","resource_id":"model.analytics.report","column":"amount","direction":"upstream"}}}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "get_column_lineage",
+    "arguments": {
+      "project": "/work/analytics",
+      "resource_id": "model.analytics.report",
+      "column": "amount",
+      "direction": "upstream"
+    }
+  }
+}
 ```

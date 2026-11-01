@@ -26,8 +26,6 @@ SQLFluff reports the configured capitalization diagnostic. Apply its offered fix
 
 ![SQLFluff capitalization diagnostic and source fix in the editor.](screenshots/authoring-sqlfluff-lint-jna-fixed.png)
 
-SQLFluff capitalization diagnostic and source fix in the editor.
-
 ## Interactions
 
 [SQL formatting](sql-formatting.md) handles whole-document layout. [Static analysis](static-analysis.md) supplies local semantic warnings without an external linter.

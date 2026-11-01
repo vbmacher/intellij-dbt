@@ -26,8 +26,6 @@ With the caret in the call, Parameter Info displays `money(amount, scale=2)` and
 
 ![Native parameter hint for money(amount, scale=2).](screenshots/root-native-parameter-info.png)
 
-Native parameter hint for money(amount, scale=2).
-
 ## Interactions
 
 [Completion](completion.md) suggests named arguments. [Static analysis](static-analysis.md) checks supported unknown keyword arguments separately.

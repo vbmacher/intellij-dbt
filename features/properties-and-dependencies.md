@@ -20,11 +20,7 @@ If `report.sql` contains `ref('orders')`, the orders resource has a **Used by** 
 
 ![Dependency chooser with consumers and their reference locations.](screenshots/model-dependencies.png)
 
-Dependency chooser with consumers and their reference locations.
-
 ![Property chooser for the orders model.](screenshots/model-properties.png)
-
-Property chooser for the orders model.
 
 ## Interactions
 

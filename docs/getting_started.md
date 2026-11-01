@@ -1,8 +1,8 @@
 # Getting started
 
-dbt Workspace lets you navigate, edit, run and inspect dbt projects in IntelliJ IDEA.
-Open a project containing `dbt_project.yml`; resources are recognized from local
-files without running dbt. For requirements, see [Installation](installation.md).
+Use dbt Workspace to navigate, edit, run and inspect dbt projects in IntelliJ IDEA.
+Open a project containing `dbt_project.yml` to browse its local resources without
+running dbt. See [Installation](installation.md) for requirements and setup.
 
 <img src="screenshots/model-usages.png" alt="Find Usages lists the references to the orders model in YAML files" width="640">
 

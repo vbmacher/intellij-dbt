@@ -5,7 +5,7 @@ import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.openapi.fileChooser.{FileChooserFactory, FileSaverDescriptor}
 import com.intellij.ui.components.{JBLabel, JBScrollPane, JBTextField}
 import com.intellij.ui.table.JBTable
-import java.awt.{BorderLayout, Component, FlowLayout}
+import java.awt.{BorderLayout, Component}
 import java.nio.file.Files
 import javax.swing.{JComboBox, JPanel, JSpinner, JTable, RowFilter, SpinnerNumberModel, SwingConstants}
 import javax.swing.table.{AbstractTableModel, DefaultTableCellRenderer, TableRowSorter}
@@ -67,9 +67,10 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
   private var result = Option.empty[DbtQueryResult]
   private var activeSorter = Option.empty[TableRowSorter[AbstractTableModel]]
   private var running = false
-  private val bar = new JPanel(new FlowLayout(FlowLayout.LEFT))
-  bar.add(label);
-  bar.add(new JBLabel("Filter:"));
+  private val bar = DbtUi.buttons()
+  private val filterLabel = new JBLabel("Filter:")
+  filterLabel.setLabelFor(filter)
+  bar.add(filterLabel);
   bar.add(filter)
   private val limit = new JSpinner(new SpinnerNumberModel(20, 1, 1000, 10))
   limit.getAccessibleContext.setAccessibleName("Preview row limit")
@@ -113,7 +114,10 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
   format.addActionListener(_ => export.setText("Export " + format.getSelectedItem))
   private val sql = DbtUi.button("Open SQL")(result.foreach(r => DbtSqlEditors.open(project, "dbt preview", r.sql)))
   Vector[Component](copy, format, export, sql).foreach(bar.add)
-  add(bar, BorderLayout.NORTH);
+  private val header = new JPanel(new BorderLayout)
+  header.add(label, BorderLayout.NORTH)
+  header.add(bar, BorderLayout.CENTER)
+  add(header, BorderLayout.NORTH);
   add(new JBScrollPane(table), BorderLayout.CENTER)
   table.setCellSelectionEnabled(true);
   table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)
@@ -162,6 +166,7 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
     result = None;
     activeSorter = None;
     label.setText(message)
+    label.setToolTipText(message)
     table.setRowSorter(null);
     table.setModel(new javax.swing.table.DefaultTableModel);
     updateButtons()
@@ -172,6 +177,7 @@ private[ide] final class DbtResultGrid(project: com.intellij.openapi.project.Pro
     limit.setValue(Int.box(DbtCommandRequest.limit(r.limit)))
     label.setText(s"Target: ${r.target} · Returned ${r.rows.size} / limit ${r.limit} · ${r.elapsedMillis} ms" +
       (if (r.rows.size >= r.limit) " · May be truncated" else if (r.rows.isEmpty) " · No data returned" else ""))
+    label.setToolTipText(label.getText)
     val columnTypes = r.columns.indices.map { column =>
       val classes = r.rows.indices.map(row => r.value(row, column)).filter(_ != null).map(_.getClass).distinct
       if (classes.size == 1) classes.head else classOf[Object]

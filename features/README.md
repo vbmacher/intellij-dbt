@@ -67,6 +67,7 @@ proposals and decisions are outside these specifications.
 
 ## Examples and screenshots
 
-Capability specifications include examples. Navigation and editor captures are
-listed in [screenshot sources](screenshots/README.md). Native command, selection,
-documentation and debugger procedures are defined in the linked current guides.
+Capability specifications include examples and link relevant illustrations in the
+[screenshot index](screenshots/README.md). User guides own control labels and
+procedures; screenshots illustrate their named capability without replacing its
+contract or guide.

@@ -9,7 +9,9 @@ Identify dbt resource kinds in the Project window and navigation/completion resu
 - **Inputs:** a recognized file or declaration, its resource path and effective kind.
 - **Output:** a resource icon on the applicable IDE surface.
 - Files use their resource icon first; YAML-only declarations can determine the file icon when their kinds agree. Mixed files retain their normal file-type icon.
-- Gutter markers indicate available related targets, not execution status. Dependency direction comes from **Uses** / **Used by**, not the icon.
+- Navigation gutter markers indicate available related targets; test Run gutters
+  show recorded execution outcomes separately. Dependency direction comes from
+  **Uses** / **Used by**, not the navigation icon.
 - Exact icon meanings, locations and exceptions are defined once in the [icon legend](../docs/icons.md).
 
 ## Example
@@ -19,8 +21,6 @@ Identify dbt resource kinds in the Project window and navigation/completion resu
 ## Screenshot
 
 ![Project tree and editor tabs display dbt resource icons.](screenshots/resource-icons.png)
-
-Project tree and editor tabs display dbt resource icons.
 
 ## Interactions
 

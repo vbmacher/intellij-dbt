@@ -24,8 +24,6 @@ For a missing `new_model`, **Create missing dbt resource** proposes a model unde
 
 ![Create resource dialog showing the proposed model path and starter SQL.](screenshots/authoring-create-review.png)
 
-Create resource dialog showing the proposed model path and starter SQL.
-
 ## Interactions
 
 [Static analysis](static-analysis.md) identifies unresolved literal references. [Project context](project-context.md) determines the destination owner.

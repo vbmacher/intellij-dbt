@@ -2,15 +2,21 @@
 
 [Capability index](README.md) · [User guide](../docs/editing.md#completion-and-parameter-information)
 
-When you press **Ctrl+Space** (or choose **Code → Code Completion → Basic**), the plugin suggests dbt names and SQL columns that are valid at the caret position.
+Suggest dbt names and known SQL columns for the caret's project and SQL scope.
+The [user guide](../docs/editing.md#completion-and-parameter-information) owns
+completion gestures and live-template controls.
 
-## Where completion works
+## Contract
 
-Completion works in files of a dbt project that are not ignored:
+- **Inputs:** the caret position and project context in a recognized, nonignored
+  resource file or `selectors.yml`.
+- **Outputs:** context-specific name and column suggestions, including available
+  kind, package, version, type and description details.
+
+File completion applies to:
 
 - model, macro, test and other resource files;
-- `selectors.yml`;
-- standard `selectors.yml` files.
+- the project's `selectors.yml`.
 
 In any other file, the plugin adds no suggestions.
 
@@ -33,7 +39,7 @@ What the plugin suggests depends on where the caret is.
 | Inside a macro call, outside quotes | The macro's arguments followed by `=`, with their defaults and documented types |
 | Inside `{{ }}` or `{% %}`, outside any call | Macros and the dbt functions `ref`, `source`, `doc`, `var` and `config` |
 | After `package.` inside `{{ }}` or `{% %}` | Macros of that package |
-| In `selectors.yml` or a selection file | `package:<name>`, `tag:<tag>`, `selector:<name>`, and names of models, seeds and snapshots |
+| In `selectors.yml` | `package:<name>`, `tag:<tag>`, `selector:<name>`, and names of models, seeds and snapshots |
 | In SQL, outside `{{ }}` and `{% %}` | Columns of all tables visible at the caret |
 | In SQL, after `alias.` | Columns of the table with that alias only |
 
@@ -46,7 +52,8 @@ Each suggestion shows extra details next to its name:
 
 - Column suggestions include only columns the plugin knows about: columns declared in YAML, output columns of models, and columns of subqueries and CTEs. If a table's columns are not known, its columns are missing from the list or incomplete.
 - If the `version` argument of `ref` is not a plain value, no versions are suggested.
-- Completion reads project files only. It does not run dbt or connect to the database.
+- Completion uses local project files and selected local metadata. It does not run
+  dbt or connect to the database.
 
 ## Live templates
 
@@ -73,8 +80,6 @@ With the caret after `o.`, completion offers `id`, `amount` and `status`. Choosi
 ## Screenshot
 
 ![Column completion after o. for the stg_orders model.](screenshots/root-column-completion.png)
-
-Column completion after `o.` for the `stg_orders` model.
 
 ## Interactions
 

@@ -24,12 +24,12 @@ For `raw.orders → stg_orders → fct_orders → orders_dashboard`, filter to t
 
 ## Screenshot
 
-![Finance selection with dashed filtered-boundary resource cards.](screenshots/cte-lineage-filter.png)
-
-Finance selection with dashed filtered-boundary resource cards.
-
 ![Selected orders resource with documentation fixed on the right.](../docs/screenshots/lineage-documentation.png)
 
 ## Interactions
 
-[Selection review](selection-review.md) accepts filter values only through the explicit Use in Run Configuration action. Graph focus, selected resource, graph filters and execution scope remain separate. [Resource documentation](resource-documentation.md), [column lineage](column-lineage.md) and [execution evidence](execution-evidence.md) add detail to selected resources.
+[Selection review](selection-review.md) accepts graph filter values only through
+the explicit **Run configuration…** action. Graph focus, selected resource, graph
+filters and execution scope remain separate. [Resource documentation](resource-documentation.md),
+[column lineage](column-lineage.md) and [execution evidence](execution-evidence.md)
+add detail to selected resources.
