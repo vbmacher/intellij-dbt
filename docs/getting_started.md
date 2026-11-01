@@ -4,7 +4,7 @@ Use dbt Workspace to navigate, edit, run and inspect dbt projects in IntelliJ ID
 Open a project containing `dbt_project.yml` to browse its local resources without
 running dbt. See [Installation](installation.md) for requirements and setup.
 
-<img src="screenshots/model-usages.png" alt="Find Usages lists the references to the orders model in YAML files" width="640">
+<img src="screenshots/model-usages.png" alt="Find Usages lists references to the orders model" width="960">
 
 ## Navigation
 

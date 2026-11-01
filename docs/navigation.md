@@ -21,7 +21,7 @@ Right-click in the editor and open **dbt** to find the same popups:
   **Used by**. Choose a resource to open its declaration, or a `file:line` entry to
   open that reference.
 
-<img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="460">
+<img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="960">
 
 ## CTE structure and hierarchy
 
@@ -81,7 +81,7 @@ join {{ source('raw', 'events') }} e on true
 `raw` opens the source and `events` its table. Use YAML names even when `identifier`
 sets a different warehouse name. YAML properties link back to source files.
 
-<img src="screenshots/model-properties.png" alt="dbt Properties offers the YAML declarations of the orders model" width="640">
+<img src="screenshots/model-properties.png" alt="dbt Properties offers the YAML declarations of the orders model" width="960">
 
 ### Model versions
 
@@ -177,7 +177,7 @@ models:
 descriptions. `doc()` navigates only in resource descriptions, not in SQL or
 `config.meta.description`.
 
-<img src="screenshots/doc-usages.png" alt="Find Usages for a documentation block" width="640">
+<img src="screenshots/doc-usages.png" alt="Find Usages for a documentation block" width="960">
 
 ## Data tests and unit tests
 
