@@ -13,7 +13,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiFile
 import com.intellij.ui.components.JBLabel
-import java.awt.FlowLayout
+import java.awt.BorderLayout
 import javax.swing.{JButton, JPanel}
 import scala.util.Try
 
@@ -61,7 +61,7 @@ private[ide] object DbtPreviewModelAction {
       DbtRunSelection.available(w).find(_.path == file.getVirtualFile.getPath).toRight("Choose an available dbt model.")
         .flatMap(DbtCommand.create(w, _, "Preview", fullRefresh = false))
     } {
-      case Left(error) => Messages.showInfoMessage(project, error, "Preview dbt model")
+      case Left(error) => DbtNotifications.show(project, "Preview dbt model", error)
       case Right(command) => DbtRunConfiguration.launch(project, command)
     }
   }
@@ -119,7 +119,7 @@ private[ide] object DbtCteInspection {
           case Left(error) if offerModelPreview =>
             if (Messages.showYesNoDialog(project, error, title, "Preview model", "Cancel", Messages.getInformationIcon) == Messages.YES)
               DbtPreviewModelAction.launch(project, file)
-          case Left(error) => Messages.showInfoMessage(project, error, title)
+          case Left(error) => DbtNotifications.show(project, title, error)
           case Right(command) => DbtRunConfiguration.launch(project, command)
         }
       }
@@ -335,7 +335,7 @@ private[ide] object DbtPreviewEvidence {
 }
 
 /** Shared by the Runner and CTE inspector; failed queries have no result grid to hold these controls. */
-private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new FlowLayout(FlowLayout.LEFT)) {
+private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPanel(new BorderLayout) {
   private var evidence = Option.empty[DbtPreviewEvidence]
   private val label = new JBLabel
   label.putClientProperty("html.disable", java.lang.Boolean.TRUE)
@@ -354,17 +354,18 @@ private[ide] final class DbtPreviewEvidencePanel(project: Project) extends JPane
       else {
         navigate.setEnabled(false);
         label.setText("Source changed; rerun the preview before navigating to its error.")
+        label.setToolTipText(label.getText)
       }
     }))
-  add(details);
-  add(navigate);
-  add(label)
+  add(DbtUi.buttons(details, navigate), BorderLayout.NORTH)
+  add(label, BorderLayout.CENTER)
 
   def showEvidence(value: Option[DbtPreviewEvidence]): Unit = {
     evidence = value
     details.setEnabled(value.nonEmpty);
     navigate.setEnabled(value.exists(_.location.nonEmpty))
     label.setText(value.map(_.explanation).getOrElse(""))
+    label.setToolTipText(label.getText)
   }
 
   showEvidence(None)

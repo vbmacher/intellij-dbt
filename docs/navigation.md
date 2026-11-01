@@ -2,8 +2,8 @@
 
 [User guide](getting_started.md) · [Icons](icons.md)
 
-Go to Declaration (Ctrl+Click) and Find Usages work on dbt references in SQL, Jinja,
-YAML and Python. Targets respect the owning project, package and model version.
+Follow dbt references across SQL, Jinja, YAML and Python. Targets respect the owning
+project, package and model version.
 
 ## Gutter markers and popups
 
@@ -21,7 +21,7 @@ Right-click in the editor and open **dbt** to find the same popups:
   **Used by**. Choose a resource to open its declaration, or a `file:line` entry to
   open that reference.
 
-<img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="460">
+<img src="screenshots/model-dependencies.png" alt="dbt Dependencies lists consumers and their reference locations" width="960">
 
 ## CTE structure and hierarchy
 
@@ -51,19 +51,23 @@ when it revisits a resource already in that branch.
 | `dependencies.yml` and `package-lock.yml` | Declarative dependency references |
 | Python models | Supported `dbt` API calls |
 
-Quoted and multiline YAML values work in these locations. Files are recognized in
-each `dbt_project.yml`'s `model-paths`, `seed-paths`, `snapshot-paths`,
-`macro-paths`, `test-paths`, `docs-paths` and supported function/check paths;
-packages use `packages-install-path` and their own project names. `.git`, `.idea`,
-`.venv`, `venv`, `logs`, `target-path`, other generated output and `.dbtignore`
-matches are excluded; installed package sources are included. `.dbtignore` supports
-ordered exclusions and re-inclusions, anchored paths, directories and wildcards;
-generated paths cannot be re-included:
+Quoted and multiline YAML values work in these locations. The plugin recognizes
+files in the resource paths declared by each `dbt_project.yml`: `model-paths`,
+`seed-paths`, `snapshot-paths`, `macro-paths`, `test-paths`, `docs-paths` and supported
+function/check paths. It includes installed packages from `packages-install-path`,
+using each package's project name.
+
+The plugin skips `.git`, `.idea`, `.venv`, `venv`, `logs`, `target-path`, other
+generated output and `.dbtignore` matches. In `.dbtignore`, use ordered exclusions
+and re-inclusions, anchored paths, directories and wildcards. For example, exclude
+an experimental folder but keep one model:
 
 ```gitignore
 models/experimental/
 !models/experimental/keep.sql
 ```
+
+Generated paths cannot be re-included.
 
 ## Models, seeds, snapshots and sources
 
@@ -77,7 +81,7 @@ join {{ source('raw', 'events') }} e on true
 `raw` opens the source and `events` its table. Use YAML names even when `identifier`
 sets a different warehouse name. YAML properties link back to source files.
 
-<img src="screenshots/model-properties.png" alt="dbt Properties offers the YAML declarations of the orders model" width="640">
+<img src="screenshots/model-properties.png" alt="dbt Properties offers the YAML declarations of the orders model" width="960">
 
 ### Model versions
 
@@ -173,7 +177,7 @@ models:
 descriptions. `doc()` navigates only in resource descriptions, not in SQL or
 `config.meta.description`.
 
-<img src="screenshots/doc-usages.png" alt="Find Usages for a documentation block" width="640">
+<img src="screenshots/doc-usages.png" alt="Find Usages for a documentation block" width="960">
 
 ## Data tests and unit tests
 
@@ -322,8 +326,8 @@ Check that:
   their targets public;
 - the [engine and version](configuration.md#engine-and-version) support the feature.
 
-Names computed from query results, environment values or macro execution cannot be
-followed; use a literal or a constant assignment.
+Use a literal name or a constant assignment for navigation. Names computed from
+query results, environment values or macro execution have no local target.
 
 When navigation offers several choices, pick one, or qualify the reference with its
 project or package, version or table alias. Dependencies marked **candidate** are

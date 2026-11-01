@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.notification.NotificationType
 import com.github.vbmacher.intellij.dbt.lineage.DbtColumnLineage
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
@@ -203,7 +204,7 @@ private[ide] object DbtPropertiesEditor {
     else com.intellij.openapi.application.WriteAction.compute[Either[String, DbtPropertyEdit], RuntimeException](() =>
       plan(w, resource, description, proposedColumns, Vector.empty, Vector.empty))
     prepared match {
-      case Left(error) => com.intellij.openapi.ui.Messages.showInfoMessage(w.project, error, "Generate dbt properties")
+      case Left(error) => DbtNotifications.show(w.project, "Generate dbt properties", error, NotificationType.INFORMATION)
       case Right(edit) =>
         val sources = w.files.map(f => (f, f.getModificationStamp))
         val settings = DbtProjectSettings.get(w.project).getModificationCount

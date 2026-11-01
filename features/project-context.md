@@ -26,9 +26,7 @@ The reference identifies version 2 in `finance` within the consuming project's c
 
 ## Screenshot
 
-![Disposable dbt project with local models, macros, tests and project files.](screenshots/root-workspace.png)
-
-Disposable dbt project with local models, macros, tests and project files.
+![Resource documentation identifies the owning package alongside its dependencies.](../docs/screenshots/lineage-documentation.png)
 
 ## Interactions
 

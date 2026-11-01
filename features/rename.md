@@ -25,8 +25,6 @@ Renaming the CTE `recent` to `recent_orders` updates its declaration and resolvi
 
 ![Native Rename dialog for a local CTE.](screenshots/authoring-cte-rename-dialog.png)
 
-Native Rename dialog for a local CTE.
-
 ## Interactions
 
 Uses [reference resolution](navigation.md). [Safe Delete](safe-delete.md) checks the corresponding removal operation.

@@ -25,8 +25,6 @@ Safe Delete can remove the unused CTE. Deleting `kept` instead reports its consu
 
 ![Safe Delete reports a CTE usage that prevents removal.](screenshots/authoring-cte-safe-delete-conflict.png)
 
-Safe Delete reports a CTE usage that prevents removal.
-
 ## Interactions
 
 Shares supported local declarations with [Rename](rename.md) and uses [Find Usages](navigation.md) for the review.

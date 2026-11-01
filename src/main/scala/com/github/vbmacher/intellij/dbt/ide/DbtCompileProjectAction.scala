@@ -1,9 +1,9 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.notification.NotificationType
 import com.github.vbmacher.intellij.dbt.project.DbtWorkspace
 import com.intellij.openapi.actionSystem.{AnActionEvent, CommonDataKeys}
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.{VfsUtilCore, VirtualFile}
 
@@ -39,7 +39,7 @@ final class DbtCompileProjectAction extends DbtEditorAction {
       .flatMap(DbtCommand.create(w, _, "Compile", fullRefresh = false))
   } {
     case Right(command) => DbtRunConfiguration.launch(project, command)
-    case Left(error) => Messages.showErrorDialog(project, error, "Compile dbt Project")
+    case Left(error) => DbtNotifications.show(project, "Compile dbt Project", error, NotificationType.ERROR)
   }
 }
 

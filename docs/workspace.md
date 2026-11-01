@@ -2,11 +2,10 @@
 
 [User guide](getting_started.md)
 
-Open **View → Tool Windows → dbt** for the **Lineage** and **Exposures** tabs.
-dbt commands run in the
-IDE's **Run** window, CTE inspection uses the **Debug** window, and clicking a Lineage
-card opens its details on the right of the graph. Browsing the graph does not run dbt or
-query the warehouse.
+Open **View → Tool Windows → dbt** for **Lineage** and **Exposures**. Run dbt commands
+in the IDE's **Run** window and inspect CTE queries in **Debug**. Click a Lineage
+card to read its documentation beside the graph. Browsing the graph does not run
+dbt or query the warehouse.
 
 ## Lineage
 
@@ -47,7 +46,8 @@ The pane stays on the right as you move the mouse or pan the graph. Drag its lef
 divider to change its width; with the divider focused, use Left and Right arrow keys.
 Opening or resizing the pane keeps the selected resource in view. Zoom stays the
 same when the card fits; otherwise the view adjusts while keeping a readable scale.
-**Close documentation** returns that space to the graph.
+Click **Close documentation**, or press Escape while the pane or divider has focus.
+The pane closes and keyboard focus returns to its resource card.
 
 Click a column name to inspect its upstream dependencies and downstream consumers
 in the same pane. **Resource details** returns to the resource. **Airflow context**
@@ -76,6 +76,8 @@ Click or drag in the **Minimap** to navigate; arrow keys pan when it has focus.
 Clear the **Minimap** checkbox to hide it. Open **Export** for **PNG**, **SVG**,
 **Copy image** and **Include legend**. Exports capture the graph as filtered and
 collapsed. If a graph is too large for PNG, collapse groups, narrow the filter or use SVG.
+Choosing an export returns keyboard focus to **Export**. Graph actions are disabled
+when no resources are available; filter controls remain available to restore the graph.
 
 ### Build and freshness badges
 
@@ -133,8 +135,6 @@ previous consumers and timestamp, and shows the error:
 
 ![The Exposures tab retains its consumer list after an HTTP 503 refresh failure.](screenshots/downstream-consumers-refresh-error.png)
 
-These captures use the production panels in IntelliJ's tabbed content UI with a
-local dbt project and local HTTP fixture metadata, without an installed IDE frame.
 The cache lasts while the IDE project is open and is cleared when integration
 settings are applied. Refresh fails above 20 databases or 1,000 questions; only the
 first 100 dashboards are inspected and a larger list is marked partial. Dashboards
@@ -223,7 +223,8 @@ reload artifacts. Completion notifications follow the
 
 In the configuration editor, **Review selection** opens the locally matched resources
 in **Find** without running dbt; entries open their declarations and incomplete
-resolution is reported. **Copy command** copies the prepared command.
+resolution is reported. **Show in Lineage** displays the selection in the graph;
+**Copy command** copies the prepared command when it can be built.
 **Resolve with dbt ls** runs dbt in **Run** and opens its matches in **Find**. The
 result is reused while the configuration, source and execution settings are
 unchanged and all matched resources are known locally. A failed or canceled
@@ -274,7 +275,8 @@ column where available; the SQL may be incomplete or use syntax the plugin does
 not support. Choose **Preview model** in the dialog to preview the complete model,
 or **Cancel** to leave without running a query.
 
-The **Rows** view shows the target, row count, limit and elapsed time. **May be
+The **Rows** view shows the target, row count, limit and elapsed time above its
+controls. Hover over a clipped status message to read it in full. **May be
 truncated** means the row limit was reached. Sort by column headers, resize or
 reorder columns, and use **Filter** to search the returned rows. **Copy selection**
 copies selected cells as tab-separated text. Choose CSV or TSV and click **Export
@@ -282,10 +284,11 @@ CSV** / **Export TSV** to save the filtered rows; SQL null exports as unquoted
 `NULL` and the string NULL as `"NULL"`.
 Replacing an existing export requires confirmation; **Cancel** keeps the file.
 
-Changing **Preview row limit** alone runs nothing; **Run with limit** runs the query
-again with that limit. **Open SQL** or **Open preview SQL** opens the executed SQL in
-a read-only editor; process output stays in the console. After a CTE failure, **Go to CTE error** opens the matching
-position in your source.
+Changing the row limit runs nothing; **Run with limit** runs the query again with
+that limit. **Open SQL** opens the query's SQL in a read-only editor.
+**Open preview SQL** opens the submitted SQL and, when available, the SQL sent by
+the adapter. Process output stays in the console. After a CTE failure,
+**Go to CTE error** opens the mapped error location when available.
 
 ## Compiled SQL
 
@@ -322,21 +325,10 @@ A resolved breakpoint binds to the generated CTEs that contain SQL produced by
 that source line. **Resume** pauses after a matching CTE's result is available,
 highlighting the source line. Disabled and muted breakpoints do not stop Resume.
 
-For example, this model delegates its query to a macro:
-
-```sql
-{{ config(materialized='view') }}
-
-{{ wms_stage_packaging_input(
-    source('wms_raw', 'all_cma_pairwise_final_output_all_demo_combinations')
-) }}
-```
-
-A breakpoint on `wms_stage_packaging_input(` binds to the CTEs produced by that
-call. A breakpoint on a SQL-producing line inside the macro can select a narrower
-set of CTEs. Nested macro calls and repeated loop expansions retain separate
-generated steps. A breakpoint shared by several steps can stop on the same
-source line more than once.
+A breakpoint on a macro call binds to the CTEs produced by that call. A breakpoint
+on a SQL-producing line inside the macro can select a narrower set of CTEs. Nested
+macro calls and repeated loop expansions retain separate steps. A breakpoint shared
+by several steps can stop on the same source line more than once.
 
 ![A macro-call source breakpoint with the first generated CTE result in Debug.](screenshots/cte-source-breakpoint.png)
 
@@ -346,16 +338,10 @@ query. **Step Over** advances one generated CTE at a time in either view.
 
 ![Step Into shows the generated SQL while preserving the CTE result.](screenshots/cte-compiled-step.png)
 
-These captures show the native IntelliJ editor and Debug Rows panels without the
-surrounding IDE frame, using a local dbt Core/DuckDB project. The macro generates
-two CTEs that return a single `id` value.
-
 Lines that produce no inspectable CTE remain unresolved; hover over the breakpoint
 for the reason. String transformations can remove an inner macro location while
 leaving its enclosing output expression mapped. SQL without a reliable source
-location opens at its compiled location, and its frame says **source mapping
-unavailable**. The debugger never chooses a source line by guessing from similar
-SQL text.
+location opens in compiled SQL, and its frame says **source mapping unavailable**.
 
 ### Controls and results
 
@@ -377,7 +363,7 @@ in **Rows**.
 **Run to Cursor** is unavailable. Inspection breakpoints do not pause a normal
 **Run** command, an executing warehouse query, or Jinja evaluation. Each step runs
 a separate bounded query and recalculates its dependencies, so random values and
-timestamps can differ between steps. Only one dbt process runs per IDE project.
+timestamps can differ between steps.
 
 Editing the model, a contributing macro or another resource of its execution
 project, or changing execution settings, cancels the current command and discards

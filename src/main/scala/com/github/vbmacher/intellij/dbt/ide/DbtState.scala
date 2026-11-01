@@ -1,5 +1,6 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.notification.NotificationType
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.project.DbtJson.obj
 import com.github.vbmacher.intellij.dbt.lineage.{DbtLineage, DbtSelection}
@@ -8,7 +9,6 @@ import com.google.gson.{JsonArray, JsonElement, JsonObject}
 import com.intellij.diff.{DiffContentFactory, DiffManager}
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import java.nio.file.{Files, LinkOption, Path}
 import scala.jdk.CollectionConverters._
@@ -330,8 +330,8 @@ private[ide] object DbtStateComparison {
         changes <- DbtState.compare(w, root)
       } yield configuration.sourceKey(w) -> changes
     } {
-      case Left(error) => Messages.showErrorDialog(project, error, "dbt baseline comparison")
-      case Right((_, changes)) if changes.isEmpty => Messages.showInfoMessage(project, "No locally detectable changes.", "dbt baseline comparison")
+      case Left(error) => DbtNotifications.show(project, "dbt baseline comparison", error, NotificationType.ERROR)
+      case Right((_, changes)) if changes.isEmpty => DbtNotifications.show(project, "dbt baseline comparison", "No locally detectable changes.", NotificationType.INFORMATION)
       case Right((key, changes)) =>
         val choices = changes.map(c => (c.status + ": " + c.id + " · " + c.reason) -> c.id).toMap
         JBPopupFactory.getInstance.createPopupChooserBuilder(choices.keys.toVector.sorted.asJava)
@@ -344,7 +344,7 @@ private[ide] object DbtStateComparison {
                 text <- DbtState.comparison(w, root, choices(label))
               } yield text
             } {
-              case Left(error) => Messages.showErrorDialog(project, error, "dbt baseline comparison")
+              case Left(error) => DbtNotifications.show(project, "dbt baseline comparison", error, NotificationType.ERROR)
               case Right((before, after)) =>
                 val factory = DiffContentFactory.getInstance()
                 DiffManager.getInstance.showDiff(project, new SimpleDiffRequest(label, factory.create(before), factory.create(after),

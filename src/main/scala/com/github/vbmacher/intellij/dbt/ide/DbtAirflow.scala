@@ -14,14 +14,12 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.{ProcessCanceledException, ProgressManager}
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
 import java.net.{URI, URLEncoder}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{FileVisitResult, Files, Path, Paths, SimpleFileVisitor}
 import java.nio.file.attribute.BasicFileAttributes
-import javax.swing.{JList, JScrollPane}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
@@ -573,33 +571,7 @@ final class DbtAirflowRelatedProvider extends GotoRelatedProvider {
 
 final class DbtAirflowAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
-    DbtUi.background(project, "Discover local dbt Airflow context") { _ =>
-      DbtUi.read {
-        val w = DbtWorkspace.get(project);
-        (DbtAirflow.tasks(w), DbtAirflow.problems(w))
-      }
-    } { case (tasks, problems) =>
-      val status = DbtUi.textArea((Vector(if (tasks.isEmpty) "No Airflow pipelines detected. Choose local DAG folders in Settings > dbt Workspace > Integrations." else "Detected from local DAG Python files; Python is never executed.") ++ problems).mkString("\n"))
-      val list = new JList[String](tasks.map(t => t.dag + " / " + t.task + " · " + t.project + " · " + t.selection + " exclude: " + t.exclude +
-        " · " + t.kind + (if (t.schedule.nonEmpty) " · Schedule: " + t.schedule else "") +
-        " · " + t.resources.map(_.uniqueId).mkString(", ") + " · " + t.problems.mkString("; ") + " · Source: " + t.evidence + ":" + t.line +
-        (if (t.ingestion.nonEmpty) (if (t.kind == "ingestion") " · ingestion destinations: " else " · upstream ingestion pipelines: ") + t.ingestion.mkString(", ") else "")).toArray)
-
-      def selected: Option[DbtAirflowTask] = DbtUi.selected(list, tasks)
-
-      DbtUi.dialog(project, "dbt Airflow Context", new JScrollPane(list), north = status, south = DbtUi.buttons(
-        DbtUi.button("Open DAG definition") {
-          selected.foreach(t => DbtUi.open(project, t.evidence, t.offset))
-        },
-        DbtUi.button("Open Airflow task") {
-          selected match {
-            case Some(t) if t.url.nonEmpty => t.url.foreach(BrowserUtil.browse)
-            case _ => Messages.showInfoMessage(project, "Set Airflow URL in Settings > dbt Workspace > Integrations and choose a task.", "Airflow context")
-          }
-        },
-        DbtUi.button("Configure…") {
-          DbtSettingsConfigurable.showIntegrations(project)
-        }))
-    }
+    DbtAirflowResults.show(project)
+    ()
   }
 }

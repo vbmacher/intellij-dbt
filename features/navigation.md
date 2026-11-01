@@ -27,8 +27,6 @@ Following `orders` opens the model. Find Usages on that model lists the resolvin
 
 ![Find Usages lists references to the orders model.](screenshots/model-usages.png)
 
-Find Usages lists references to the orders model.
-
 ## Interactions
 
 [Properties and dependencies](properties-and-dependencies.md) present related declarations. [Refactoring](rename.md) uses resolving references when proposing edits.

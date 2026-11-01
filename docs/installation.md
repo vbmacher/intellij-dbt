@@ -8,12 +8,17 @@ Enable these plugins in **Settings → Plugins**:
 | Plugin | Needed for |
 | --- | --- |
 | **YAML** (bundled) | Required; the plugin does not load without it. |
+| **Services View** (bundled) | Required; provides the local MCP server controls in Services. |
 | **TextMate Bundles** (bundled) | dbt SQL/Jinja, YAML/Jinja and Markdown/Jinja [highlighting](editing.md#syntax-highlighting). No bundle import or SQL file association is needed. Navigation works without it. |
 | **Test Runner** (bundled) | Required; provides the dbt [test tree](workspace.md#tests). |
-| **Web Browser (JCEF)** (bundled, with the bundled JetBrains Runtime) | The [Lineage](workspace.md#lineage) graph. Without JCEF the graph cannot open; commands and navigation still work. |
+| **Web Browser (JCEF)** (bundled) | Required plugin module; provides the [Lineage](workspace.md#lineage) graph. |
 | **Python Community Edition** (free, from Marketplace) | [Python model](navigation.md#python-models) navigation and [local Python builtin definitions](configuration.md#local-builtin-definitions). |
 
 Use a full IntelliJ installation so the bundled components are present.
+Lineage also needs the bundled JetBrains Runtime and native JCEF files. If the
+native browser cannot start, Lineage explains how to use Call Hierarchy and
+Documentation instead; commands and navigation still work. This fallback requires
+the JCEF plugin module to remain enabled.
 
 To run dbt commands, install dbt, its adapters and the project's packages in your
 chosen environment, then set the executable in
@@ -51,7 +56,8 @@ sbt runPluginVerifier
 sbt runIDE
 ```
 
-`packageArtifactZip` creates the installable ZIP in `target/`. Plugin Verifier writes its report to `target/verifier/reports`; check its completed verdict. To select another installed IDE:
+`packageArtifactZip` creates the installable ZIP in `target/`. Plugin Verifier writes
+its report to `target/verifier/reports`. To check another installed IDE:
 
 ```bash
 sbt 'set pluginVerifierOptions := pluginVerifierOptions.value.copy(overrideIDEs = Seq("/path/to/idea"))' runPluginVerifier
@@ -59,9 +65,18 @@ sbt 'set pluginVerifierOptions := pluginVerifierOptions.value.copy(overrideIDEs 
 
 ### JCEF in the development IDE
 
-The SDK archive used by `sbt runIDE` can omit the native JCEF bundle. If Lineage is blank and the IDE log reports `Startup JCEF test is failed (because CefApp wasn't initialized)`, copy or symlink `plugins/jcef-plugin/jcef` from a full IDEA installation into the corresponding SDK directory.
+The SDK archive used by `sbt runIDE` can omit the native JCEF bundle. If Lineage
+cannot open and the IDE log reports
+`Startup JCEF test is failed (because CefApp wasn't initialized)`:
 
-Match the operating system and architecture, and match the SDK's `jcefBuild` value in `dependencies.txt` to the bundle's `jcef.version`. Restart the development IDE after copying it. See JetBrains' [JCEF requirements](https://plugins.jetbrains.com/docs/intellij/embedded-browser-jcef.html#plugin-dependency).
+1. Find `plugins/jcef-plugin/jcef` in a full IDEA installation for the same operating
+   system and architecture.
+2. Check that the SDK's `jcefBuild` in `dependencies.txt` matches the bundle's
+   `jcef.version`.
+3. Copy or symlink that directory into the corresponding SDK location, then restart
+   the development IDE.
+
+See JetBrains' [JCEF requirements](https://plugins.jetbrains.com/docs/intellij/embedded-browser-jcef.html#plugin-dependency).
 
 ### Optional development tools
 
@@ -86,7 +101,8 @@ npx playwright install chromium
 npm test
 ```
 
-Set `DBT_PLAYWRIGHT_MODULE` to the installed Playwright module path when it cannot be resolved normally. Set `DBT_CHROMIUM` to a Chromium executable when Playwright has no browser available.
+If Playwright cannot find the module or browser, set `DBT_PLAYWRIGHT_MODULE` to the
+installed Playwright module path or `DBT_CHROMIUM` to a Chromium executable.
 
 Offline YAML schema sources are in `tools/schema-sources` and `src/main/resources/schemas/dbt-common.json`. After editing them, regenerate the checked-in profiles and check consistency:
 
@@ -99,4 +115,6 @@ Python 3 is needed for this maintenance command; ordinary plugin builds use the 
 
 ## Publish a build
 
-Set the Marketplace token in `IJ_PLUGIN_REPO_TOKEN` or `~/.ij-plugin-repo-token`, then run `sbt publishPlugin`. Signing additionally requires `signPluginOptions` with a certificate and private key. See [publishing and signing](https://github.com/JetBrains/sbt-idea-plugin#publishing-and-verification).
+Set the Marketplace token in `IJ_PLUGIN_REPO_TOKEN` or `~/.ij-plugin-repo-token`,
+then run `sbt publishPlugin`. To sign a build, set `signPluginOptions` with a
+certificate and private key. See [publishing and signing](https://github.com/JetBrains/sbt-idea-plugin#publishing-and-verification).

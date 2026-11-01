@@ -29,11 +29,7 @@ Key completion helps fill `materialized`; an invalid value for a known constrain
 
 ![Native YAML key completion in a resource property file.](screenshots/authoring-yaml-native-completion.png)
 
-Native YAML key completion in a resource property file.
-
 ![Structural YAML diagnostic for an invalid known value.](screenshots/authoring-yaml-invalid-diagnostic.png)
-
-Structural YAML diagnostic for an invalid known value.
 
 ## Interactions
 

@@ -78,7 +78,6 @@ The test tree uses the IDE's standard test status icons.
 | IDE Close icon | **Clear search** | Lineage toolbar, next to **Search resources**. |
 | IDE Zoom In / Zoom Out icons | **Zoom in** / **Zoom out** | Lineage toolbar. |
 | IDE Pin icon | **Pin focus** / **Unpin focus** | Lineage toolbar; shown pressed while focus is pinned. |
-| IDE Copy icon | **Copy image** | Lineage toolbar. |
 | IDE Preview Details icon | **Open Documentation** | Lineage toolbar, right side. |
 | × | **Close documentation** | Header of the resource documentation pane, shown after opening Lineage details. |
 | IDE Refresh icon | **Regenerate Docs** | Lineage toolbar, right side. |
@@ -88,7 +87,8 @@ The test tree uses the IDE's standard test status icons.
 | IDE Settings icon | **Configure…** | Exposures toolbar; opens integration settings. |
 | IDE YAML file icon | Declared dbt exposure | Exposures list, beside each local exposure. |
 
-Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
+Other Lineage controls use text, including **Copy image** in the **Export** menu.
+See [Lineage](workspace.md#lineage).
 
 ## Settings toolbar icons
 
@@ -96,6 +96,19 @@ Other Lineage controls are text buttons. See [Lineage](workspace.md#lineage).
 | --- | --- | --- |
 | IDE Add (+) icon | Add a row or folder | Above the environment-variable and builtin-source tables in General settings; above the DAG folder list in Integrations settings, with tooltip **Add folder…**. |
 | IDE Remove (−) icon | Remove selected entries | In the same toolbars; enabled when entries are selected. In the DAG list, the tooltip is **Remove folder**. |
+
+## Local MCP server icons
+
+These icons appear under **dbt Workspace → Local MCP Server** in **Services**.
+See [Connect an AI assistant](integrations.md#connect-an-ai-assistant-with-the-local-mcp-server).
+
+| Icon | Meaning | Rule |
+| --- | --- | --- |
+| IDE Web icon | dbt Workspace / Local MCP Server | The **dbt Workspace** group and **Local MCP Server** entry in the Services tree. The server label includes **Running** or **Stopped**. |
+| IDE Run icon | **Start** | Server toolbar and context menu; enabled when the server is stopped and enabled in settings. |
+| IDE Stop icon | **Stop** | Server toolbar and context menu; enabled while the server runs. |
+| IDE Copy icon | **Copy MCP client configuration** / **Copy endpoint and authorization** | Server toolbar and context menu; enabled while the server runs. |
+| IDE Settings icon | **Configure…** | Server toolbar and context menu; available in every server state. |
 
 ## Lineage card symbols
 

@@ -1,11 +1,11 @@
 package com.github.vbmacher.intellij.dbt.ide
 
+import com.intellij.notification.NotificationType
 import com.github.vbmacher.intellij.dbt.lineage.DbtSelection
 import com.github.vbmacher.intellij.dbt.project._
 import com.github.vbmacher.intellij.dbt.syntax.DbtYaml
 import com.google.gson.JsonParser
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.psi.PsiFile
@@ -151,7 +151,13 @@ private[ide] object DbtSelectionResults {
       range.getStartOffset, range.getEndOffset)): Usage
     }.toArray
     val view = UsageViewManager.getInstance(project).showUsages(Array.empty[UsageTarget], usages, presentation)
-    if (problems.nonEmpty) Messages.showWarningDialog(project, problems.mkString("\n"), label + " — incomplete")
+    if (problems.nonEmpty) {
+      val warning = DbtUi.textArea("Incomplete selection\n" + problems.mkString("\n"))
+      warning.getAccessibleContext.setAccessibleName("Selection warnings")
+      warning.setRows(math.min(4, problems.size + 1))
+      warning.setColumns(70)
+      view.setAdditionalComponent(new com.intellij.ui.components.JBScrollPane(warning))
+    }
     view
   }
 
@@ -167,7 +173,7 @@ private[ide] object DbtSelectionResults {
         (result.resources, result.problems, configuration.prepare().map(_._1))
       }
     } {
-      case Left(error) => Messages.showErrorDialog(project, error, "dbt selection")
+      case Left(error) => DbtNotifications.show(project, "dbt selection", error, NotificationType.ERROR)
       case Right((resources, problems, command)) =>
         val view = show(project, "dbt local selection · " + configuration.target, resources.map(s => s.file -> s.range), problems)
         view.addButtonToLowerPane(() => DbtLineageSelection.show(project, configuration.root,
@@ -192,7 +198,7 @@ private[ide] object DbtSelectionResults {
         (known.filter(s => ids.contains(s.id)), ids.filterNot(id => known.exists(_.id == id)), ids)
       }
     } {
-      case Left(error) => Messages.showWarningDialog(project, error, "dbt CLI selection")
+      case Left(error) => DbtNotifications.show(project, "dbt CLI selection", error)
       case Right((resources, unknown, ids)) =>
         if (unknown.isEmpty) configuration.selectionResolved.foreach(_(ids))
         show(project, "dbt CLI selection · " + configuration.target, resources.map(s => s.file -> s.range),

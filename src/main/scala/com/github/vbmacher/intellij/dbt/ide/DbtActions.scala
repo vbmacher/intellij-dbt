@@ -4,6 +4,7 @@ import com.github.vbmacher.intellij.dbt.lineage.{DbtDependency, DbtLineage}
 import com.github.vbmacher.intellij.dbt.navigation.DbtNavigation
 import com.github.vbmacher.intellij.dbt.project.{DbtArtifactContext, DbtProjectSettings, DbtResourceData, DbtSymbol, DbtSymbolElement, DbtWorkspace}
 import com.intellij.ide.DataManager
+import com.intellij.codeInsight.hint.HintManager
 import com.intellij.notification.{NotificationGroupManager, NotificationType}
 import com.intellij.diff.{DiffContentFactory, DiffManager}
 import com.intellij.diff.requests.SimpleDiffRequest
@@ -16,7 +17,7 @@ import com.intellij.openapi.fileTypes.{FileType, FileTypeManager}
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.{ProgressIndicator, Task}
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.{DialogWrapper, Messages}
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.{JBPopup, JBPopupFactory, ListItemDescriptor}
 import com.intellij.openapi.vfs.{LocalFileSystem, VirtualFileManager}
 import com.intellij.psi.{PsiDocumentManager, PsiFile}
@@ -24,8 +25,8 @@ import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.popup.list.GroupedItemsListRenderer
 import com.intellij.util.concurrency.AppExecutorUtil
-import com.intellij.util.ui.JBUI
-import java.awt.{BorderLayout, Dimension, FlowLayout, GridBagConstraints, Insets}
+import com.intellij.util.ui.{JBUI, WrapLayout}
+import java.awt.{BorderLayout, FlowLayout, GridBagConstraints, Insets}
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Paths
 import java.util.concurrent.Callable
@@ -107,12 +108,12 @@ private[ide] object DbtEditorAction {
 abstract class DbtPopupAction(title: String) extends DbtEditorAction {
   private[ide] def items(w: DbtWorkspace, file: PsiFile, offset: Int): Vector[DbtNavigationItem]
 
-  protected def nothingFound(project: Project): Unit = ()
+  protected def nothingFound(project: Project, editor: Editor): Unit = ()
 
   override def actionPerformed(event: AnActionEvent): Unit = DbtEditorAction.editorContext(event).foreach { case (project, file, editor) =>
     val offset = editor.getCaretModel.getOffset
     DbtUi.readLater(project, smartIn = Some(project))(items(DbtWorkspace.get(project), file, offset)) { choices =>
-      if (choices.isEmpty) nothingFound(project)
+      if (choices.isEmpty) nothingFound(project, editor)
       else DbtNavigationItem.popup(title, choices).showInBestPositionFor(editor)
     }
   }
@@ -134,8 +135,8 @@ final class DbtDependenciesAction extends DbtPopupAction("dbt Dependencies") {
     DbtDependenciesAction.choices(DbtLineage.edges(w), current.map(_.id).toSet)
   }
 
-  override protected def nothingFound(project: Project): Unit =
-    Messages.showInfoMessage(project, "No statically resolved dependencies at this location.", "dbt Dependencies")
+  override protected def nothingFound(project: Project, editor: Editor): Unit =
+    if (!editor.isDisposed) HintManager.getInstance().showInformationHint(editor, "No statically resolved dependencies at this location.")
 }
 
 private[ide] object DbtDependenciesAction {
@@ -243,7 +244,7 @@ private[ide] object DbtCompiledSql {
     if (!open(w, symbol)) {
       val label = if (compare) "Compile and compare" else "Compile and open"
       val model = w.model(symbol.file).filter(_.isEnabled)
-      if (model.isEmpty) Messages.showInfoMessage(w.project, "Compiled SQL is unavailable. Choose a source model to compile.", "dbt compiled SQL")
+      if (model.isEmpty) DbtNotifications.show(w.project, "dbt compiled SQL", "Compiled SQL is unavailable. Choose a source model to compile.", NotificationType.INFORMATION)
       else if (Messages.showYesNoDialog(w.project, "Compiled SQL is unavailable for this model and target.",
         "dbt compiled SQL", label, "Cancel", Messages.getQuestionIcon) == Messages.YES) {
         val path = symbol.file.getVirtualFile.getPath
@@ -253,7 +254,7 @@ private[ide] object DbtCompiledSql {
           DbtRunSelection.available(current).find(_.path == path).toRight("The source model is unavailable.")
             .flatMap(DbtCommand.create(current, _, "Compile", fullRefresh = false))
         } {
-          case Left(error) => Messages.showErrorDialog(w.project, error, "dbt compiled SQL")
+          case Left(error) => DbtNotifications.show(w.project, "dbt compiled SQL", error, NotificationType.ERROR)
           case Right(command) => DbtRunConfiguration.launch(w.project, command, Some(finished =>
             LocalFileSystem.getInstance.refreshIoFiles(java.util.List.of(new java.io.File(finished.artifactDirectory)), true, true, () =>
               DbtUi.readLater(w.project) {
@@ -262,7 +263,7 @@ private[ide] object DbtCompiledSql {
                   DbtArtifactContext.identity(current.executionRoot(r)) == finished.artifactContext)).map(current -> _)
               } { result =>
                 if (!result.exists { case (current, resource) => open(current, resource) })
-                  Messages.showInfoMessage(w.project, "Compilation finished, but matching compiled SQL is unavailable. Check the Run output and current source and target.", "dbt compiled SQL")
+                  DbtNotifications.show(w.project, "dbt compiled SQL", "Compilation finished, but matching compiled SQL is unavailable. Check the Run output and current source and target.")
               })))
         }
       }
@@ -311,7 +312,7 @@ private[ide] object DbtUi {
 
   /**
    * A cancellable background task; its result is shown on the EDT while the project is open. Failures are reported by
-   * `failed` while the project is open, or by a generic error dialog. `finished` runs after every outcome.
+   * `failed` while the project is open, or by an error notification. `finished` runs after every outcome.
    */
   def background[A](project: Project, title: String, failed: Option[Throwable => Unit] = None, finished: () => Unit = () => (),
     canceled: () => Unit = () => ())(
@@ -328,7 +329,7 @@ private[ide] object DbtUi {
       override def onCancel(): Unit = if (!project.isDisposed) canceled()
 
       override def onThrowable(error: Throwable): Unit = if (!project.isDisposed) failed.fold(
-        Messages.showErrorDialog(project, "Analysis failed or was canceled. Refresh and try again.", title))(_(error))
+        DbtNotifications.show(project, title, "Analysis failed. Refresh and try again.", NotificationType.ERROR))(_(error))
 
       override def onFinished(): Unit = finished()
     }.queue()
@@ -357,7 +358,7 @@ private[ide] object DbtUi {
   }
 
   def buttons(items: JComponent*): JPanel = {
-    val p = new JPanel(new FlowLayout(FlowLayout.LEFT));
+    val p = new JPanel(new WrapLayout(FlowLayout.LEFT));
     items.foreach(p.add);
     p
   }
@@ -376,17 +377,6 @@ private[ide] object DbtUi {
     panel.add(center, BorderLayout.CENTER)
     Option(south).foreach(panel.add(_, BorderLayout.SOUTH));
     panel
-  }
-
-  def dialog(project: Project, title: String, center: JComponent, north: JComponent = null, south: JComponent = null): Unit = {
-    val panel = border(center, north, south);
-    panel.setPreferredSize(new Dimension(850, 550))
-    new DialogWrapper(project) {
-      setTitle(title);
-      init()
-
-      override def createCenterPanel(): JComponent = panel
-    }.show()
   }
 
   /** The editable input inside a labeled browse field, scroll pane or settings wrapper. */

@@ -49,6 +49,7 @@
     <depends>com.intellij.modules.json</depends>
     <depends>com.intellij.modules.jcef</depends>
     <depends>intellij.testRunner.plugin</depends>
+    <depends>intellij.execution.serviceView.plugin</depends>
     <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <!-- Ports of the dbt workspace, navigation and lineage; registration order is priority order. -->
@@ -77,6 +78,8 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <serviceViewContributor implementation="com.github.vbmacher.intellij.dbt.ide.DbtAgentServiceView"/>
+        <usageContextPanelProvider implementation="com.github.vbmacher.intellij.dbt.ide.DbtAirflowDetailsProvider"/>
         <projectService serviceInterface="com.github.vbmacher.intellij.dbt.project.DbtManifestReader" serviceImplementation="com.github.vbmacher.intellij.dbt.metadata.DbtJsonManifestReader"/>
         <completion.contributor language="any" implementationClass="com.github.vbmacher.intellij.dbt.ide.DbtCompletionContributor"/>
         <defaultLiveTemplates file="/liveTemplates/Dbt.xml"/>

@@ -25,8 +25,6 @@ The proposed replacement is `o.id, o.amount, o.status`. Review it through **Expa
 
 ![Intention preview replaces o.* with the known columns.](screenshots/root-wildcard-preview.png)
 
-Intention preview replaces o.* with the known columns.
-
 ## Interactions
 
 Uses the same known columns as [SQL completion](completion.md). It does not query the warehouse to discover missing columns.

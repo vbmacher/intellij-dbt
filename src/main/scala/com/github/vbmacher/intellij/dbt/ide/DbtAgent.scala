@@ -9,7 +9,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.{AnAction, AnActionEvent}
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
+import com.intellij.execution.services.ServiceViewManager
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.charset.StandardCharsets
@@ -17,7 +17,6 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.concurrent.{Executors, ExecutorService, ScheduledExecutorService, ThreadPoolExecutor, ArrayBlockingQueue, TimeUnit}
 import com.intellij.openapi.progress.{EmptyProgressIndicator, ProgressIndicator, ProgressManager}
 import scala.jdk.CollectionConverters._
-import javax.swing.JScrollPane
 import scala.util.control.NonFatal
 
 private[dbt] object DbtAgentProtocol {
@@ -278,6 +277,7 @@ final class DbtAgent(project: Project) extends Disposable {
           override def handle(exchange: HttpExchange): Unit = boundedRequest(exchange)
         })
         server.start();
+        DbtAgentServiceView.changed(project)
         endpoint.toRight("Local MCP server failed to start.")
       } catch {
         case NonFatal(_) => stop(); Left("Local loopback transport is unavailable.")
@@ -507,6 +507,7 @@ final class DbtAgent(project: Project) extends Disposable {
     executor = null;
     timer = null;
     token = ""
+    if (!disposed) DbtAgentServiceView.changed(project)
   }
 
   override def dispose(): Unit = synchronized {
@@ -551,34 +552,8 @@ private[ide] object DbtAgent {
 
 final class DbtAgentAction extends AnAction {
   override def actionPerformed(event: AnActionEvent): Unit = Option(event.getProject).foreach { project =>
-    val service = project.getService(classOf[DbtAgent])
-    val details = DbtUi.textArea()
-
-    def refresh(): Unit = details.setText(service.endpoint.map { case (url, token) =>
-      "Read-only MCP server is running for this IDE project.\nURL: " + url + "\nAuthorization: Bearer " + token +
-        "\nTransport: Streamable HTTP · MCP versions " + DbtAgentProtocol.SupportedVersions.mkString(", ") +
-        "\nToken is temporary; stop/restart rotates it. Do not publish it."
-    }.getOrElse("Local MCP server is stopped. Enable the local MCP server in Settings > dbt Workspace > Integrations, then Start.\nNo AI subscription or warehouse connection is required.\nOnly read tools are exposed. See docs/integrations.md for MCP client setup."))
-
-    refresh()
-    DbtUi.dialog(project, "dbt Local MCP Server", new JScrollPane(details), south = DbtUi.buttons(
-      DbtUi.button("Configure…") {
-        DbtSettingsConfigurable.showIntegrations(project);
-        refresh()
-      },
-      DbtUi.button("Start") {
-        service.start().left.foreach(error => Messages.showInfoMessage(project, error, "dbt Local MCP Server"));
-        refresh()
-      },
-      DbtUi.button("Stop") {
-        service.stop();
-        refresh()
-      },
-      DbtUi.button("Copy endpoint and authorization") {
-        service.endpoint.foreach { case (url, token) => DbtUi.copy(url + "\nAuthorization: Bearer " + token) }
-      },
-      DbtUi.button("Copy MCP client configuration") {
-        service.endpoint.foreach { case (url, token) => DbtUi.copy(DbtAgentProtocol.clientConfiguration(url, token)) }
-      }))
+    ServiceViewManager.getInstance(project).select(project.getService(classOf[DbtAgent]),
+      classOf[DbtAgentServiceView], true, true)
+    ()
   }
 }

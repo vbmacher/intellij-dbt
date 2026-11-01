@@ -13,8 +13,8 @@ contains several dbt projects, each keeps its own navigation and run settings.
   integrations use.
 - **Per-root settings:** engine, version, adapter, variables, environment overrides, local definitions, metadata paths,
   executable, profiles, target, formatter and state settings
-  are saved separately for each owning root. Choosing another **Owning dbt root**
-  shows that root's saved values and does not change any other root's values.
+  are saved separately for each owning root. Switching roots preserves each root's
+  unsaved draft and restores it when that root is selected again.
 - **Shared settings:** lineage view and integration settings apply to the whole IDE
   project.
 - **Resolved context:** the current draft can be inspected through the same profile,
@@ -40,8 +40,9 @@ contains several dbt projects, each keeps its own navigation and run settings.
   owning root and field. Environment names must be valid and unique; builtin mappings
   require a unique name and source file. Unsupported active options prevent saving.
   **Reset** puts the saved values back into both tabs.
-- **No side effects:** changing settings does not run dbt, refresh Metabase data or
-  start the local MCP server.
+- **External activity:** editing or applying settings does not run dbt, fetch
+  Metabase data or start the local MCP server. Applying integration settings clears
+  the Metabase cache; disabling MCP access stops a running server.
 - **Credentials:** the Metabase API key is stored in IDE Password Safe, never in
   project files.
 - Field names, defaults, limits and file examples are defined in
@@ -50,15 +51,13 @@ contains several dbt projects, each keeps its own navigation and run settings.
 ## Example
 
 An IDE project contains `analytics/` and `finance/`, each with its own
-`dbt_project.yml`. In **Settings → dbt Workspace**, select `analytics` as
-**Owning dbt root** and set a wrapper script as the executable. Then select
-`finance` and set a different executable. Selecting `analytics` again shows its
-wrapper script. Both projects use the same lineage layout.
+`dbt_project.yml`. Their settings drafts contain different executables. Switching
+between roots retains both drafts; applying saves both. The projects share the
+lineage layout.
 
-For `analytics`, enter `{"start_date":"2026-03-01"}` in **Variables (JSON)** and
-add `DBT_SCHEMA` with value `analytics` in **Environment variables**, then click
-**Apply**. Commands use that variable object and environment override; `finance`
-keeps its own values.
+With `{"start_date":"2026-03-01"}` and `DBT_SCHEMA=analytics` configured for
+`analytics`, its commands receive those variable and environment overrides.
+`finance` keeps its own values.
 
 ## Screenshot
 

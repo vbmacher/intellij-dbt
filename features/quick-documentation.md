@@ -24,8 +24,6 @@ Quick Documentation on `orders` shows its description, known columns and depende
 
 ![Native resource documentation popup.](screenshots/quick-documentation.png)
 
-Native resource documentation popup.
-
 ## Interactions
 
 [Navigation](navigation.md) determines the target. [Resource documentation](resource-documentation.md) owns the complete content in native Documentation.

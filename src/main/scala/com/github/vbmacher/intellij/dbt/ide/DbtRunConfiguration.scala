@@ -440,10 +440,7 @@ final class DbtRunEditor(project: Project) extends SettingsEditor[DbtRunConfigur
       DbtRunConfiguration.resolveSelection(resolving)
     }
     val compare = DbtUi.button("Compare baseline")(DbtStateComparison.show(draft()))
-    val buttons = new JPanel;
-    buttons.add(review);
-    buttons.add(resolve);
-    buttons.add(compare)
+    val buttons = DbtUi.buttons(review, resolve, compare)
     val form = FormBuilder.createFormBuilder()
       .addLabeledComponent("Owning dbt root:", root)
       .addLabeledComponent("Scope:", scope)

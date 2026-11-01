@@ -27,8 +27,6 @@ Copy for Target DB places `select * from "analytics"."reporting"."orders"` on th
 
 ![Physical relation pasted back as a dbt reference.](screenshots/sql-clipboard.png)
 
-Physical relation pasted back as a dbt reference.
-
 ## Interactions
 
 Uses [local metadata](project-context.md) for physical names and [navigation](navigation.md) for logical identity.

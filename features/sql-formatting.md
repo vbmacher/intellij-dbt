@@ -24,8 +24,6 @@ Reformat Code passes this document to the configured formatter and applies that 
 
 ![SQL/Jinja document formatted by sqlfmt in the native editor.](screenshots/authoring-sqlfmt-jinja-reformat.png)
 
-SQL/Jinja document formatted by sqlfmt in the native editor.
-
 ## Interactions
 
 Uses the owning context from [workspace execution](workspace.md). Formatting does not run the dbt model.
