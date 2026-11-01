@@ -4,7 +4,6 @@
     <id>com.github.vbmacher.intellij-dbt</id>
     <name>dbt Workspace</name>
     <category>Languages</category>
-    <version>1.2.0</version>
     <idea-version since-build="262.8665" until-build="262.*"/>
     <vendor email="pjakubco@gmail.com" url="https://github.com/vbmacher">Peter Jakubčo</vendor>
 

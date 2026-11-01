@@ -87,7 +87,7 @@ visual changes should support the user's task.
 - [Screenshots](docs/screenshots/): reference captures of navigation, settings,
   Lineage and CTE inspection. Check their freshness before treating them as current
   visual authority.
-- [Existing UI implementation](src/main/scala/com/github/vbmacher/intellij/dbt/ide/)
+- [Existing UI implementation](src/main/kotlin/com/github/vbmacher/intellij/dbt/ide/)
   and [Lineage assets](src/main/resources/lineage/): evidence for the current
   interface, to be examined when documenting or changing a surface.
 

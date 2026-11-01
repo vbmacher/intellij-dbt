@@ -5,18 +5,19 @@
 .vscode/
 .DS_Store
 
-### SBT ###
+### Gradle ###
+.gradle/
+.kotlin/
+.intellijPlatform/
+build/
+
+### Local build output ###
 target/
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
-project/project/
 .bsp/
 .bloop/
 .metals/
 
-### Scala / JVM ###
+### JVM ###
 *.class
 *.log
 hs_err_pid*
