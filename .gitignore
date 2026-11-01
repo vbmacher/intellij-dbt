@@ -11,12 +11,6 @@
 .intellijPlatform/
 build/
 
-### Local build output ###
-target/
-.bsp/
-.bloop/
-.metals/
-
 ### JVM ###
 *.class
 *.log
