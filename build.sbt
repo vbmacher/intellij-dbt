@@ -20,7 +20,7 @@ lazy val root = (project in file("."))
   .settings(inConfig(PackagedTest)(Defaults.testTasks))
   .settings(
     name := "intellij-dbt",
-    version := "1.1.0",
+    version := "1.2.0",
     scalaVersion := "2.13.18",
     // Inherit interface defaults instead of generating calls to deprecated platform methods.
     scalacOptions ++= Seq("-deprecation", "-Xmixin-force-forwarders:junit"),

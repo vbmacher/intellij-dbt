@@ -4,7 +4,7 @@
     <id>com.github.vbmacher.intellij-dbt</id>
     <name>dbt Workspace</name>
     <category>Languages</category>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <idea-version since-build="262.8665" until-build="262.*"/>
     <vendor email="pjakubco@gmail.com" url="https://github.com/vbmacher">Peter Jakubčo</vendor>
 
@@ -34,6 +34,11 @@
 
     <change-notes><![CDATA[
       <ul>
+        <li>1.2.0: dbt and SQL completion, macro parameter hints, offline YAML validation, SQL diagnostics, Rename and Safe Delete.</li>
+        <li>Edit resource documentation and YAML columns, inherit descriptions, and format SQL with SQLFluff or sqlfmt.</li>
+        <li>Review selectors and baseline state, run native dbt tests, preview typed results, and inspect CTEs with source-mapped debugging.</li>
+        <li>Trace column lineage, review execution evidence, and browse exposure, Metabase and local Airflow context.</li>
+        <li>Configure a local read-only MCP server for AI assistants and manage dbt workflows through native IntelliJ controls.</li>
         <li>1.1.0: Interactive lineage, documentation sidebar and native hover, dbt Runner and previews, unresolved-reference warnings, SQL clipboard conversion.</li>
         <li>1.0.0: Initial release with Go to Declaration and Find Usages for dbt resources, macros, variables, documentation and YAML properties.</li>
         <li>Resource properties and dependency browsing with navigation to reference locations.</li>

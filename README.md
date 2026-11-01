@@ -1,6 +1,9 @@
 # intellij-dbt
 
-[![Build](https://img.shields.io/github/actions/workflow/status/vbmacher/intellij-dbt/build.yml?branch=main&style=flat-square)](https://github.com/vbmacher/intellij-dbt/actions?query=branch%3Amain) [![License](https://img.shields.io/github/license/vbmacher/intellij-dbt?style=flat-square)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/vbmacher/intellij-dbt/build.yml?branch=main&style=flat-square)](https://github.com/vbmacher/intellij-dbt/actions?query=branch%3Amain)
+[![Version](https://img.shields.io/jetbrains/plugin/v/35116-dbt-workspace.svg?style=flat-square)](https://plugins.jetbrains.com/plugin/35116-dbt-workspace)
+[![JetBrains Plugin Downloads](https://img.shields.io/jetbrains/plugin/d/35116-dbt-workspace?style=flat-square)](https://plugins.jetbrains.com/plugin/35116-dbt-workspace)
+[![License](https://img.shields.io/github/license/vbmacher/intellij-dbt?style=flat-square)](LICENSE)
 
 **dbt Workspace** is an IntelliJ IDEA plugin for dbt projects.
 
