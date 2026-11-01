@@ -166,7 +166,8 @@ final class DbtDialogWorkflowTest extends DbtTestCase {
         settings.airflowUrl = "https://airflow.test/"
         edit(dag, "Cfg(dag_id='finance', task_id='updated', dbt_selector='orders', schedule='@daily')\n")
         DbtProjectSettings.get(getProject).changed()
-        assertSame(view, view.doReRunTestAccessor())
+        // Use the native Rerun path, which resets pending usage-tree updates before reloading.
+        view.refreshUsages()
         await("Rerun replaces stale tasks and resolves newly configured links") {
           view.getUsages.asScala.collect { case usage: DbtAirflowUsage => usage.task.task }.toVector == Vector("updated")
         }
